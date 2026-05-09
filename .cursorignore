@@ -1,0 +1,3 @@
+# 로컬 시크릿 — Cursor 에이전트가 읽지 않도록 제외
+.env.local
+.env.*.local

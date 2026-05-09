@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+  Articket Admin — design tokens (light + high-contrast dark).
+  Principles: calm neutrals, blue primary, WCAG AA+, no color-only status.
+*/
+
+:root {
+  --font-pretendard: "Pretendard Variable", Pretendard, system-ui, sans-serif;
+
+  /* Spacing scale (8px base) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.25rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-10: 2.5rem;
+
+  --gutter: 24px;
+  --content-margin: 24px;
+  --sidebar-width: 264px;
+
+  /* Light mode — HSL tokens for Tailwind */
+  --background: 210 20% 98%;
+  --foreground: 222 47% 11%;
+  --surface: 0 0% 100%;
+  --surface-muted: 210 17% 95%;
+  --border: 210 14% 91%;
+  --text-primary: 222 47% 11%;
+  --text-secondary: 215 16% 35%;
+  --text-tertiary: 215 12% 57%;
+  --muted: 210 17% 95%;
+  --muted-foreground: 215 12% 45%;
+
+  --primary: 212 91% 58%;
+  --primary-foreground: 0 0% 100%;
+  --primary-hover: 212 84% 52%;
+  --primary-weak: 210 100% 95%;
+
+  --danger: 353 84% 57%;
+  --danger-foreground: 0 0% 100%;
+  --danger-weak: 0 100% 97%;
+
+  --success: 158 97% 36%;
+  --success-foreground: 0 0% 100%;
+  --success-weak: 152 45% 96%;
+
+  --warning: 32 100% 50%;
+  --warning-foreground: 222 47% 11%;
+  --warning-weak: 36 100% 94%;
+
+  --ring: 212 91% 58%;
+
+  --shadow-1: 0 1px 2px rgb(25 31 40 / 0.06);
+  --shadow-2: 0 4px 12px rgb(25 31 40 / 0.08);
+  --shadow-3: 0 12px 32px rgb(25 31 40 / 0.12);
+  --shadow-4: 0 24px 48px rgb(25 31 40 / 0.16);
+}
+
+.dark {
+  /* High-contrast dark: elevated surfaces, stronger text/borders */
+  --background: 222 47% 6%;
+  --foreground: 210 20% 98%;
+  --surface: 222 40% 10%;
+  --surface-muted: 222 35% 14%;
+  --border: 215 20% 26%;
+  --text-primary: 210 25% 98%;
+  --text-secondary: 210 17% 82%;
+  --text-tertiary: 215 12% 68%;
+  --muted: 222 35% 16%;
+  --muted-foreground: 215 12% 72%;
+
+  --primary: 212 91% 62%;
+  --primary-foreground: 222 47% 11%;
+  --primary-hover: 212 91% 56%;
+  --primary-weak: 212 45% 18%;
+
+  --danger: 353 80% 58%;
+  --danger-foreground: 0 0% 100%;
+  --danger-weak: 353 35% 16%;
+
+  --success: 158 70% 45%;
+  --success-foreground: 222 47% 8%;
+  --success-weak: 158 30% 14%;
+
+  --warning: 32 95% 52%;
+  --warning-foreground: 222 47% 8%;
+  --warning-weak: 32 40% 16%;
+
+  --ring: 212 91% 65%;
+
+  --shadow-1: 0 1px 0 rgb(0 0 0 / 0.45);
+  --shadow-2: 0 8px 24px rgb(0 0 0 / 0.45);
+  --shadow-3: 0 16px 40px rgb(0 0 0 / 0.55);
+  --shadow-4: 0 24px 56px rgb(0 0 0 / 0.65);
+}
+
+@media (max-width: 767px) {
+  :root {
+    --gutter: 16px;
+    --content-margin: 16px;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "ss01" on, "ss02" on;
+  }
+}
