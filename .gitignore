@@ -1,34 +1,47 @@
-# dependencies
-/node_modules
-/.pnp
+# Dependencies
+node_modules/
+.pnp
 .pnp.js
 .yarn/install-state.gz
 
-# testing
-/coverage
+# Testing
+coverage/
+.nyc_output/
 
-# next.js
-/.next/
-/out/
+# Next.js
+.next/
+out/
 
-# production
-/build
+# Production
+build/
+dist/
 
-# misc
+# Misc / OS
 .DS_Store
+Thumbs.db
 *.pem
+*.tsbuildinfo
 
-# debug
+# Debug logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# env
+# Environment (never commit secrets)
 .env
-.env*.local
+.env.*
+!.env.example
 
-# vercel
+# Vercel
 .vercel
 
-# typescript
-*.tsbuildinfo
+# Tooling caches
+.turbo
+.cache/
+.eslintcache
+
+# IDE (optional local settings; keep shared editorconfig in repo)
+.idea/
+*.swp
+*.swo

@@ -53,6 +53,8 @@ vercel build
 
 ## 환경 변수
 
+값은 저장소에 넣지 말고, 루트의 **`.env.example`** 을 복사해 `.env.local`로 만든 뒤 채웁니다.
+
 `.env.local` 예시:
 
 ```env
@@ -71,6 +73,12 @@ SUPABASE_SERVICE_ROLE_KEY=eyJ...
 ```bash
 npx supabase gen types typescript --linked > types/database.ts
 ```
+
+## 보안·의존성
+
+- **비밀값:** `.env`·`.env.*`는 Git에 올리지 않고, **`.env.example`** 만 저장소에 둡니다. `SUPABASE_SERVICE_ROLE_KEY`는 서버(API·RSC)에서만 참조합니다.
+- **`npm audit`:** ESLint가 끌고 오던 **`glob` CLI 취약점**은 `package.json`의 **`overrides`** 로 `glob@^10.4.6` 이상을 강제해 완화했습니다.
+- **잔여 항목:** `next`가 번들하는 **`postcss@8.4.x`** 등은 npm이 “수정”으로 **Next 16** 설치만 제안하는 경우가 있습니다. 14.x를 유지할 때는 [공지된 CVE](https://github.com/advisories?query=next.js)별 **자체 호스팅·Image Optimizer·rewrites** 해당 여부를 보고 리스크를 판단하면 됩니다(Vercel 등 관리형 호스팅과 로컬 dev는 영향이 다를 수 있음).
 
 ## Supabase RLS
 
