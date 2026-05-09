@@ -5,13 +5,12 @@ import {
   flexRender,
   getCoreRowModel,
   getFilteredRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDown,
   ArrowUp,
@@ -83,6 +82,11 @@ import {
 import { formatKst } from "@/lib/format-kst";
 import { cn } from "@/lib/utils";
 import type { AdminUserRow } from "@/types/admin-user";
+import { AdminListPagination } from "@/components/admin/AdminListPagination";
+import {
+  DEFAULT_ADMIN_PAGE_SIZE,
+  type AdminPageSize,
+} from "@/lib/admin-pagination";
 
 function statusBadge(status: AdminUserRow["accountStatus"]) {
   const label =
@@ -141,12 +145,17 @@ function exportCsv(rows: AdminUserRow[]) {
 }
 
 export function UsersPageClient() {
+  const queryClient = useQueryClient();
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [globalFilter, setGlobalFilter] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
   const [rowSelection, setRowSelection] = React.useState<
     Record<string, boolean>
   >({});
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<AdminPageSize>(
+    DEFAULT_ADMIN_PAGE_SIZE,
+  );
 
   const [sheetUser, setSheetUser] = React.useState<AdminUserRow | null>(null);
   const [editName, setEditName] = React.useState("");
@@ -168,32 +177,76 @@ export function UsersPageClient() {
   const [deleteConfirm, setDeleteConfirm] = React.useState("");
 
   const {
-    data: userRows = [],
+    data: usersPayload,
     isLoading: loading,
     error: usersError,
-    refetch,
   } = useQuery({
-    queryKey: ["admin-users"],
+    queryKey: ["admin-users", page, pageSize],
     queryFn: async () => {
-      const res = await fetch("/api/admin/users", { cache: "no-store" });
+      const q = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      const res = await fetch(`/api/admin/users?${q}`, { cache: "no-store" });
       if (!res.ok) {
         const err = (await res.json()) as { detail?: string; error?: string };
         throw new Error(
           err.detail ?? err.error ?? "사용자 목록을 불러오지 못했습니다.",
         );
       }
-      const json = (await res.json()) as { rows: AdminUserRow[] };
-      if (
-        "warning" in json &&
-        typeof (json as { warning?: string }).warning === "string"
-      ) {
-        const warning = (json as { warning: string }).warning;
-        toast.message("사용자 목록 제한 모드", { description: warning });
+      const json = (await res.json()) as {
+        rows: AdminUserRow[];
+        total?: number;
+        totalPages?: number;
+        page?: number;
+        pageSize?: number;
+        warning?: string;
+      };
+      if (json.warning) {
+        toast.message("사용자 목록 제한 모드", { description: json.warning });
       }
-      return json.rows;
+      return {
+        rows: json.rows ?? [],
+        total: json.total ?? 0,
+        totalPages: json.totalPages ?? 1,
+      };
     },
   });
-  const data = userRows;
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["admin-user-stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/users/stats", { cache: "no-store" });
+      if (!res.ok) {
+        const err = (await res.json()) as { detail?: string };
+        throw new Error(err.detail ?? "지표를 불러오지 못했습니다.");
+      }
+      return (await res.json()) as {
+        totalUsers: number;
+        pending: number;
+        suspended: number;
+        recent: number;
+        sampleLimited?: boolean;
+      };
+    },
+    staleTime: 60_000,
+  });
+
+  const pageUserRows = React.useMemo(
+    () => usersPayload?.rows ?? [],
+    [usersPayload?.rows],
+  );
+  const listTotal = usersPayload?.total ?? 0;
+  const listTotalPages = usersPayload?.totalPages ?? 1;
+
+  const invalidateUserQueries = () => {
+    void queryClient.invalidateQueries({ queryKey: ["admin-users"] });
+    void queryClient.invalidateQueries({ queryKey: ["admin-user-stats"] });
+  };
+
+  React.useEffect(() => {
+    setRowSelection({});
+  }, [page, pageSize]);
 
   React.useEffect(() => {
     if (!usersError) return;
@@ -213,26 +266,19 @@ export function UsersPageClient() {
   }, [sheetUser]);
 
   const filteredData = React.useMemo(() => {
-    return data.filter((u) => {
+    return pageUserRows.filter((u) => {
       if (statusFilter !== "all" && u.accountStatus !== statusFilter)
         return false;
       return true;
     });
-  }, [data, statusFilter]);
+  }, [pageUserRows, statusFilter]);
 
-  const metrics = React.useMemo(() => {
-    const total = data.length;
-    const pending = data.filter((u) => u.accountStatus === "pending").length;
-    const suspended = data.filter(
-      (u) => u.accountStatus === "suspended",
-    ).length;
-    const recent = data.filter((u) => {
-      if (!u.lastVisitDate) return false;
-      const d = new Date(u.lastVisitDate);
-      return Date.now() - d.getTime() < 7 * 86400000;
-    }).length;
-    return { total, pending, suspended, recent };
-  }, [data]);
+  const metrics = {
+    total: stats?.totalUsers ?? 0,
+    pending: stats?.pending ?? 0,
+    suspended: stats?.suspended ?? 0,
+    recent: stats?.recent ?? 0,
+  };
 
   const columns = React.useMemo<ColumnDef<AdminUserRow>[]>(
     () => [
@@ -369,8 +415,6 @@ export function UsersPageClient() {
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
-    initialState: { pagination: { pageSize: 5 } },
     globalFilterFn: (row, _id, filter) => {
       const q = String(filter).toLowerCase();
       const u = row.original;
@@ -412,28 +456,28 @@ export function UsersPageClient() {
             delta="+2.4%"
             deltaPositive
             badge="실시간"
-            loading={loading}
+            loading={statsLoading}
           />
           <MetricCard
             label="승인 대기"
             value={metrics.pending}
             delta="처리 필요"
             badge="주의"
-            loading={loading}
+            loading={statsLoading}
             emphasize
           />
           <MetricCard
             label="정지·이상 계정"
             value={metrics.suspended}
             delta="주간 기준"
-            loading={loading}
+            loading={statsLoading}
           />
           <MetricCard
             label="최근 7일 활동"
             value={metrics.recent}
             delta="+12명"
             deltaPositive
-            loading={loading}
+            loading={statsLoading}
           />
         </div>
       </section>
@@ -547,6 +591,9 @@ export function UsersPageClient() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          <p className="text-caption text-text-tertiary">
+            검색·상태 필터는 현재 페이지에 불러온 사용자에게만 적용됩니다.
+          </p>
 
           {loading ? (
             <div className="space-y-2" aria-busy>
@@ -554,16 +601,28 @@ export function UsersPageClient() {
               <Skeleton className="h-12 w-full rounded-lg" />
               <Skeleton className="h-12 w-full rounded-lg" />
             </div>
-          ) : filteredData.length === 0 ? (
+          ) : pageUserRows.length === 0 ? (
             <div
               className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted/40 py-16 text-center"
               role="status"
             >
               <p className="text-body font-medium text-text-primary">
-                표시할 사용자가 없습니다.
+                등록된 사용자가 없습니다.
               </p>
               <p className="mt-2 max-w-md text-body-sm text-text-secondary">
-                검색어나 상태 필터를 조정하거나 새 사용자를 추가해 보세요.
+                새 사용자를 초대하거나 서비스 롤 키 설정을 확인해 보세요.
+              </p>
+            </div>
+          ) : pageUserRows.length > 0 && filteredData.length === 0 ? (
+            <div
+              className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-surface-muted/40 py-16 text-center"
+              role="status"
+            >
+              <p className="text-body font-medium text-text-primary">
+                이 페이지에서 조건에 맞는 사용자가 없습니다.
+              </p>
+              <p className="mt-2 max-w-md text-body-sm text-text-secondary">
+                검색·상태 필터를 조정하거나 다른 페이지로 이동해 보세요.
               </p>
               <Button
                 className="mt-6"
@@ -636,35 +695,23 @@ export function UsersPageClient() {
                   ))}
                 </TableBody>
               </Table>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-3">
                 <p className="text-caption text-text-tertiary">
-                  {table.getFilteredRowModel().rows.length}명 중{" "}
+                  이 페이지 {table.getFilteredRowModel().rows.length}명 중{" "}
                   {selectedRows.length}명 선택
                 </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={() => table.previousPage()}
-                    disabled={!table.getCanPreviousPage()}
-                  >
-                    이전
-                  </Button>
-                  <span className="text-body-sm text-text-secondary">
-                    {table.getState().pagination.pageIndex + 1} /{" "}
-                    {table.getPageCount()}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    type="button"
-                    onClick={() => table.nextPage()}
-                    disabled={!table.getCanNextPage()}
-                  >
-                    다음
-                  </Button>
-                </div>
+                <AdminListPagination
+                  page={page}
+                  totalPages={listTotalPages}
+                  pageSize={pageSize}
+                  total={listTotal}
+                  rowCountOnPage={filteredData.length}
+                  onPageChange={setPage}
+                  onPageSizeChange={(s) => {
+                    setPageSize(s);
+                    setPage(1);
+                  }}
+                />
               </div>
             </>
           )}
@@ -845,7 +892,7 @@ export function UsersPageClient() {
                     const errorJson = (await res.json()) as { detail?: string };
                     throw new Error(errorJson.detail ?? "초대 생성 실패");
                   }
-                  await refetch();
+                  invalidateUserQueries();
                   setAddOpen(false);
                   toast.success("초대 생성됨", {
                     description: `${addForm.email} 로 초대 메일을 보냈습니다.`,
@@ -977,7 +1024,7 @@ export function UsersPageClient() {
                           };
                           throw new Error(errorJson.detail ?? "저장 실패");
                         }
-                        await refetch();
+                        invalidateUserQueries();
                         toast.success("프로필이 저장되었습니다.");
                         setSheetUser(null);
                       } catch (error) {
@@ -1036,7 +1083,7 @@ export function UsersPageClient() {
                     const errorJson = (await res.json()) as { detail?: string };
                     throw new Error(errorJson.detail ?? "삭제 실패");
                   }
-                  await refetch();
+                  invalidateUserQueries();
                   toast.success("계정이 삭제되었습니다.");
                   setDeleteTarget(null);
                   setSheetUser(null);

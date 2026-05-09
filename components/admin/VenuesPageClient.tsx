@@ -27,6 +27,11 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import type { VenueRow } from "@/types/venue";
+import { AdminListPagination } from "@/components/admin/AdminListPagination";
+import {
+  DEFAULT_ADMIN_PAGE_SIZE,
+  type AdminPageSize,
+} from "@/lib/admin-pagination";
 
 export function VenuesPageClient() {
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -39,20 +44,35 @@ export function VenuesPageClient() {
   });
 
   const [editingId, setEditingId] = React.useState<string | null>(null);
-  const [draft, setDraft] = React.useState<Pick<VenueRow, "name" | "address" | "phone_number">>({
+  const [draft, setDraft] = React.useState<
+    Pick<VenueRow, "name" | "address" | "phone_number">
+  >({
     name: "",
     address: "",
     phone_number: "",
   });
 
-  const { data = [], isLoading, refetch } = useQuery({
-    queryKey: ["admin-venues"],
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<AdminPageSize>(
+    DEFAULT_ADMIN_PAGE_SIZE,
+  );
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["admin-venues", page, pageSize],
     queryFn: async () => {
-      const res = await fetch("/api/admin/venues", { cache: "no-store" });
+      const q = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      });
+      const res = await fetch(`/api/admin/venues?${q}`, { cache: "no-store" });
       const json = (await res.json()) as {
         rows?: VenueRow[];
         warning?: string;
         detail?: string;
+        total?: number;
+        totalPages?: number;
+        page?: number;
+        pageSize?: number;
       };
       if (!res.ok) {
         throw new Error(json.detail ?? "공연장 목록을 불러오지 못했습니다.");
@@ -60,9 +80,19 @@ export function VenuesPageClient() {
       if (json.warning) {
         toast.message("안내", { description: json.warning });
       }
-      return json.rows ?? [];
+      return {
+        rows: json.rows ?? [],
+        total: json.total ?? 0,
+        totalPages: json.totalPages ?? 1,
+        page: json.page ?? page,
+        pageSize: (json.pageSize ?? pageSize) as AdminPageSize,
+      };
     },
   });
+
+  const list = data?.rows ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = data?.totalPages ?? 1;
 
   const startEdit = (row: VenueRow) => {
     setEditingId(row.id);
@@ -137,111 +167,143 @@ export function VenuesPageClient() {
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
             </div>
-          ) : data.length === 0 ? (
+          ) : list.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-surface-muted/40 py-12 text-center">
-              <p className="text-body text-text-secondary">등록된 공연장이 없습니다.</p>
+              <p className="text-body text-text-secondary">
+                등록된 공연장이 없습니다.
+              </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>이름</TableHead>
-                  <TableHead>주소</TableHead>
-                  <TableHead>연락처</TableHead>
-                  <TableHead className="w-[140px]">작업</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((row) => {
-                  const editing = editingId === row.id;
-                  return (
-                    <TableRow key={row.id}>
-                      <TableCell>
-                        {editing ? (
-                          <Input
-                            value={draft.name}
-                            onChange={(e) =>
-                              setDraft((s) => ({ ...s, name: e.target.value }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                void saveEdit(row.id);
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>이름</TableHead>
+                    <TableHead>주소</TableHead>
+                    <TableHead>연락처</TableHead>
+                    <TableHead className="w-[140px]">작업</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {list.map((row) => {
+                    const editing = editingId === row.id;
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell>
+                          {editing ? (
+                            <Input
+                              value={draft.name}
+                              onChange={(e) =>
+                                setDraft((s) => ({
+                                  ...s,
+                                  name: e.target.value,
+                                }))
                               }
-                            }}
-                          />
-                        ) : (
-                          row.name || "-"
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {editing ? (
-                          <Input
-                            value={draft.address}
-                            onChange={(e) =>
-                              setDraft((s) => ({ ...s, address: e.target.value }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                void saveEdit(row.id);
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  void saveEdit(row.id);
+                                }
+                              }}
+                            />
+                          ) : (
+                            row.name || "-"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editing ? (
+                            <Input
+                              value={draft.address}
+                              onChange={(e) =>
+                                setDraft((s) => ({
+                                  ...s,
+                                  address: e.target.value,
+                                }))
                               }
-                            }}
-                          />
-                        ) : (
-                          row.address || "-"
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {editing ? (
-                          <Input
-                            value={draft.phone_number}
-                            onChange={(e) =>
-                              setDraft((s) => ({ ...s, phone_number: e.target.value }))
-                            }
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                void saveEdit(row.id);
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  void saveEdit(row.id);
+                                }
+                              }}
+                            />
+                          ) : (
+                            row.address || "-"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editing ? (
+                            <Input
+                              value={draft.phone_number}
+                              onChange={(e) =>
+                                setDraft((s) => ({
+                                  ...s,
+                                  phone_number: e.target.value,
+                                }))
                               }
-                            }}
-                          />
-                        ) : (
-                          row.phone_number || "-"
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {editing ? (
-                          <div className="flex gap-2">
-                            <Button size="sm" onClick={() => void saveEdit(row.id)}>
-                              저장
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => setEditingId(null)}
-                            >
-                              취소
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="secondary" onClick={() => startEdit(row)}>
-                              편집
-                            </Button>
-                            <Button
-                              size="icon"
-                              variant="danger-weak"
-                              aria-label="공연장 삭제"
-                              onClick={() => void removeVenue(row.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") {
+                                  void saveEdit(row.id);
+                                }
+                              }}
+                            />
+                          ) : (
+                            row.phone_number || "-"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editing ? (
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                onClick={() => void saveEdit(row.id)}
+                              >
+                                저장
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setEditingId(null)}
+                              >
+                                취소
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() => startEdit(row)}
+                              >
+                                편집
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="danger-weak"
+                                aria-label="공연장 삭제"
+                                onClick={() => void removeVenue(row.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+              <AdminListPagination
+                page={page}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                total={total}
+                rowCountOnPage={list.length}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPage(1);
+                }}
+              />
+            </>
           )}
         </CardContent>
       </Card>
@@ -310,7 +372,12 @@ export function VenuesPageClient() {
                   }
                   toast.success("공연장이 추가되었습니다.");
                   setCreateOpen(false);
-                  setNewVenue({ id: "", name: "", address: "", phone_number: "" });
+                  setNewVenue({
+                    id: "",
+                    name: "",
+                    address: "",
+                    phone_number: "",
+                  });
                   await refetch();
                 } catch (error) {
                   toast.error("추가 실패", {

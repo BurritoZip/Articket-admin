@@ -36,6 +36,11 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import type { AlbumRow, ArtistRow, MusicVideoRow } from "@/types/artist";
+import { AdminListPagination } from "@/components/admin/AdminListPagination";
+import {
+  DEFAULT_ADMIN_PAGE_SIZE,
+  type AdminPageSize,
+} from "@/lib/admin-pagination";
 
 type ArtistDetailResponse = {
   artist: ArtistRow;
@@ -60,18 +65,33 @@ export function ArtistsPageClient() {
     related: "",
   });
 
-  const [editingArtist, setEditingArtist] = React.useState<ArtistRow | null>(null);
-  const [detailArtist, setDetailArtist] = React.useState<ArtistRow | null>(null);
+  const [editingArtist, setEditingArtist] = React.useState<ArtistRow | null>(
+    null,
+  );
+  const [detailArtist, setDetailArtist] = React.useState<ArtistRow | null>(
+    null,
+  );
   const [albums, setAlbums] = React.useState<Array<Partial<AlbumRow>>>([]);
   const [videos, setVideos] = React.useState<Array<Partial<MusicVideoRow>>>([]);
   const [detailAlbums, setDetailAlbums] = React.useState<AlbumRow[]>([]);
   const [detailVideos, setDetailVideos] = React.useState<MusicVideoRow[]>([]);
 
-  const { data = [], isLoading, refetch } = useQuery({
-    queryKey: ["admin-artists", search],
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<AdminPageSize>(
+    DEFAULT_ADMIN_PAGE_SIZE,
+  );
+
+  React.useEffect(() => {
+    setPage(1);
+  }, [search]);
+
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["admin-artists", search, page, pageSize],
     queryFn: async () => {
       const q = new URLSearchParams();
       if (search.trim()) q.set("q", search.trim());
+      q.set("page", String(page));
+      q.set("pageSize", String(pageSize));
       const res = await fetch(`/api/admin/artists?${q.toString()}`, {
         cache: "no-store",
       });
@@ -79,12 +99,22 @@ export function ArtistsPageClient() {
         rows?: ArtistRow[];
         warning?: string;
         detail?: string;
+        total?: number;
+        totalPages?: number;
       };
       if (!res.ok) throw new Error(json.detail ?? "아티스트 목록 조회 실패");
       if (json.warning) toast.message("안내", { description: json.warning });
-      return json.rows ?? [];
+      return {
+        rows: json.rows ?? [],
+        total: json.total ?? 0,
+        totalPages: json.totalPages ?? 1,
+      };
     },
   });
+
+  const list = data?.rows ?? [];
+  const total = data?.total ?? 0;
+  const totalPages = data?.totalPages ?? 1;
 
   const openCreate = () => {
     setForm({
@@ -99,8 +129,12 @@ export function ArtistsPageClient() {
   };
 
   const fetchArtistDetail = async (artistId: string) => {
-    const res = await fetch(`/api/admin/artists/${artistId}`, { cache: "no-store" });
-    const json = (await res.json()) as ArtistDetailResponse & { detail?: string };
+    const res = await fetch(`/api/admin/artists/${artistId}`, {
+      cache: "no-store",
+    });
+    const json = (await res.json()) as ArtistDetailResponse & {
+      detail?: string;
+    };
     if (!res.ok) {
       throw new Error(json.detail ?? "상세 조회 실패");
     }
@@ -221,7 +255,8 @@ export function ArtistsPageClient() {
         description="아티스트 기본 정보와 앨범/뮤직비디오를 함께 관리합니다."
         action={
           <Button onClick={openCreate}>
-            <Plus className="h-5 w-5" />아티스트 추가
+            <Plus className="h-5 w-5" />
+            아티스트 추가
           </Button>
         }
       />
@@ -244,51 +279,82 @@ export function ArtistsPageClient() {
               <Skeleton className="h-12 w-full" />
               <Skeleton className="h-12 w-full" />
             </div>
-          ) : data.length === 0 ? (
+          ) : list.length === 0 ? (
             <div className="rounded-lg border border-dashed border-border bg-surface-muted/40 py-12 text-center">
-              <p className="text-body text-text-secondary">표시할 아티스트가 없습니다.</p>
+              <p className="text-body text-text-secondary">
+                표시할 아티스트가 없습니다.
+              </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>아바타</TableHead>
-                  <TableHead>이름</TableHead>
-                  <TableHead>직업</TableHead>
-                  <TableHead>팔로워</TableHead>
-                  <TableHead>예정 공연</TableHead>
-                  <TableHead className="w-[220px]">작업</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell>
-                      <Avatar className="h-9 w-9">
-                        <AvatarFallback>{row.name.slice(0, 1)}</AvatarFallback>
-                      </Avatar>
-                    </TableCell>
-                    <TableCell className="font-medium">{row.name}</TableCell>
-                    <TableCell>{row.occupation ?? "-"}</TableCell>
-                    <TableCell>{row.followers_count ?? 0}</TableCell>
-                    <TableCell>{row.upcoming_event_count ?? 0}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => void openDetail(row)}>
-                          상세
-                        </Button>
-                        <Button size="sm" variant="secondary" onClick={() => void openEdit(row)}>
-                          <Pencil className="mr-1 h-4 w-4" />편집
-                        </Button>
-                        <Button size="icon" variant="danger-weak" onClick={() => void removeArtist(row.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>아바타</TableHead>
+                    <TableHead>이름</TableHead>
+                    <TableHead>직업</TableHead>
+                    <TableHead>팔로워</TableHead>
+                    <TableHead>예정 공연</TableHead>
+                    <TableHead className="w-[220px]">작업</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {list.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell>
+                        <Avatar className="h-9 w-9">
+                          <AvatarFallback>
+                            {row.name.slice(0, 1)}
+                          </AvatarFallback>
+                        </Avatar>
+                      </TableCell>
+                      <TableCell className="font-medium">{row.name}</TableCell>
+                      <TableCell>{row.occupation ?? "-"}</TableCell>
+                      <TableCell>{row.followers_count ?? 0}</TableCell>
+                      <TableCell>{row.upcoming_event_count ?? 0}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void openDetail(row)}
+                          >
+                            상세
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void openEdit(row)}
+                          >
+                            <Pencil className="mr-1 h-4 w-4" />
+                            편집
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="danger-weak"
+                            onClick={() => void removeArtist(row.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <AdminListPagination
+                page={page}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                total={total}
+                rowCountOnPage={list.length}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPage(1);
+                }}
+              />
+            </>
           )}
         </CardContent>
       </Card>
@@ -315,12 +381,24 @@ export function ArtistsPageClient() {
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>아티스트 수정</DialogTitle>
-            <DialogDescription>기본 정보와 연결 콘텐츠를 함께 관리합니다.</DialogDescription>
+            <DialogDescription>
+              기본 정보와 연결 콘텐츠를 함께 관리합니다.
+            </DialogDescription>
           </DialogHeader>
           <div className="max-h-[70vh] space-y-6 overflow-y-auto pr-1">
             <ArtistForm form={form} setForm={setForm} />
-            <NestedListEditor title="앨범" rows={albums} setRows={setAlbums} isVideo={false} />
-            <NestedListEditor title="뮤직비디오" rows={videos} setRows={setVideos} isVideo />
+            <NestedListEditor
+              title="앨범"
+              rows={albums}
+              setRows={setAlbums}
+              isVideo={false}
+            />
+            <NestedListEditor
+              title="뮤직비디오"
+              rows={videos}
+              setRows={setVideos}
+              isVideo
+            />
           </div>
           <DialogFooter>
             <Button
@@ -351,21 +429,41 @@ export function ArtistsPageClient() {
             <>
               <SheetHeader>
                 <SheetTitle>{detailArtist.name}</SheetTitle>
-                <SheetDescription>{detailArtist.occupation ?? "-"}</SheetDescription>
+                <SheetDescription>
+                  {detailArtist.occupation ?? "-"}
+                </SheetDescription>
               </SheetHeader>
               <div className="flex-1 space-y-4 overflow-y-auto py-4 text-body-sm">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <DetailItem label="이름" value={detailArtist.name} />
-                  <DetailItem label="직업" value={detailArtist.occupation ?? "-"} />
-                  <DetailItem label="팔로워 수" value={String(detailArtist.followers_count ?? 0)} />
+                  <DetailItem
+                    label="직업"
+                    value={detailArtist.occupation ?? "-"}
+                  />
+                  <DetailItem
+                    label="팔로워 수"
+                    value={String(detailArtist.followers_count ?? 0)}
+                  />
                   <DetailItem
                     label="예정 공연 수"
                     value={String(detailArtist.upcoming_event_count ?? 0)}
                   />
-                  <DetailItem label="생년월일" value={detailArtist.birth_date ?? "-"} />
-                  <DetailItem label="출생지" value={detailArtist.birth_place ?? "-"} />
-                  <DetailItem label="관련 아티스트" value={detailArtist.related ?? "-"} />
-                  <DetailItem label="아바타 URL" value={detailArtist.avatar_url ?? "-"} />
+                  <DetailItem
+                    label="생년월일"
+                    value={detailArtist.birth_date ?? "-"}
+                  />
+                  <DetailItem
+                    label="출생지"
+                    value={detailArtist.birth_place ?? "-"}
+                  />
+                  <DetailItem
+                    label="관련 아티스트"
+                    value={detailArtist.related ?? "-"}
+                  />
+                  <DetailItem
+                    label="아바타 URL"
+                    value={detailArtist.avatar_url ?? "-"}
+                  />
                 </div>
 
                 <div>
@@ -374,11 +472,18 @@ export function ArtistsPageClient() {
                   </p>
                   <div className="space-y-2">
                     {detailAlbums.length === 0 ? (
-                      <p className="text-caption text-text-tertiary">등록된 앨범이 없습니다.</p>
+                      <p className="text-caption text-text-tertiary">
+                        등록된 앨범이 없습니다.
+                      </p>
                     ) : (
                       detailAlbums.map((a) => (
-                        <div key={a.id} className="rounded-md border border-border p-3">
-                          <p className="font-medium text-text-primary">{a.title}</p>
+                        <div
+                          key={a.id}
+                          className="rounded-md border border-border p-3"
+                        >
+                          <p className="font-medium text-text-primary">
+                            {a.title}
+                          </p>
                           <p className="text-caption text-text-secondary">
                             발매연도: {a.released_year ?? "-"}
                           </p>
@@ -394,11 +499,18 @@ export function ArtistsPageClient() {
                   </p>
                   <div className="space-y-2">
                     {detailVideos.length === 0 ? (
-                      <p className="text-caption text-text-tertiary">등록된 영상이 없습니다.</p>
+                      <p className="text-caption text-text-tertiary">
+                        등록된 영상이 없습니다.
+                      </p>
                     ) : (
                       detailVideos.map((v) => (
-                        <div key={v.id} className="rounded-md border border-border p-3">
-                          <p className="font-medium text-text-primary">{v.title}</p>
+                        <div
+                          key={v.id}
+                          className="rounded-md border border-border p-3"
+                        >
+                          <p className="font-medium text-text-primary">
+                            {v.title}
+                          </p>
                           <p className="text-caption text-text-secondary">
                             업로드일: {v.uploaded_at ?? "-"}
                           </p>
@@ -456,7 +568,9 @@ function ArtistForm({
           <Input
             id="artist-occupation"
             value={form.occupation ?? ""}
-            onChange={(e) => setForm((s) => ({ ...s, occupation: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, occupation: e.target.value }))
+            }
           />
         </div>
         <div className="space-y-2">
@@ -464,7 +578,9 @@ function ArtistForm({
           <Input
             id="artist-related"
             value={form.related ?? ""}
-            onChange={(e) => setForm((s) => ({ ...s, related: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, related: e.target.value }))
+            }
           />
         </div>
       </div>
@@ -474,7 +590,9 @@ function ArtistForm({
           <Input
             id="artist-birth-date"
             value={form.birth_date ?? ""}
-            onChange={(e) => setForm((s) => ({ ...s, birth_date: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, birth_date: e.target.value }))
+            }
           />
         </div>
         <div className="space-y-2">
@@ -482,7 +600,9 @@ function ArtistForm({
           <Input
             id="artist-birth-place"
             value={form.birth_place ?? ""}
-            onChange={(e) => setForm((s) => ({ ...s, birth_place: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, birth_place: e.target.value }))
+            }
           />
         </div>
       </div>
@@ -491,7 +611,9 @@ function ArtistForm({
         <Input
           id="artist-avatar"
           value={form.avatar_url ?? ""}
-          onChange={(e) => setForm((s) => ({ ...s, avatar_url: e.target.value }))}
+          onChange={(e) =>
+            setForm((s) => ({ ...s, avatar_url: e.target.value }))
+          }
         />
       </div>
     </div>
@@ -518,7 +640,9 @@ function NestedListEditor({
   return (
     <div className="space-y-2 rounded-lg border border-border p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-body-sm font-semibold text-text-primary">{title}</h3>
+        <h3 className="text-body-sm font-semibold text-text-primary">
+          {title}
+        </h3>
         <Button size="sm" variant="secondary" onClick={addRow}>
           항목 추가
         </Button>
@@ -534,7 +658,9 @@ function NestedListEditor({
                 value={row.title ?? ""}
                 onChange={(e) =>
                   setRows((prev) =>
-                    prev.map((r, i) => (i === idx ? { ...r, title: e.target.value } : r)),
+                    prev.map((r, i) =>
+                      i === idx ? { ...r, title: e.target.value } : r,
+                    ),
                   )
                 }
               />
@@ -580,7 +706,9 @@ function NestedListEditor({
                 <Button
                   size="icon"
                   variant="danger-weak"
-                  onClick={() => setRows((prev) => prev.filter((_, i) => i !== idx))}
+                  onClick={() =>
+                    setRows((prev) => prev.filter((_, i) => i !== idx))
+                  }
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>

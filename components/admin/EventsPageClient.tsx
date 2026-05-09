@@ -44,12 +44,21 @@ import {
 } from "@/components/ui/Table";
 import { formatKst } from "@/lib/format-kst";
 import type { EventRow, EventStatus, OptionItem } from "@/types/event";
+import { AdminListPagination } from "@/components/admin/AdminListPagination";
+import {
+  DEFAULT_ADMIN_PAGE_SIZE,
+  type AdminPageSize,
+} from "@/lib/admin-pagination";
 
 type EventQueryResponse = {
   rows: EventRow[];
   artists: OptionItem[];
   venues: OptionItem[];
   warning?: string;
+  total?: number;
+  totalPages?: number;
+  page?: number;
+  pageSize?: number;
 };
 
 const STATUS_LABEL: Record<EventStatus, string> = {
@@ -61,6 +70,10 @@ const STATUS_LABEL: Record<EventStatus, string> = {
 export function EventsPageClient() {
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
+  const [page, setPage] = React.useState(1);
+  const [pageSize, setPageSize] = React.useState<AdminPageSize>(
+    DEFAULT_ADMIN_PAGE_SIZE,
+  );
 
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
@@ -81,12 +94,18 @@ export function EventsPageClient() {
     is_banner: false,
   });
 
+  React.useEffect(() => {
+    setPage(1);
+  }, [search, statusFilter]);
+
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin-events", search, statusFilter],
+    queryKey: ["admin-events", search, statusFilter, page, pageSize],
     queryFn: async () => {
       const q = new URLSearchParams();
       if (search.trim()) q.set("q", search.trim());
       if (statusFilter !== "all") q.set("status", statusFilter);
+      q.set("page", String(page));
+      q.set("pageSize", String(pageSize));
 
       const res = await fetch(`/api/admin/events?${q.toString()}`, {
         cache: "no-store",
@@ -105,6 +124,8 @@ export function EventsPageClient() {
   });
 
   const rows = React.useMemo(() => data?.rows ?? [], [data]);
+  const total = data?.total ?? 0;
+  const totalPages = data?.totalPages ?? 1;
   const artists = React.useMemo(() => data?.artists ?? [], [data]);
   const venues = React.useMemo(() => data?.venues ?? [], [data]);
 
@@ -286,69 +307,85 @@ export function EventsPageClient() {
               </p>
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>공연명</TableHead>
-                  <TableHead>아티스트</TableHead>
-                  <TableHead>공연장</TableHead>
-                  <TableHead>시작일</TableHead>
-                  <TableHead>상태</TableHead>
-                  <TableHead>배너</TableHead>
-                  <TableHead className="w-[160px]">작업</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium">{row.title}</TableCell>
-                    <TableCell>{artistMap.get(row.artist_id) ?? "-"}</TableCell>
-                    <TableCell>{venueMap.get(row.venue_id) ?? "-"}</TableCell>
-                    <TableCell>{formatKst(row.start_date)}</TableCell>
-                    <TableCell>
-                      <Badge
-                        variant={
-                          row.status === "on_sale"
-                            ? "success"
-                            : row.status === "upcoming"
-                              ? "warning"
-                              : "outline"
-                        }
-                      >
-                        {STATUS_LABEL[row.status]}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>{row.is_banner ? "ON" : "OFF"}</TableCell>
-                    <TableCell>
-                      <div className="flex gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => openDetail(row)}
-                        >
-                          상세
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => openEdit(row)}
-                        >
-                          <Pencil className="mr-1 h-4 w-4" />
-                          편집
-                        </Button>
-                        <Button
-                          size="icon"
-                          variant="danger-weak"
-                          onClick={() => void removeEvent(row.id)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
+            <>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>공연명</TableHead>
+                    <TableHead>아티스트</TableHead>
+                    <TableHead>공연장</TableHead>
+                    <TableHead>시작일</TableHead>
+                    <TableHead>상태</TableHead>
+                    <TableHead>배너</TableHead>
+                    <TableHead className="w-[160px]">작업</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((row) => (
+                    <TableRow key={row.id}>
+                      <TableCell className="font-medium">{row.title}</TableCell>
+                      <TableCell>
+                        {artistMap.get(row.artist_id) ?? "-"}
+                      </TableCell>
+                      <TableCell>{venueMap.get(row.venue_id) ?? "-"}</TableCell>
+                      <TableCell>{formatKst(row.start_date)}</TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            row.status === "on_sale"
+                              ? "success"
+                              : row.status === "upcoming"
+                                ? "warning"
+                                : "outline"
+                          }
+                        >
+                          {STATUS_LABEL[row.status]}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>{row.is_banner ? "ON" : "OFF"}</TableCell>
+                      <TableCell>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openDetail(row)}
+                          >
+                            상세
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => openEdit(row)}
+                          >
+                            <Pencil className="mr-1 h-4 w-4" />
+                            편집
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="danger-weak"
+                            onClick={() => void removeEvent(row.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+              <AdminListPagination
+                page={page}
+                totalPages={totalPages}
+                pageSize={pageSize}
+                total={total}
+                rowCountOnPage={rows.length}
+                onPageChange={setPage}
+                onPageSizeChange={(s) => {
+                  setPageSize(s);
+                  setPage(1);
+                }}
+              />
+            </>
           )}
         </CardContent>
       </Card>
