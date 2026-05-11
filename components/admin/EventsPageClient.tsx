@@ -49,6 +49,12 @@ import {
   DEFAULT_ADMIN_PAGE_SIZE,
   type AdminPageSize,
 } from "@/lib/admin-pagination";
+import {
+  CompletenessFilterBar,
+  type CompletenessStats,
+} from "@/components/admin/CompletenessFilterBar";
+import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
+import { EVENT_FIELDS } from "@/lib/completeness";
 
 type EventQueryResponse = {
   rows: EventRow[];
@@ -94,18 +100,31 @@ export function EventsPageClient() {
     is_banner: false,
   });
 
+  const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
+  const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
+
   React.useEffect(() => {
     setPage(1);
-  }, [search, statusFilter]);
+  }, [search, statusFilter, missingFilter, duplicatesFilter]);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin-events", search, statusFilter, page, pageSize],
+    queryKey: [
+      "admin-events",
+      search,
+      statusFilter,
+      page,
+      pageSize,
+      missingFilter,
+      duplicatesFilter,
+    ],
     queryFn: async () => {
       const q = new URLSearchParams();
       if (search.trim()) q.set("q", search.trim());
       if (statusFilter !== "all") q.set("status", statusFilter);
       q.set("page", String(page));
       q.set("pageSize", String(pageSize));
+      if (missingFilter) q.set("missing", missingFilter);
+      if (duplicatesFilter) q.set("duplicates", "true");
 
       const res = await fetch(`/api/admin/events?${q.toString()}`, {
         cache: "no-store",
@@ -121,6 +140,19 @@ export function EventsPageClient() {
       }
       return json;
     },
+  });
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["admin-events-stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/events/stats", {
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      return res.json() as Promise<CompletenessStats>;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
   const rows = React.useMemo(() => data?.rows ?? [], [data]);
@@ -293,6 +325,15 @@ export function EventsPageClient() {
               </SelectContent>
             </Select>
           </div>
+          <CompletenessFilterBar
+            fields={EVENT_FIELDS}
+            stats={stats ?? null}
+            statsLoading={statsLoading}
+            missingFilter={missingFilter}
+            duplicatesFilter={duplicatesFilter}
+            onMissingFilter={setMissingFilter}
+            onDuplicatesFilter={setDuplicatesFilter}
+          />
 
           {isLoading ? (
             <div className="space-y-2" aria-busy>
@@ -316,6 +357,7 @@ export function EventsPageClient() {
                     <TableHead>공연장</TableHead>
                     <TableHead>시작일</TableHead>
                     <TableHead>상태</TableHead>
+                    <TableHead>완성도</TableHead>
                     <TableHead>배너</TableHead>
                     <TableHead className="w-[160px]">작업</TableHead>
                   </TableRow>
@@ -341,6 +383,12 @@ export function EventsPageClient() {
                         >
                           {STATUS_LABEL[row.status]}
                         </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <MissingFieldChips
+                          row={row as Record<string, unknown>}
+                          fields={EVENT_FIELDS}
+                        />
                       </TableCell>
                       <TableCell>{row.is_banner ? "ON" : "OFF"}</TableCell>
                       <TableCell>
