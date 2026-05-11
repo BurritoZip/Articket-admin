@@ -14,9 +14,23 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const search = url.searchParams.get("q")?.trim();
   const status = url.searchParams.get("status")?.trim();
+  const missingField = url.searchParams.get("missing")?.trim();
+  const duplicatesOnly = url.searchParams.get("duplicates") === "true";
   const { page, pageSize } = parseAdminPagination(url.searchParams);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
+
+  const VALID_MISSING = new Set([
+    "poster_url",
+    "end_date",
+    "genre",
+    "duration",
+    "age_restriction",
+    "ticket_open_date",
+    "ticket_provider",
+    "notice_text",
+  ]);
+  const NULL_ONLY = new Set(["end_date", "ticket_open_date"]);
 
   const supabase = createClient();
 
@@ -31,6 +45,40 @@ export async function GET(request: Request) {
   if (search) eventsQuery = eventsQuery.ilike("title", `%${search}%`);
   if (status && ["upcoming", "on_sale", "ended"].includes(status)) {
     eventsQuery = eventsQuery.eq("status", status);
+  }
+
+  if (missingField && VALID_MISSING.has(missingField)) {
+    if (NULL_ONLY.has(missingField)) {
+      eventsQuery = eventsQuery.is(missingField, null);
+    } else {
+      eventsQuery = eventsQuery.or(
+        `${missingField}.is.null,${missingField}.eq.`,
+      );
+    }
+  }
+
+  if (duplicatesOnly) {
+    const { data: allTitles } = await supabase.from("events").select("title");
+    const titleCounts: Record<string, number> = {};
+    for (const { title } of allTitles ?? []) {
+      titleCounts[title] = (titleCounts[title] ?? 0) + 1;
+    }
+    const duplicateTitles = Object.keys(titleCounts).filter(
+      (t) => titleCounts[t] > 1,
+    );
+    if (duplicateTitles.length === 0) {
+      const [artistsRes, venuesRes] = await Promise.all([
+        supabase.from("artists").select("id, name").order("name"),
+        supabase.from("venues").select("id, name").order("name"),
+      ]);
+      return NextResponse.json({
+        rows: [],
+        artists: artistsRes.data ?? [],
+        venues: venuesRes.data ?? [],
+        ...buildPaginationMeta(page, pageSize, 0),
+      });
+    }
+    eventsQuery = eventsQuery.in("title", duplicateTitles);
   }
 
   const [eventsRes, artistsRes, venuesRes] = await Promise.all([

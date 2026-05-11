@@ -32,6 +32,12 @@ import {
   DEFAULT_ADMIN_PAGE_SIZE,
   type AdminPageSize,
 } from "@/lib/admin-pagination";
+import {
+  CompletenessFilterBar,
+  type CompletenessStats,
+} from "@/components/admin/CompletenessFilterBar";
+import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
+import { VENUE_FIELDS } from "@/lib/completeness";
 
 export function VenuesPageClient() {
   const [createOpen, setCreateOpen] = React.useState(false);
@@ -56,14 +62,22 @@ export function VenuesPageClient() {
   const [pageSize, setPageSize] = React.useState<AdminPageSize>(
     DEFAULT_ADMIN_PAGE_SIZE,
   );
+  const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
+  const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
+
+  React.useEffect(() => {
+    setPage(1);
+  }, [missingFilter, duplicatesFilter]);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin-venues", page, pageSize],
+    queryKey: ["admin-venues", page, pageSize, missingFilter, duplicatesFilter],
     queryFn: async () => {
       const q = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       });
+      if (missingFilter) q.set("missing", missingFilter);
+      if (duplicatesFilter) q.set("duplicates", "true");
       const res = await fetch(`/api/admin/venues?${q}`, { cache: "no-store" });
       const json = (await res.json()) as {
         rows?: VenueRow[];
@@ -88,6 +102,19 @@ export function VenuesPageClient() {
         pageSize: (json.pageSize ?? pageSize) as AdminPageSize,
       };
     },
+  });
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["admin-venues-stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/venues/stats", {
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      return res.json() as Promise<CompletenessStats>;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
   const list = data?.rows ?? [];
@@ -160,7 +187,16 @@ export function VenuesPageClient() {
         <CardHeader className="border-b border-border pb-4">
           <CardTitle className="text-h3">공연장 목록</CardTitle>
         </CardHeader>
-        <CardContent className="p-4 sm:p-6">
+        <CardContent className="space-y-4 p-4 sm:p-6">
+          <CompletenessFilterBar
+            fields={VENUE_FIELDS}
+            stats={stats ?? null}
+            statsLoading={statsLoading}
+            missingFilter={missingFilter}
+            duplicatesFilter={duplicatesFilter}
+            onMissingFilter={setMissingFilter}
+            onDuplicatesFilter={setDuplicatesFilter}
+          />
           {isLoading ? (
             <div className="space-y-2" aria-busy>
               <Skeleton className="h-12 w-full" />
@@ -181,6 +217,7 @@ export function VenuesPageClient() {
                     <TableHead>이름</TableHead>
                     <TableHead>주소</TableHead>
                     <TableHead>연락처</TableHead>
+                    <TableHead>완성도</TableHead>
                     <TableHead className="w-[140px]">작업</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -247,6 +284,14 @@ export function VenuesPageClient() {
                             />
                           ) : (
                             row.phone_number || "-"
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {!editing && (
+                            <MissingFieldChips
+                              row={row as Record<string, unknown>}
+                              fields={VENUE_FIELDS}
+                            />
                           )}
                         </TableCell>
                         <TableCell>

@@ -13,9 +13,20 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url);
   const q = url.searchParams.get("q")?.trim();
+  const missingField = url.searchParams.get("missing")?.trim();
+  const duplicatesOnly = url.searchParams.get("duplicates") === "true";
   const { page, pageSize } = parseAdminPagination(url.searchParams);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
+
+  const VALID_MISSING = new Set([
+    "avatar_url",
+    "occupation",
+    "birth_date",
+    "birth_place",
+    "related",
+  ]);
+  const NULL_ONLY = new Set(["birth_date"]);
 
   const supabase = createClient();
   let query = supabase
@@ -27,6 +38,32 @@ export async function GET(request: Request) {
     .order("name", { ascending: true });
 
   if (q) query = query.ilike("name", `%${q}%`);
+
+  if (missingField && VALID_MISSING.has(missingField)) {
+    if (NULL_ONLY.has(missingField)) {
+      query = query.is(missingField, null);
+    } else {
+      query = query.or(`${missingField}.is.null,${missingField}.eq.`);
+    }
+  }
+
+  if (duplicatesOnly) {
+    const { data: allNames } = await supabase.from("artists").select("name");
+    const nameCounts: Record<string, number> = {};
+    for (const { name } of allNames ?? []) {
+      nameCounts[name] = (nameCounts[name] ?? 0) + 1;
+    }
+    const duplicateNames = Object.keys(nameCounts).filter(
+      (n) => nameCounts[n] > 1,
+    );
+    if (duplicateNames.length === 0) {
+      return NextResponse.json({
+        rows: [],
+        ...buildPaginationMeta(page, pageSize, 0),
+      });
+    }
+    query = query.in("name", duplicateNames);
+  }
 
   const res = await query.range(from, to);
   if (res.error) {

@@ -41,6 +41,12 @@ import {
   DEFAULT_ADMIN_PAGE_SIZE,
   type AdminPageSize,
 } from "@/lib/admin-pagination";
+import {
+  CompletenessFilterBar,
+  type CompletenessStats,
+} from "@/components/admin/CompletenessFilterBar";
+import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
+import { ARTIST_FIELDS } from "@/lib/completeness";
 
 type ArtistDetailResponse = {
   artist: ArtistRow;
@@ -80,18 +86,29 @@ export function ArtistsPageClient() {
   const [pageSize, setPageSize] = React.useState<AdminPageSize>(
     DEFAULT_ADMIN_PAGE_SIZE,
   );
+  const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
+  const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
 
   React.useEffect(() => {
     setPage(1);
-  }, [search]);
+  }, [search, missingFilter, duplicatesFilter]);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin-artists", search, page, pageSize],
+    queryKey: [
+      "admin-artists",
+      search,
+      page,
+      pageSize,
+      missingFilter,
+      duplicatesFilter,
+    ],
     queryFn: async () => {
       const q = new URLSearchParams();
       if (search.trim()) q.set("q", search.trim());
       q.set("page", String(page));
       q.set("pageSize", String(pageSize));
+      if (missingFilter) q.set("missing", missingFilter);
+      if (duplicatesFilter) q.set("duplicates", "true");
       const res = await fetch(`/api/admin/artists?${q.toString()}`, {
         cache: "no-store",
       });
@@ -110,6 +127,19 @@ export function ArtistsPageClient() {
         totalPages: json.totalPages ?? 1,
       };
     },
+  });
+
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ["admin-artists-stats"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/artists/stats", {
+        cache: "no-store",
+      });
+      if (!res.ok) return null;
+      return res.json() as Promise<CompletenessStats>;
+    },
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
   });
 
   const list = data?.rows ?? [];
@@ -272,6 +302,15 @@ export function ArtistsPageClient() {
             onChange={(e) => setSearch(e.target.value)}
             className="max-w-sm"
           />
+          <CompletenessFilterBar
+            fields={ARTIST_FIELDS}
+            stats={stats ?? null}
+            statsLoading={statsLoading}
+            missingFilter={missingFilter}
+            duplicatesFilter={duplicatesFilter}
+            onMissingFilter={setMissingFilter}
+            onDuplicatesFilter={setDuplicatesFilter}
+          />
 
           {isLoading ? (
             <div className="space-y-2" aria-busy>
@@ -295,6 +334,7 @@ export function ArtistsPageClient() {
                     <TableHead>직업</TableHead>
                     <TableHead>팔로워</TableHead>
                     <TableHead>예정 공연</TableHead>
+                    <TableHead>완성도</TableHead>
                     <TableHead className="w-[220px]">작업</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -312,6 +352,12 @@ export function ArtistsPageClient() {
                       <TableCell>{row.occupation ?? "-"}</TableCell>
                       <TableCell>{row.followers_count ?? 0}</TableCell>
                       <TableCell>{row.upcoming_event_count ?? 0}</TableCell>
+                      <TableCell>
+                        <MissingFieldChips
+                          row={row as Record<string, unknown>}
+                          fields={ARTIST_FIELDS}
+                        />
+                      </TableCell>
                       <TableCell>
                         <div className="flex gap-2">
                           <Button
