@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 
 export async function PATCH(
@@ -27,7 +28,10 @@ export async function PATCH(
   }
 
   const supabase = createClient();
-  const { error } = await supabase.from("venues").update(payload).eq("id", params.id);
+  const { error } = await supabase
+    .from("venues")
+    .update(payload)
+    .eq("id", params.id);
 
   if (error) {
     return NextResponse.json(
@@ -46,7 +50,7 @@ export async function DELETE(
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const supabase = createClient();
+  const supabase = createServiceRoleClient();
   const { error } = await supabase.from("venues").delete().eq("id", params.id);
 
   if (error) {
