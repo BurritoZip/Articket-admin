@@ -37,7 +37,7 @@ export async function GET(request: Request) {
   let eventsQuery = supabase
     .from("events")
     .select(
-      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, notice_text, is_banner",
+      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, notice_text, is_banner, has_timetable",
       { count: "exact" },
     )
     .order("start_date", { ascending: false });
@@ -162,6 +162,7 @@ export async function POST(request: Request) {
     ticket_provider: body.ticket_provider ?? null,
     notice_text: body.notice_text ?? null,
     is_banner: body.is_banner ?? false,
+    has_timetable: body.has_timetable ?? false,
   });
 
   if (error) {

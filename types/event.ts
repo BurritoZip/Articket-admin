@@ -16,6 +16,7 @@ export type EventRow = {
   ticket_provider: string | null;
   notice_text: string | null;
   is_banner: boolean;
+  has_timetable: boolean;
 };
 
 export type OptionItem = {

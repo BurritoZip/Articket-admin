@@ -1,8 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Pencil, Plus, Trash2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarDays, ListMusic, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -55,6 +55,7 @@ import {
 } from "@/components/admin/CompletenessFilterBar";
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { EVENT_FIELDS } from "@/lib/completeness";
+import { TimetableSheet } from "@/components/admin/TimetableSheet";
 
 type EventQueryResponse = {
   rows: EventRow[];
@@ -74,6 +75,7 @@ const STATUS_LABEL: Record<EventStatus, string> = {
 };
 
 export function EventsPageClient() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
   const [page, setPage] = React.useState(1);
@@ -84,10 +86,14 @@ export function EventsPageClient() {
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
   const [detailOpen, setDetailOpen] = React.useState(false);
+  const [timetableOpen, setTimetableOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
 
   const [editingEvent, setEditingEvent] = React.useState<EventRow | null>(null);
   const [detailEvent, setDetailEvent] = React.useState<EventRow | null>(null);
+  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(
+    null,
+  );
 
   const [form, setForm] = React.useState<Partial<EventRow>>({
     title: "",
@@ -197,6 +203,21 @@ export function EventsPageClient() {
   const openDetail = (event: EventRow) => {
     setDetailEvent(event);
     setDetailOpen(true);
+  };
+
+  const openTimetable = (event: EventRow) => {
+    setTimetableEvent(event);
+    setTimetableOpen(true);
+  };
+
+  const handleTimetableAdded = async () => {
+    if (!timetableEvent) return;
+    await fetch(`/api/admin/events/${timetableEvent.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ has_timetable: true }),
+    });
+    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
 
   const submitCreate = async () => {
@@ -359,7 +380,8 @@ export function EventsPageClient() {
                     <TableHead>상태</TableHead>
                     <TableHead>완성도</TableHead>
                     <TableHead>배너</TableHead>
-                    <TableHead className="w-[160px]">작업</TableHead>
+                    <TableHead>타임테이블</TableHead>
+                    <TableHead className="w-[200px]">작업</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -392,6 +414,13 @@ export function EventsPageClient() {
                       </TableCell>
                       <TableCell>{row.is_banner ? "ON" : "OFF"}</TableCell>
                       <TableCell>
+                        <Badge
+                          variant={row.has_timetable ? "success" : "outline"}
+                        >
+                          {row.has_timetable ? "있음" : "없음"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
                         <div className="flex gap-2">
                           <Button
                             size="sm"
@@ -407,6 +436,14 @@ export function EventsPageClient() {
                           >
                             <Pencil className="mr-1 h-4 w-4" />
                             편집
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => openTimetable(row)}
+                          >
+                            <ListMusic className="mr-1 h-4 w-4" />
+                            타임테이블
                           </Button>
                           <Button
                             size="icon"
@@ -544,6 +581,10 @@ export function EventsPageClient() {
                     label="포스터 URL"
                     value={detailEvent.poster_url ?? "-"}
                   />
+                  <InfoItem
+                    label="타임테이블"
+                    value={detailEvent.has_timetable ? "있음" : "없음"}
+                  />
                 </div>
                 <div>
                   <p className="mb-2 text-caption font-semibold text-text-tertiary">
@@ -572,6 +613,13 @@ export function EventsPageClient() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <TimetableSheet
+        event={timetableEvent}
+        open={timetableOpen}
+        onOpenChange={setTimetableOpen}
+        onHasTimetableChange={() => void handleTimetableAdded()}
+      />
     </div>
   );
 }
