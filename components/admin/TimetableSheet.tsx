@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/Select";
+import {
   Sheet,
   SheetContent,
   SheetDescription,
@@ -314,6 +321,30 @@ type FormState = Omit<
   "id" | "event_id" | "created_at"
 >;
 
+const STAGE_OPTIONS = [
+  "MAIN STAGE",
+  "STAGE A",
+  "STAGE B",
+  "STAGE C",
+  "STAGE D",
+  "GREEN STAGE",
+  "BLUE STAGE",
+  "RED STAGE",
+];
+
+const GENRE_OPTIONS = [
+  "K-POP",
+  "POP",
+  "R&B",
+  "HIP-HOP",
+  "ROCK",
+  "INDIE",
+  "EDM",
+  "JAZZ",
+  "BALLAD",
+  "DANCE",
+];
+
 function TimetableForm({
   form,
   setForm,
@@ -321,28 +352,46 @@ function TimetableForm({
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
 }) {
+  const dateInputValue = form.date_string
+    ? form.date_string.replace(/\./g, "-")
+    : "";
+
+  const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const iso = e.target.value; // "2026-05-22"
+    const formatted = iso.replace(/-/g, "."); // "2026.05.22"
+    const day = form.day_number;
+    setForm((s) => ({ ...s, date_string: formatted, day_number: day }));
+  };
+
   return (
     <div className="grid gap-4 py-2">
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>DAY</Label>
-          <Input
-            type="number"
-            min={1}
-            value={form.day_number}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, day_number: Number(e.target.value) }))
+          <Select
+            value={String(form.day_number)}
+            onValueChange={(v) =>
+              setForm((s) => ({ ...s, day_number: Number(v) }))
             }
-          />
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="DAY 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              {[1, 2, 3, 4, 5].map((d) => (
+                <SelectItem key={d} value={String(d)}>
+                  DAY {d}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
         <div className="space-y-2">
           <Label>날짜</Label>
           <Input
-            placeholder="2026.05.22"
-            value={form.date_string}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, date_string: e.target.value }))
-            }
+            type="date"
+            value={dateInputValue}
+            onChange={handleDateChange}
           />
         </div>
       </div>
@@ -350,7 +399,7 @@ function TimetableForm({
         <div className="space-y-2">
           <Label>시작 시간</Label>
           <Input
-            placeholder="17:00"
+            type="time"
             value={form.start_time}
             onChange={(e) =>
               setForm((s) => ({ ...s, start_time: e.target.value }))
@@ -360,7 +409,7 @@ function TimetableForm({
         <div className="space-y-2">
           <Label>종료 시간</Label>
           <Input
-            placeholder="18:00"
+            type="time"
             value={form.end_time}
             onChange={(e) =>
               setForm((s) => ({ ...s, end_time: e.target.value }))
@@ -381,21 +430,51 @@ function TimetableForm({
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
           <Label>스테이지</Label>
-          <Input
-            placeholder="STAGE A"
+          <Select
             value={form.stage_name}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, stage_name: e.target.value }))
-            }
-          />
+            onValueChange={(v) => setForm((s) => ({ ...s, stage_name: v }))}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="스테이지 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              {STAGE_OPTIONS.map((s) => (
+                <SelectItem key={s} value={s}>
+                  {s}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {!STAGE_OPTIONS.includes(form.stage_name) && form.stage_name && (
+            <Input
+              placeholder="직접 입력"
+              value={form.stage_name}
+              onChange={(e) =>
+                setForm((s) => ({ ...s, stage_name: e.target.value }))
+              }
+            />
+          )}
         </div>
         <div className="space-y-2">
-          <Label>장르 (선택)</Label>
-          <Input
-            placeholder="K-POP"
-            value={form.genre}
-            onChange={(e) => setForm((s) => ({ ...s, genre: e.target.value }))}
-          />
+          <Label>장르</Label>
+          <Select
+            value={form.genre || "__none__"}
+            onValueChange={(v) =>
+              setForm((s) => ({ ...s, genre: v === "__none__" ? "" : v }))
+            }
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="장르 선택" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">선택 안 함</SelectItem>
+              {GENRE_OPTIONS.map((g) => (
+                <SelectItem key={g} value={g}>
+                  {g}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
     </div>
