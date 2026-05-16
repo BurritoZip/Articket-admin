@@ -2,7 +2,14 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, ListMusic, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  CalendarDays,
+  ListMusic,
+  MoreHorizontal,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
@@ -56,6 +63,13 @@ import {
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { EVENT_FIELDS } from "@/lib/completeness";
 import { TimetableSheet } from "@/components/admin/TimetableSheet";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/DropdownMenu";
 
 type EventQueryResponse = {
   rows: EventRow[];
@@ -381,7 +395,7 @@ export function EventsPageClient() {
                     <TableHead>완성도</TableHead>
                     <TableHead>배너</TableHead>
                     <TableHead>타임테이블</TableHead>
-                    <TableHead className="w-[200px]">작업</TableHead>
+                    <TableHead className="w-[80px]">작업</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -414,45 +428,47 @@ export function EventsPageClient() {
                       </TableCell>
                       <TableCell>{row.is_banner ? "ON" : "OFF"}</TableCell>
                       <TableCell>
-                        <Badge
-                          variant={row.has_timetable ? "success" : "outline"}
-                        >
-                          {row.has_timetable ? "있음" : "없음"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => openDetail(row)}
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant={row.has_timetable ? "success" : "outline"}
                           >
-                            상세
-                          </Button>
+                            {row.has_timetable ? "있음" : "없음"}
+                          </Badge>
                           <Button
                             size="sm"
                             variant="secondary"
-                            onClick={() => openEdit(row)}
-                          >
-                            <Pencil className="mr-1 h-4 w-4" />
-                            편집
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
                             onClick={() => openTimetable(row)}
                           >
                             <ListMusic className="mr-1 h-4 w-4" />
-                            타임테이블
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="danger-weak"
-                            onClick={() => void removeEvent(row.id)}
-                          >
-                            <Trash2 className="h-4 w-4" />
+                            관리
                           </Button>
                         </div>
+                      </TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button size="icon" variant="outline">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => openDetail(row)}>
+                              상세 보기
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => openEdit(row)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              편집
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem
+                              className="text-red-500 focus:text-red-500"
+                              onClick={() => void removeEvent(row.id)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              삭제
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))}
