@@ -367,7 +367,9 @@ function TimetableForm({
     <div className="grid gap-4 py-2">
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>DAY</Label>
+          <Label>
+            DAY <span className="text-red-500">*</span>
+          </Label>
           <Select
             value={String(form.day_number)}
             onValueChange={(v) =>
@@ -387,7 +389,9 @@ function TimetableForm({
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>날짜</Label>
+          <Label>
+            날짜 <span className="text-red-500">*</span>
+          </Label>
           <Input
             type="date"
             value={dateInputValue}
@@ -397,7 +401,9 @@ function TimetableForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>시작 시간</Label>
+          <Label>
+            시작 시간 <span className="text-red-500">*</span>
+          </Label>
           <Input
             type="time"
             value={form.start_time}
@@ -407,7 +413,9 @@ function TimetableForm({
           />
         </div>
         <div className="space-y-2">
-          <Label>종료 시간</Label>
+          <Label>
+            종료 시간 <span className="text-red-500">*</span>
+          </Label>
           <Input
             type="time"
             value={form.end_time}
@@ -418,7 +426,9 @@ function TimetableForm({
         </div>
       </div>
       <div className="space-y-2">
-        <Label>아티스트명</Label>
+        <Label>
+          아티스트명 <span className="text-red-500">*</span>
+        </Label>
         <Input
           placeholder="아티스트 이름"
           value={form.artist_name}
@@ -429,7 +439,9 @@ function TimetableForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="stage-input">스테이지</Label>
+          <Label htmlFor="stage-input">
+            스테이지 <span className="text-red-500">*</span>
+          </Label>
           <Input
             id="stage-input"
             list="stage-datalist"
