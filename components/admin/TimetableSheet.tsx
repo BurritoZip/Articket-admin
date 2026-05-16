@@ -429,31 +429,21 @@ function TimetableForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>스테이지</Label>
-          <Select
+          <Label htmlFor="stage-input">스테이지</Label>
+          <Input
+            id="stage-input"
+            list="stage-datalist"
+            placeholder="STAGE A 또는 직접 입력"
             value={form.stage_name}
-            onValueChange={(v) => setForm((s) => ({ ...s, stage_name: v }))}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="스테이지 선택" />
-            </SelectTrigger>
-            <SelectContent>
-              {STAGE_OPTIONS.map((s) => (
-                <SelectItem key={s} value={s}>
-                  {s}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {!STAGE_OPTIONS.includes(form.stage_name) && form.stage_name && (
-            <Input
-              placeholder="직접 입력"
-              value={form.stage_name}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, stage_name: e.target.value }))
-              }
-            />
-          )}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, stage_name: e.target.value }))
+            }
+          />
+          <datalist id="stage-datalist">
+            {STAGE_OPTIONS.map((s) => (
+              <option key={s} value={s} />
+            ))}
+          </datalist>
         </div>
         <div className="space-y-2">
           <Label>장르</Label>
