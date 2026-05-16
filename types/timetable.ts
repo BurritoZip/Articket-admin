@@ -1,6 +1,7 @@
 export type TimetablePerformanceRow = {
   id: string;
   event_id: string;
+  artist_id: string | null;
   day_number: number;
   date_string: string;
   start_time: string;

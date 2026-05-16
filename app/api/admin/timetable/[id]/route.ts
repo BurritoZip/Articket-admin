@@ -13,6 +13,7 @@ export async function PATCH(
   const body = (await request.json()) as Partial<TimetablePerformanceRow>;
 
   const payload: Partial<TimetablePerformanceRow> = {};
+  if (body.artist_id !== undefined) payload.artist_id = body.artist_id;
   if (body.day_number !== undefined) payload.day_number = body.day_number;
   if (body.date_string !== undefined)
     payload.date_string = body.date_string.trim();

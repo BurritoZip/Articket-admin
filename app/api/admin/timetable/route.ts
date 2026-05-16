@@ -62,6 +62,7 @@ export async function POST(request: Request) {
     .from("timetable_performances")
     .insert({
       event_id: body.event_id,
+      artist_id: body.artist_id ?? null,
       day_number: body.day_number,
       date_string: body.date_string.trim(),
       start_time: body.start_time.trim(),

@@ -44,6 +44,7 @@ const EMPTY_FORM: Omit<
   TimetablePerformanceRow,
   "id" | "event_id" | "created_at"
 > = {
+  artist_id: null,
   day_number: 1,
   date_string: "",
   start_time: "",
@@ -65,6 +66,19 @@ export function TimetableSheet({
     React.useState<TimetablePerformanceRow | null>(null);
   const [form, setForm] = React.useState({ ...EMPTY_FORM });
   const [submitting, setSubmitting] = React.useState(false);
+
+  const { data: artistsData } = useQuery({
+    queryKey: ["admin-artists-list"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/artists?pageSize=200", {
+        cache: "no-store",
+      });
+      if (!res.ok) return { rows: [] as { id: string; name: string }[] };
+      return res.json() as Promise<{ rows: { id: string; name: string }[] }>;
+    },
+    staleTime: 60_000,
+  });
+  const artists = React.useMemo(() => artistsData?.rows ?? [], [artistsData]);
 
   const { data, isLoading } = useQuery({
     queryKey: ["admin-timetable", event?.id],
@@ -105,6 +119,7 @@ export function TimetableSheet({
   const openEdit = (row: TimetablePerformanceRow) => {
     setEditTarget(row);
     setForm({
+      artist_id: row.artist_id,
       day_number: row.day_number,
       date_string: row.date_string,
       start_time: row.start_time,
@@ -278,7 +293,7 @@ export function TimetableSheet({
               타임테이블에 공연을 추가합니다.
             </DialogDescription>
           </DialogHeader>
-          <TimetableForm form={form} setForm={setForm} />
+          <TimetableForm form={form} setForm={setForm} artists={artists} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddOpen(false)}>
               취소
@@ -301,7 +316,7 @@ export function TimetableSheet({
               {editTarget?.artist_name} 공연 정보를 수정합니다.
             </DialogDescription>
           </DialogHeader>
-          <TimetableForm form={form} setForm={setForm} />
+          <TimetableForm form={form} setForm={setForm} artists={artists} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditTarget(null)}>
               취소
@@ -345,23 +360,99 @@ const GENRE_OPTIONS = [
   "DANCE",
 ];
 
+function SearchDropdown({
+  value,
+  onChange,
+  options,
+  placeholder,
+  onSelect,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  options: { label: string; value: string }[];
+  placeholder: string;
+  onSelect: (label: string, value: string) => void;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  const filtered = React.useMemo(() => {
+    const q = value.toLowerCase();
+    if (!q) return options.slice(0, 20);
+    return options
+      .filter((o) => o.label.toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [value, options]);
+
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node))
+        setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <Input
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-surface shadow-elevation3">
+          {filtered.map((o) => (
+            <li
+              key={o.value}
+              className="cursor-pointer px-3 py-2 text-body-sm hover:bg-surface-muted"
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onSelect(o.label, o.value);
+                setOpen(false);
+              }}
+            >
+              {o.label}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function TimetableForm({
   form,
   setForm,
+  artists,
 }: {
   form: FormState;
   setForm: React.Dispatch<React.SetStateAction<FormState>>;
+  artists: { id: string; name: string }[];
 }) {
   const dateInputValue = form.date_string
     ? form.date_string.replace(/\./g, "-")
     : "";
 
   const handleDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const iso = e.target.value; // "2026-05-22"
-    const formatted = iso.replace(/-/g, "."); // "2026.05.22"
-    const day = form.day_number;
-    setForm((s) => ({ ...s, date_string: formatted, day_number: day }));
+    const iso = e.target.value;
+    setForm((s) => ({ ...s, date_string: iso.replace(/-/g, ".") }));
   };
+
+  const artistOptions = React.useMemo(
+    () => artists.map((a) => ({ label: a.name, value: a.id })),
+    [artists],
+  );
+
+  const stageOptions = React.useMemo(
+    () => STAGE_OPTIONS.map((s) => ({ label: s, value: s })),
+    [],
+  );
 
   return (
     <div className="grid gap-4 py-2">
@@ -427,35 +518,35 @@ function TimetableForm({
       </div>
       <div className="space-y-2">
         <Label>
-          아티스트명 <span className="text-red-500">*</span>
+          아티스트 <span className="text-red-500">*</span>
         </Label>
-        <Input
-          placeholder="아티스트 이름"
+        <SearchDropdown
           value={form.artist_name}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, artist_name: e.target.value }))
+          onChange={(v) =>
+            setForm((s) => ({ ...s, artist_name: v, artist_id: null }))
+          }
+          options={artistOptions}
+          placeholder="아티스트명 검색"
+          onSelect={(label, value) =>
+            setForm((s) => ({ ...s, artist_name: label, artist_id: value }))
           }
         />
+        {form.artist_id && (
+          <p className="text-caption text-text-tertiary">DB 아티스트 연결됨</p>
+        )}
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="stage-input">
+          <Label>
             스테이지 <span className="text-red-500">*</span>
           </Label>
-          <Input
-            id="stage-input"
-            list="stage-datalist"
-            placeholder="STAGE A 또는 직접 입력"
+          <SearchDropdown
             value={form.stage_name}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, stage_name: e.target.value }))
-            }
+            onChange={(v) => setForm((s) => ({ ...s, stage_name: v }))}
+            options={stageOptions}
+            placeholder="스테이지 검색 또는 입력"
+            onSelect={(label) => setForm((s) => ({ ...s, stage_name: label }))}
           />
-          <datalist id="stage-datalist">
-            {STAGE_OPTIONS.map((s) => (
-              <option key={s} value={s} />
-            ))}
-          </datalist>
         </div>
         <div className="space-y-2">
           <Label>장르</Label>
