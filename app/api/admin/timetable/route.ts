@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import type { TimetablePerformanceRow } from "@/types/timetable";
 
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = createServiceRoleClient();
   const { data, error } = await supabase
     .from("timetable_performances")
     .insert({

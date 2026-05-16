@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import type { TimetablePerformanceRow } from "@/types/timetable";
@@ -17,14 +16,16 @@ export async function PATCH(
   if (body.day_number !== undefined) payload.day_number = body.day_number;
   if (body.date_string !== undefined)
     payload.date_string = body.date_string.trim();
-  if (body.start_time !== undefined) payload.start_time = body.start_time.trim();
+  if (body.start_time !== undefined)
+    payload.start_time = body.start_time.trim();
   if (body.end_time !== undefined) payload.end_time = body.end_time.trim();
   if (body.artist_name !== undefined)
     payload.artist_name = body.artist_name.trim();
-  if (body.stage_name !== undefined) payload.stage_name = body.stage_name.trim();
+  if (body.stage_name !== undefined)
+    payload.stage_name = body.stage_name.trim();
   if (body.genre !== undefined) payload.genre = body.genre.trim();
 
-  const supabase = createClient();
+  const supabase = createServiceRoleClient();
   const { error } = await supabase
     .from("timetable_performances")
     .update(payload)
