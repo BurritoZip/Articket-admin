@@ -194,7 +194,18 @@ export function TimetableSheet({
       return;
     }
     toast.success("삭제되었습니다.");
-    refetch();
+    await queryClient.invalidateQueries({
+      queryKey: ["admin-timetable", event?.id],
+    });
+    const remaining = rows.filter((r) => r.id !== id);
+    if (remaining.length === 0 && event) {
+      await fetch(`/api/admin/events/${event.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ has_timetable: false }),
+      });
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    }
   };
 
   return (
