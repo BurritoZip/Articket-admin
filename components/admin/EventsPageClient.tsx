@@ -70,6 +70,17 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/DropdownMenu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/AlertDialog";
+import type { TimetablePerformanceRow } from "@/types/timetable";
 
 type EventQueryResponse = {
   rows: EventRow[];
@@ -108,6 +119,7 @@ export function EventsPageClient() {
   const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(
     null,
   );
+  const [deleteId, setDeleteId] = React.useState<string | null>(null);
 
   const [form, setForm] = React.useState<Partial<EventRow>>({
     title: "",
@@ -160,6 +172,20 @@ export function EventsPageClient() {
       }
       return json;
     },
+  });
+
+  const { data: detailTimetable } = useQuery({
+    queryKey: ["detail-timetable", detailEvent?.id],
+    queryFn: async () => {
+      const res = await fetch(
+        `/api/admin/timetable?event_id=${detailEvent!.id}`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) return [] as TimetablePerformanceRow[];
+      const json = (await res.json()) as { rows: TimetablePerformanceRow[] };
+      return json.rows;
+    },
+    enabled: detailOpen && !!detailEvent?.has_timetable,
   });
 
   const { data: stats, isLoading: statsLoading } = useQuery({
@@ -307,16 +333,22 @@ export function EventsPageClient() {
     }
   };
 
-  const removeEvent = async (id: string) => {
-    if (!window.confirm("이 공연을 삭제할까요?")) return;
-    const res = await fetch(`/api/admin/events/${id}`, { method: "DELETE" });
+  const removeEvent = (id: string) => setDeleteId(id);
+
+  const confirmRemove = async () => {
+    if (!deleteId) return;
+    const res = await fetch(`/api/admin/events/${deleteId}`, {
+      method: "DELETE",
+    });
     const json = (await res.json()) as { detail?: string };
+    setDeleteId(null);
     if (!res.ok) {
       toast.error("삭제 실패", { description: json.detail ?? "삭제 실패" });
       return;
     }
     toast.success("공연이 삭제되었습니다.");
-    await refetch();
+    const result = await refetch();
+    if (result.data?.rows.length === 0 && page > 1) setPage((p) => p - 1);
   };
 
   return (
@@ -426,7 +458,11 @@ export function EventsPageClient() {
                           fields={EVENT_FIELDS}
                         />
                       </TableCell>
-                      <TableCell>{row.is_banner ? "ON" : "OFF"}</TableCell>
+                      <TableCell>
+                        <Badge variant={row.is_banner ? "success" : "outline"}>
+                          {row.is_banner ? "ON" : "OFF"}
+                        </Badge>
+                      </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <Badge
@@ -597,11 +633,41 @@ export function EventsPageClient() {
                     label="포스터 URL"
                     value={detailEvent.poster_url ?? "-"}
                   />
-                  <InfoItem
-                    label="타임테이블"
-                    value={detailEvent.has_timetable ? "있음" : "없음"}
-                  />
                 </div>
+                {detailEvent.has_timetable && (
+                  <div>
+                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                      타임테이블
+                    </p>
+                    <div className="space-y-1">
+                      {(detailTimetable ?? []).length === 0 ? (
+                        <p className="text-caption text-text-tertiary">
+                          불러오는 중...
+                        </p>
+                      ) : (
+                        (detailTimetable ?? []).map((p) => (
+                          <div
+                            key={p.id}
+                            className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-body-sm"
+                          >
+                            <span className="w-6 shrink-0 text-caption font-semibold text-text-tertiary">
+                              D{p.day_number}
+                            </span>
+                            <span className="w-[90px] shrink-0 text-caption text-text-tertiary">
+                              {p.start_time}–{p.end_time}
+                            </span>
+                            <span className="flex-1 font-medium">
+                              {p.artist_name}
+                            </span>
+                            <span className="text-caption text-text-tertiary">
+                              {p.stage_name}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <p className="mb-2 text-caption font-semibold text-text-tertiary">
                     공지
@@ -636,6 +702,26 @@ export function EventsPageClient() {
         onOpenChange={setTimetableOpen}
         onHasTimetableChange={() => void handleTimetableAdded()}
       />
+
+      <AlertDialog
+        open={!!deleteId}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>공연을 삭제할까요?</AlertDialogTitle>
+            <AlertDialogDescription>
+              삭제 후 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmRemove()}>
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

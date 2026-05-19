@@ -27,6 +27,16 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import type { VenueRow } from "@/types/venue";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/AlertDialog";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
@@ -58,6 +68,8 @@ export function VenuesPageClient() {
     phone_number: "",
   });
 
+  const [search, setSearch] = React.useState("");
+  const [deleteId, setDeleteId] = React.useState<string | null>(null);
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<AdminPageSize>(
     DEFAULT_ADMIN_PAGE_SIZE,
@@ -67,15 +79,23 @@ export function VenuesPageClient() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [missingFilter, duplicatesFilter]);
+  }, [search, missingFilter, duplicatesFilter]);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin-venues", page, pageSize, missingFilter, duplicatesFilter],
+    queryKey: [
+      "admin-venues",
+      search,
+      page,
+      pageSize,
+      missingFilter,
+      duplicatesFilter,
+    ],
     queryFn: async () => {
       const q = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       });
+      if (search.trim()) q.set("q", search.trim());
       if (missingFilter) q.set("missing", missingFilter);
       if (duplicatesFilter) q.set("duplicates", "true");
       const res = await fetch(`/api/admin/venues?${q}`, { cache: "no-store" });
@@ -152,10 +172,15 @@ export function VenuesPageClient() {
     await refetch();
   };
 
-  const removeVenue = async (id: string) => {
-    if (!window.confirm("이 공연장을 삭제할까요?")) return;
-    const res = await fetch(`/api/admin/venues/${id}`, { method: "DELETE" });
+  const removeVenue = (id: string) => setDeleteId(id);
+
+  const confirmRemove = async () => {
+    if (!deleteId) return;
+    const res = await fetch(`/api/admin/venues/${deleteId}`, {
+      method: "DELETE",
+    });
     const json = (await res.json()) as { detail?: string };
+    setDeleteId(null);
     if (!res.ok) {
       toast.error("삭제 실패", {
         description: json.detail ?? "공연장 삭제 중 오류가 발생했습니다.",
@@ -163,7 +188,8 @@ export function VenuesPageClient() {
       return;
     }
     toast.success("공연장이 삭제되었습니다.");
-    await refetch();
+    const result = await refetch();
+    if (result.data?.rows.length === 0 && page > 1) setPage((p) => p - 1);
   };
 
   return (
@@ -188,6 +214,12 @@ export function VenuesPageClient() {
           <CardTitle className="text-h3">공연장 목록</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4 p-4 sm:p-6">
+          <Input
+            placeholder="공연장명 검색"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="max-w-sm"
+          />
           <CompletenessFilterBar
             fields={VENUE_FIELDS}
             stats={stats ?? null}
@@ -237,9 +269,8 @@ export function VenuesPageClient() {
                                 }))
                               }
                               onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  void saveEdit(row.id);
-                                }
+                                if (e.key === "Enter") void saveEdit(row.id);
+                                if (e.key === "Escape") setEditingId(null);
                               }}
                             />
                           ) : (
@@ -257,9 +288,8 @@ export function VenuesPageClient() {
                                 }))
                               }
                               onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  void saveEdit(row.id);
-                                }
+                                if (e.key === "Enter") void saveEdit(row.id);
+                                if (e.key === "Escape") setEditingId(null);
                               }}
                             />
                           ) : (
@@ -277,9 +307,8 @@ export function VenuesPageClient() {
                                 }))
                               }
                               onKeyDown={(e) => {
-                                if (e.key === "Enter") {
-                                  void saveEdit(row.id);
-                                }
+                                if (e.key === "Enter") void saveEdit(row.id);
+                                if (e.key === "Escape") setEditingId(null);
                               }}
                             />
                           ) : (
@@ -441,6 +470,26 @@ export function VenuesPageClient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!deleteId}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>공연장 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 공연장을 삭제하면 복구할 수 없습니다. 계속하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmRemove()}>
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

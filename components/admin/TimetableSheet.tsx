@@ -30,6 +30,16 @@ import {
   DialogTitle,
 } from "@/components/ui/Dialog";
 import { Skeleton } from "@/components/ui/Skeleton";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/AlertDialog";
 import type { TimetablePerformanceRow } from "@/types/timetable";
 import type { EventRow } from "@/types/event";
 
@@ -64,6 +74,7 @@ export function TimetableSheet({
   const [addOpen, setAddOpen] = React.useState(false);
   const [editTarget, setEditTarget] =
     React.useState<TimetablePerformanceRow | null>(null);
+  const [deleteId, setDeleteId] = React.useState<string | null>(null);
   const [form, setForm] = React.useState({ ...EMPTY_FORM });
   const [submitting, setSubmitting] = React.useState(false);
 
@@ -183,9 +194,11 @@ export function TimetableSheet({
     }
   };
 
-  const remove = async (id: string) => {
-    if (!window.confirm("이 항목을 삭제할까요?")) return;
-    const res = await fetch(`/api/admin/timetable/${id}`, {
+  const confirmRemove = async () => {
+    if (!deleteId) return;
+    const idToDelete = deleteId;
+    setDeleteId(null);
+    const res = await fetch(`/api/admin/timetable/${idToDelete}`, {
       method: "DELETE",
     });
     const json = (await res.json()) as { detail?: string };
@@ -197,7 +210,7 @@ export function TimetableSheet({
     await queryClient.invalidateQueries({
       queryKey: ["admin-timetable", event?.id],
     });
-    const remaining = rows.filter((r) => r.id !== id);
+    const remaining = rows.filter((r) => r.id !== idToDelete);
     if (remaining.length === 0 && event) {
       await fetch(`/api/admin/events/${event.id}`, {
         method: "PATCH",
@@ -221,7 +234,7 @@ export function TimetableSheet({
 
           <div className="flex items-center justify-between pt-2">
             <p className="text-body-sm text-text-secondary">
-              총 {rows.length}개 공연
+              총 {rows.length}개 출연
             </p>
             <Button size="sm" onClick={openAdd}>
               <Plus className="mr-1 h-4 w-4" />
@@ -281,7 +294,7 @@ export function TimetableSheet({
                           <Button
                             size="icon"
                             variant="danger-weak"
-                            onClick={() => void remove(p.id)}
+                            onClick={() => setDeleteId(p.id)}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -338,6 +351,26 @@ export function TimetableSheet({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!deleteId}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>출연 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 출연 항목을 삭제하면 복구할 수 없습니다. 계속하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmRemove()}>
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

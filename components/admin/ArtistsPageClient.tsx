@@ -36,6 +36,17 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import type { AlbumRow, ArtistRow, MusicVideoRow } from "@/types/artist";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/AlertDialog";
+import { AvatarImage } from "@/components/ui/Avatar";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
@@ -81,6 +92,7 @@ export function ArtistsPageClient() {
   const [videos, setVideos] = React.useState<Array<Partial<MusicVideoRow>>>([]);
   const [detailAlbums, setDetailAlbums] = React.useState<AlbumRow[]>([]);
   const [detailVideos, setDetailVideos] = React.useState<MusicVideoRow[]>([]);
+  const [deleteId, setDeleteId] = React.useState<string | null>(null);
 
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<AdminPageSize>(
@@ -262,16 +274,22 @@ export function ArtistsPageClient() {
     }
   };
 
-  const removeArtist = async (id: string) => {
-    if (!window.confirm("이 아티스트를 삭제할까요?")) return;
-    const res = await fetch(`/api/admin/artists/${id}`, { method: "DELETE" });
+  const removeArtist = (id: string) => setDeleteId(id);
+
+  const confirmRemove = async () => {
+    if (!deleteId) return;
+    const res = await fetch(`/api/admin/artists/${deleteId}`, {
+      method: "DELETE",
+    });
     const json = (await res.json()) as { detail?: string };
+    setDeleteId(null);
     if (!res.ok) {
       toast.error("삭제 실패", { description: json.detail ?? "삭제 실패" });
       return;
     }
     toast.success("아티스트가 삭제되었습니다.");
-    await refetch();
+    const result = await refetch();
+    if (result.data?.rows.length === 0 && page > 1) setPage((p) => p - 1);
   };
 
   return (
@@ -343,6 +361,10 @@ export function ArtistsPageClient() {
                     <TableRow key={row.id}>
                       <TableCell>
                         <Avatar className="h-9 w-9">
+                          <AvatarImage
+                            src={row.avatar_url ?? ""}
+                            alt={row.name}
+                          />
                           <AvatarFallback>
                             {row.name.slice(0, 1)}
                           </AvatarFallback>
@@ -587,6 +609,26 @@ export function ArtistsPageClient() {
           ) : null}
         </SheetContent>
       </Sheet>
+
+      <AlertDialog
+        open={!!deleteId}
+        onOpenChange={(o) => !o && setDeleteId(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>아티스트 삭제</AlertDialogTitle>
+            <AlertDialogDescription>
+              이 아티스트를 삭제하면 복구할 수 없습니다. 계속하시겠습니까?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void confirmRemove()}>
+              삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -635,6 +677,7 @@ function ArtistForm({
           <Label htmlFor="artist-birth-date">생년월일</Label>
           <Input
             id="artist-birth-date"
+            type="date"
             value={form.birth_date ?? ""}
             onChange={(e) =>
               setForm((s) => ({ ...s, birth_date: e.target.value }))

@@ -14,6 +14,7 @@ export async function GET(request: Request) {
   const url = new URL(request.url);
   const missingField = url.searchParams.get("missing")?.trim();
   const duplicatesOnly = url.searchParams.get("duplicates") === "true";
+  const searchQ = url.searchParams.get("q")?.trim() ?? "";
   const { page, pageSize } = parseAdminPagination(url.searchParams);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -25,6 +26,10 @@ export async function GET(request: Request) {
     .from("venues")
     .select("id, name, address, phone_number", { count: "exact" })
     .order("name", { ascending: true });
+
+  if (searchQ) {
+    venueQuery = venueQuery.ilike("name", `%${searchQ}%`);
+  }
 
   if (missingField && VALID_MISSING.has(missingField)) {
     venueQuery = venueQuery.or(`${missingField}.is.null,${missingField}.eq.`);
