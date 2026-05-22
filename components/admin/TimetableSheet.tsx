@@ -84,6 +84,13 @@ export function TimetableSheet({
     skippedCount: number;
     issues: Array<{ line: string; reason: string }>;
   } | null>(null);
+  const [autoLoading, setAutoLoading] = React.useState(false);
+  const [autoResult, setAutoResult] = React.useState<{
+    inserted: number;
+    artists: string[];
+    days: number;
+  } | null>(null);
+  const [manualOpen, setManualOpen] = React.useState(false);
   const [editTarget, setEditTarget] =
     React.useState<TimetablePerformanceRow | null>(null);
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
@@ -145,7 +152,48 @@ export function TimetableSheet({
     setReplaceExisting(false);
     setSourceIssues([]);
     setImportResult(null);
+    setAutoResult(null);
+    setManualOpen(false);
     setImportOpen(true);
+  };
+
+  const submitAutoImport = async () => {
+    if (!event) return;
+    setAutoLoading(true);
+    setAutoResult(null);
+    try {
+      const res = await fetch("/api/admin/timetable/auto", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: event.id, replaceExisting }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        inserted?: number;
+        artists?: string[];
+        days?: number;
+        reason?: string;
+        detail?: string;
+      };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.detail ?? "아티스트 정보를 찾지 못했습니다.");
+      }
+      setAutoResult({
+        inserted: json.inserted ?? 0,
+        artists: json.artists ?? [],
+        days: json.days ?? 1,
+      });
+      toast.success(
+        `${json.inserted}명 아티스트 타임테이블 생성 완료 (${json.days}일 구성)`,
+      );
+      refetch();
+      onHasTimetableChange();
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "자동 생성 실패");
+    } finally {
+      setAutoLoading(false);
+    }
   };
 
   const openEdit = (row: TimetablePerformanceRow) => {
@@ -222,7 +270,8 @@ export function TimetableSheet({
         throw new Error(json.detail ?? "타임테이블 자동 입력 실패");
       }
       if (json.source?.issues?.length) setSourceIssues(json.source.issues);
-      if (!importText.trim() && json.source?.text) setImportText(json.source.text);
+      if (!importText.trim() && json.source?.text)
+        setImportText(json.source.text);
       setImportResult(json.result);
       toast.success(`${json.result.insertedCount}개 출연을 자동 추가했습니다.`);
       refetch();
@@ -240,9 +289,12 @@ export function TimetableSheet({
     setSourceLoading(true);
     setSourceIssues([]);
     try {
-      const res = await fetch(`/api/admin/timetable/source?event_id=${event.id}`, {
-        cache: "no-store",
-      });
+      const res = await fetch(
+        `/api/admin/timetable/source?event_id=${event.id}`,
+        {
+          cache: "no-store",
+        },
+      );
       const json = (await res.json()) as {
         source?: { text: string; issues: string[]; assetUrls?: string[] };
         detail?: string;
@@ -429,28 +481,14 @@ export function TimetableSheet({
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
         <DialogContent className="sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>타임테이블 자동 입력</DialogTitle>
+            <DialogTitle>타임테이블 자동화</DialogTitle>
             <DialogDescription>
-              원본 상세 페이지에서 타임테이블 후보를 먼저 가져오고, 필요하면 직접 보정한 뒤 출연 항목을 생성합니다.
+              StagePick API에서 출연 아티스트를 자동으로 가져와 타임테이블을
+              생성합니다.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <div className="flex justify-end">
-              <Button
-                type="button"
-                variant="secondary"
-                loading={sourceLoading}
-                onClick={() => void loadSourceText()}
-              >
-                원본에서 가져오기
-              </Button>
-            </div>
-            <Textarea
-              value={importText}
-              onChange={(e) => setImportText(e.target.value)}
-              rows={12}
-              placeholder={`DAY 1 2026.05.22 MAIN STAGE\n14:00-14:40 아티스트A\n15:00-15:40 아티스트B @ SUB STAGE\nDAY 2\n13:20 ~ 14:00 아티스트C`}
-            />
+            {/* 기존 항목 교체 옵션 */}
             <div className="flex items-center gap-2">
               <input
                 id="replace-existing-timetable"
@@ -463,38 +501,87 @@ export function TimetableSheet({
                 기존 타임테이블을 지우고 새로 생성
               </Label>
             </div>
-            {sourceIssues.length > 0 && (
-              <div className="rounded-md border border-border bg-surface-muted p-3 text-caption text-text-secondary">
-                {sourceIssues.slice(0, 4).map((issue, index) => (
-                  <p key={`${issue}-${index}`}>{issue}</p>
-                ))}
-              </div>
-            )}
-            {importResult && (
-              <div className="rounded-md border border-border bg-surface-muted p-3 text-body-sm">
-                <p>
-                  파싱 {importResult.parsedCount}개 · 추가{" "}
-                  {importResult.insertedCount}개 · 실패{" "}
-                  {importResult.skippedCount + importResult.issues.length}개
+
+            {/* 자동 생성 결과 */}
+            {autoResult && (
+              <div className="rounded-md border border-green-200 bg-green-50 p-3 text-body-sm text-green-800">
+                <p className="font-medium">
+                  ✅ {autoResult.inserted}명 아티스트 · {autoResult.days}일 구성
                 </p>
-                {importResult.issues.length > 0 && (
-                  <div className="mt-2 max-h-28 overflow-y-auto text-caption text-text-secondary">
-                    {importResult.issues.slice(0, 8).map((issue, index) => (
-                      <p key={`${issue.line}-${index}`}>
-                        {issue.line} · {issue.reason}
-                      </p>
-                    ))}
-                  </div>
-                )}
+                <p className="mt-1 text-caption text-green-700">
+                  {autoResult.artists.slice(0, 8).join(", ")}
+                  {autoResult.artists.length > 8
+                    ? ` 외 ${autoResult.artists.length - 8}명`
+                    : ""}
+                </p>
               </div>
             )}
+
+            {/* 수동 입력 (접기/펼치기) */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setManualOpen((v) => !v)}
+                className="text-caption text-text-secondary underline underline-offset-2"
+              >
+                {manualOpen ? "▲ 수동 입력 닫기" : "▼ 시간 직접 입력하기"}
+              </button>
+              {manualOpen && (
+                <div className="mt-3 space-y-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    loading={sourceLoading}
+                    onClick={() => void loadSourceText()}
+                  >
+                    원본에서 텍스트 가져오기
+                  </Button>
+                  <Textarea
+                    value={importText}
+                    onChange={(e) => setImportText(e.target.value)}
+                    rows={10}
+                    placeholder={`DAY 1 2026.05.22 MAIN STAGE\n14:00-14:40 아티스트A\n15:00-15:40 아티스트B @ SUB STAGE\nDAY 2\n13:20 ~ 14:00 아티스트C`}
+                  />
+                  {sourceIssues.length > 0 && (
+                    <div className="rounded-md border border-border bg-surface-muted p-3 text-caption text-text-secondary">
+                      {sourceIssues.slice(0, 4).map((issue, index) => (
+                        <p key={`${issue}-${index}`}>{issue}</p>
+                      ))}
+                    </div>
+                  )}
+                  {importResult && (
+                    <div className="rounded-md border border-border bg-surface-muted p-3 text-body-sm">
+                      <p>
+                        파싱 {importResult.parsedCount}개 · 추가{" "}
+                        {importResult.insertedCount}개 · 실패{" "}
+                        {importResult.skippedCount + importResult.issues.length}
+                        개
+                      </p>
+                    </div>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={importing}
+                    onClick={() => void submitImport()}
+                  >
+                    텍스트로 생성
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setImportOpen(false)}>
               닫기
             </Button>
-            <Button loading={importing} onClick={() => void submitImport()}>
-              자동 생성
+            <Button
+              loading={autoLoading}
+              onClick={() => void submitAutoImport()}
+            >
+              <Wand2 className="mr-1 h-4 w-4" />
+              아티스트 자동 생성
             </Button>
           </DialogFooter>
         </DialogContent>
