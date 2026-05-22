@@ -35,14 +35,26 @@ export async function updateCrawlerJob(
   const db = createServiceRoleClient();
   const { error } = await db.from("crawler_jobs").update(patch).eq("id", jobId);
   if (error) {
-    // status constraint 위반 시 'success'로 재시도 (구버전 DB 호환)
-    if (error.message.includes("status_check") && patch.status === "partial") {
-      const fallback = { ...patch, status: "success" as CrawlerJobStatus };
-      const { error: e2 } = await db
-        .from("crawler_jobs")
-        .update(fallback)
-        .eq("id", jobId);
-      if (!e2) return;
+    // status constraint 위반 시 순서대로 fallback (구버전 DB 호환)
+    if (error.message.includes("status_check") && patch.status) {
+      for (const fallbackStatus of [
+        "failed",
+        "running",
+        "pending",
+      ] as CrawlerJobStatus[]) {
+        if (fallbackStatus === patch.status) continue;
+        const fallback = { ...patch, status: fallbackStatus };
+        const { error: e2 } = await db
+          .from("crawler_jobs")
+          .update(fallback)
+          .eq("id", jobId);
+        if (!e2) {
+          console.warn(
+            `[JobManager] status "${patch.status}" constraint 위반 → "${fallbackStatus}"로 저장`,
+          );
+          return;
+        }
+      }
     }
     throw new Error(`Failed to update crawler job: ${error.message}`);
   }
