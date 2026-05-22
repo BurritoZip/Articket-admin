@@ -174,6 +174,10 @@ export async function runStagepickScraper(
       page = await fetchPage(offset);
       stats.pagesCrawled++;
     } catch (e) {
+      console.error(
+        `[Scraper] fetchPage offset=${offset} 실패:`,
+        e instanceof Error ? e.message : e,
+      );
       await logCrawlError(
         jobId,
         SOURCE_NAME,

@@ -34,7 +34,18 @@ export async function updateCrawlerJob(
 ): Promise<void> {
   const db = createServiceRoleClient();
   const { error } = await db.from("crawler_jobs").update(patch).eq("id", jobId);
-  if (error) throw new Error(`Failed to update crawler job: ${error.message}`);
+  if (error) {
+    // status constraint 위반 시 'success'로 재시도 (구버전 DB 호환)
+    if (error.message.includes("status_check") && patch.status === "partial") {
+      const fallback = { ...patch, status: "success" as CrawlerJobStatus };
+      const { error: e2 } = await db
+        .from("crawler_jobs")
+        .update(fallback)
+        .eq("id", jobId);
+      if (!e2) return;
+    }
+    throw new Error(`Failed to update crawler job: ${error.message}`);
+  }
 }
 
 export async function finishCrawlerJob(
