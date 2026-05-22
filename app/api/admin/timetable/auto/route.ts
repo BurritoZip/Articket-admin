@@ -10,6 +10,7 @@ export const POST = withErrorHandler(async (request) => {
   const body = (await request.json()) as {
     event_id?: string;
     replaceExisting?: boolean;
+    source_url?: string;
   };
 
   if (!body.event_id) {
@@ -19,12 +20,14 @@ export const POST = withErrorHandler(async (request) => {
   const result = await autoImportTimetableForEvent(
     body.event_id,
     body.replaceExisting ?? false,
+    body.source_url,
   );
 
   if (!result.ok) {
     const messages: Record<string, string> = {
       event_not_found: "이벤트를 찾을 수 없습니다.",
-      no_raw_payload: "크롤링된 원본 데이터가 없습니다. 먼저 크롤러를 실행하세요.",
+      no_raw_payload:
+        "크롤링된 원본 데이터가 없습니다. 먼저 크롤러를 실행하세요.",
       no_stagepick_id: "StagePick 공연 ID를 찾을 수 없습니다.",
       no_artists_found: "출연 아티스트 정보를 찾지 못했습니다.",
     };

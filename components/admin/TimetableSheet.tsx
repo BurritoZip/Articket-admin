@@ -85,6 +85,7 @@ export function TimetableSheet({
     issues: Array<{ line: string; reason: string }>;
   } | null>(null);
   const [autoLoading, setAutoLoading] = React.useState(false);
+  const [autoSourceUrl, setAutoSourceUrl] = React.useState("");
   const [autoResult, setAutoResult] = React.useState<{
     inserted: number;
     artists: string[];
@@ -153,6 +154,7 @@ export function TimetableSheet({
     setSourceIssues([]);
     setImportResult(null);
     setAutoResult(null);
+    setAutoSourceUrl("");
     setManualOpen(false);
     setImportOpen(true);
   };
@@ -165,7 +167,11 @@ export function TimetableSheet({
       const res = await fetch("/api/admin/timetable/auto", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ event_id: event.id, replaceExisting }),
+        body: JSON.stringify({
+          event_id: event.id,
+          replaceExisting,
+          ...(autoSourceUrl.trim() ? { source_url: autoSourceUrl.trim() } : {}),
+        }),
       });
       const json = (await res.json()) as {
         ok?: boolean;
@@ -488,6 +494,22 @@ export function TimetableSheet({
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            {/* StagePick URL 직접 입력 */}
+            <div className="space-y-1">
+              <Label htmlFor="auto-source-url">
+                StagePick URL{" "}
+                <span className="text-caption text-text-secondary">
+                  (크롤 데이터 없을 때 직접 입력)
+                </span>
+              </Label>
+              <Input
+                id="auto-source-url"
+                placeholder="https://www.stagepick.co.kr/performances/detail/12345"
+                value={autoSourceUrl}
+                onChange={(e) => setAutoSourceUrl(e.target.value)}
+              />
+            </div>
+
             {/* 기존 항목 교체 옵션 */}
             <div className="flex items-center gap-2">
               <input

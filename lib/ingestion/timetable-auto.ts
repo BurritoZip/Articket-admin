@@ -37,7 +37,10 @@ function extractPerfId(sourceUrl: string | null): string | null {
   return match?.[1] ?? null;
 }
 
-function buildDateRange(startDate: string | null, endDate: string | null): string[] {
+function buildDateRange(
+  startDate: string | null,
+  endDate: string | null,
+): string[] {
   if (!startDate) return [];
   const start = new Date(startDate);
   const end = endDate ? new Date(endDate) : start;
@@ -51,7 +54,9 @@ function buildDateRange(startDate: string | null, endDate: string | null): strin
   return dates;
 }
 
-async function fetchStagepickArtists(perfId: string): Promise<StagepickArtistItem[]> {
+async function fetchStagepickArtists(
+  perfId: string,
+): Promise<StagepickArtistItem[]> {
   try {
     const res = await fetch(`${STAGEPICK_API}?performance_id=${perfId}`, {
       headers: STAGEPICK_HEADERS,
@@ -76,6 +81,7 @@ async function fetchStagepickArtists(perfId: string): Promise<StagepickArtistIte
 export async function autoImportTimetableForEvent(
   eventId: string,
   replaceExisting = false,
+  manualSourceUrl?: string,
 ): Promise<AutoImportResult> {
   const db = createServiceRoleClient();
 
@@ -86,7 +92,14 @@ export async function autoImportTimetableForEvent(
     .eq("id", eventId)
     .maybeSingle();
   if (!event) {
-    return { ok: false, inserted: 0, artists: [], days: 0, reason: "event_not_found" };
+    console.warn(`[TimetableAuto] event_not_found: ${eventId}`);
+    return {
+      ok: false,
+      inserted: 0,
+      artists: [],
+      days: 0,
+      reason: "event_not_found",
+    };
   }
 
   const ev = event as {
@@ -111,9 +124,11 @@ export async function autoImportTimetableForEvent(
     parsed_json?: Record<string, unknown> | null;
   } | null;
 
-  // 3. Try StagePick API
+  // 3. Try StagePick API (manual URL takes priority over raw payload)
   let apiArtists: StagepickArtistItem[] = [];
-  const perfId = extractPerfId(rawPayload?.source_url ?? null);
+  const effectiveSourceUrl =
+    manualSourceUrl?.trim() || rawPayload?.source_url || null;
+  const perfId = extractPerfId(effectiveSourceUrl);
   if (perfId) {
     apiArtists = await fetchStagepickArtists(perfId);
   }
@@ -124,9 +139,7 @@ export async function autoImportTimetableForEvent(
     const parsed = rawPayload.parsed_json;
     const fallback = (parsed.artists ?? parsed.artistProfiles) as unknown;
     if (Array.isArray(fallback)) {
-      artistNames = (
-        fallback as Array<string | { name?: string }>
-      )
+      artistNames = (fallback as Array<string | { name?: string }>)
         .map((a) => (typeof a === "string" ? a : (a.name ?? "")))
         .filter(Boolean)
         .map((n) => n.trim());
@@ -134,11 +147,15 @@ export async function autoImportTimetableForEvent(
   }
 
   if (artistNames.length === 0) {
-    const reason = !rawPayload
-      ? "no_raw_payload"
-      : !perfId
-        ? "no_stagepick_id"
-        : "no_artists_found";
+    const reason =
+      !rawPayload && !manualSourceUrl
+        ? "no_raw_payload"
+        : !perfId
+          ? "no_stagepick_id"
+          : "no_artists_found";
+    console.warn(
+      `[TimetableAuto] ${reason}: event="${ev.title}" (${eventId}) sourceUrl=${effectiveSourceUrl ?? "none"}`,
+    );
     return { ok: false, inserted: 0, artists: [], days: 0, reason };
   }
 
@@ -158,14 +175,13 @@ export async function autoImportTimetableForEvent(
     const name = artistNames[i];
     const apiArtist = apiArtists[i];
 
-    const profile: ArtistProfileInput | undefined =
-      apiArtist?.image_url
-        ? {
-            name,
-            avatarUrl: apiArtist.image_url,
-            metadata: apiArtist.agency ? { agency: apiArtist.agency } : {},
-          }
-        : undefined;
+    const profile: ArtistProfileInput | undefined = apiArtist?.image_url
+      ? {
+          name,
+          avatarUrl: apiArtist.image_url,
+          metadata: apiArtist.agency ? { agency: apiArtist.agency } : {},
+        }
+      : undefined;
 
     const artistId = await matchOrCreateArtist(name, profile);
 
