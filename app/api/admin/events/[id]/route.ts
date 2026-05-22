@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
+import { normalizeTitle, normalizeVenueName } from "@/lib/ingestion/normalize";
+import { generateDedupKey } from "@/lib/ingestion/dedup";
 import type { EventRow } from "@/types/event";
 
 async function recomputeUpcomingCount(artistId: string) {
@@ -43,6 +45,47 @@ export async function PATCH(
   if (typeof payload.title === "string") payload.title = payload.title.trim();
 
   const supabase = createServiceRoleClient();
+
+  // Recompute normalized_title and dedup_key when relevant fields change
+  const needsDedup = payload.title || payload.venue_id || payload.start_date;
+  if (needsDedup) {
+    const { data: current } = await supabase
+      .from("events")
+      .select("title, venue_id, start_date")
+      .eq("id", params.id)
+      .single();
+    const cur = current as {
+      title: string;
+      venue_id: string | null;
+      start_date: string;
+    } | null;
+    const resolvedTitle = payload.title ?? cur?.title ?? "";
+    const resolvedVenueId =
+      (payload.venue_id as string | undefined) ?? cur?.venue_id ?? null;
+    const resolvedStart = (
+      (payload.start_date as string | undefined) ??
+      cur?.start_date ??
+      ""
+    ).slice(0, 10);
+
+    let venueName: string | null = null;
+    if (resolvedVenueId) {
+      const { data: v } = await supabase
+        .from("venues")
+        .select("name")
+        .eq("id", resolvedVenueId)
+        .maybeSingle();
+      venueName = (v as { name?: string } | null)?.name ?? null;
+    }
+
+    const normTitle = normalizeTitle(resolvedTitle);
+    payload.normalized_title = normTitle;
+    payload.dedup_key = generateDedupKey(
+      normTitle,
+      normalizeVenueName(venueName),
+      resolvedStart,
+    );
+  }
 
   const affectsCount = "artist_id" in payload || "status" in payload;
   let oldArtistId: string | null = null;

@@ -1,6 +1,3 @@
-import { chromium } from "playwright-core";
-import type { Browser } from "playwright-core";
-import { parseListPage, parseDetailPage } from "./parser";
 import { normalizeEvent } from "@/lib/ingestion/normalize";
 import { upsertEvent } from "@/lib/ingestion/upsert";
 import { saveRawPayload, markRawPayloadProcessed } from "@/lib/crawler/job-manager";
@@ -10,28 +7,89 @@ import type { IngestionPipelineResult } from "@/types/ingestion";
 import type { ScrapeOptions } from "@/lib/scrapers/base/adapter";
 
 const SOURCE_NAME = "stagepick";
-const LIST_URL = "https://www.stagepick.co.kr/festival";
-const RATE_LIMIT_MS = 1500;
+const API_BASE = "https://api.stagepick.co.kr/v1/performances";
+const DETAIL_BASE = "https://www.stagepick.co.kr/performance";
+const PAGE_SIZE = 50;
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
+interface StagepickPerformance {
+  id: string;
+  title: string;
+  venue: string | null;
+  image_url: string | null;
+  formatted_date: string | null;
+  ticket_open_date: string | null;
+  ticket_status: string | null;
+  is_ongoing?: boolean;
 }
 
-async function fetchWithBrowser(browser: Browser, url: string): Promise<string> {
-  const page = await browser.newPage();
-  try {
-    await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
-    await page.waitForTimeout(1000); // JS 렌더링 대기
-    return await page.content();
-  } finally {
-    await page.close();
+interface StagepickApiResponse {
+  performances: StagepickPerformance[];
+  total_count: number;
+  has_next_page: boolean;
+  items_per_page: number;
+}
+
+function parseStagepickDate(formatted: string | null): { start: string | null; end: string | null } {
+  if (!formatted) return { start: null, end: null };
+
+  const currentYear = new Date().getFullYear();
+
+  // "2026. 05. 22 ~ 2026. 05. 24" or "2026. 05. 22 ~ 05. 24"
+  const fullRangeMatch = formatted.match(
+    /(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\s*~\s*(?:(\d{4})\.\s*)?(\d{1,2})\.\s*(\d{1,2})/,
+  );
+  if (fullRangeMatch) {
+    const [, sy, sm, sd, ey, em, ed] = fullRangeMatch;
+    const startYear = parseInt(sy);
+    const endYear = ey ? parseInt(ey) : startYear;
+    return {
+      start: `${startYear}-${sm.padStart(2, "0")}-${sd.padStart(2, "0")}`,
+      end: `${endYear}-${em.padStart(2, "0")}-${ed.padStart(2, "0")}`,
+    };
   }
+
+  // "05. 22 ~ 05. 24" (no year)
+  const shortRangeMatch = formatted.match(/(\d{1,2})\.\s*(\d{1,2})\s*~\s*(\d{1,2})\.\s*(\d{1,2})/);
+  if (shortRangeMatch) {
+    const [, sm, sd, em, ed] = shortRangeMatch;
+    return {
+      start: `${currentYear}-${sm.padStart(2, "0")}-${sd.padStart(2, "0")}`,
+      end: `${currentYear}-${em.padStart(2, "0")}-${ed.padStart(2, "0")}`,
+    };
+  }
+
+  // "2026. 05. 22" (single date with year)
+  const fullDateMatch = formatted.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})/);
+  if (fullDateMatch) {
+    const [, y, m, d] = fullDateMatch;
+    const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return { start: iso, end: iso };
+  }
+
+  // "05. 22" (single date, no year)
+  const shortDateMatch = formatted.match(/(\d{1,2})\.\s*(\d{1,2})/);
+  if (shortDateMatch) {
+    const [, m, d] = shortDateMatch;
+    const iso = `${currentYear}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return { start: iso, end: iso };
+  }
+
+  return { start: null, end: null };
 }
 
-export async function scrapeList(browser: Browser): Promise<string[]> {
-  const html = await fetchWithBrowser(browser, LIST_URL);
-  const items = parseListPage(html);
-  return items.map((i) => i.detailUrl);
+async function fetchPage(offset: number): Promise<StagepickApiResponse> {
+  const url = `${API_BASE}?limit=${PAGE_SIZE}&offset=${offset}`;
+  const res = await fetch(url, {
+    headers: {
+      "X-Requested-With": "XMLHttpRequest",
+      Referer: "https://www.stagepick.co.kr/",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`StagePick API HTTP ${res.status}`);
+  return res.json() as Promise<StagepickApiResponse>;
 }
 
 export async function runStagepickScraper(
@@ -41,7 +99,6 @@ export async function runStagepickScraper(
   const start = Date.now();
   const { maxItems = 100, dryRun = false } = options;
 
-  let browser: Browser | null = null;
   const stats = {
     pagesCrawled: 0,
     eventsFound: 0,
@@ -51,82 +108,79 @@ export async function runStagepickScraper(
   };
   const errors: IngestionPipelineResult["errors"] = [];
 
-  try {
-    browser = await chromium.launch({ headless: true });
+  // Fetch all performances from API with pagination
+  const allPerformances: StagepickPerformance[] = [];
+  let offset = 0;
+  let hasMore = true;
 
-    // Step 1: 목록 크롤링
-    let detailUrls: string[] = [];
+  while (hasMore && allPerformances.length < maxItems) {
+    let page: StagepickApiResponse;
     try {
-      detailUrls = await scrapeList(browser);
+      page = await fetchPage(offset);
       stats.pagesCrawled++;
     } catch (e) {
-      await logCrawlError(jobId, SOURCE_NAME, LIST_URL, e);
+      await logCrawlError(jobId, SOURCE_NAME, `${API_BASE}?offset=${offset}`, e);
       stats.errorCount++;
-      errors.push({ url: LIST_URL, step: "crawl", message: String(e) });
+      errors.push({ url: API_BASE, step: "crawl", message: String(e) });
+      break;
     }
 
-    const urls = detailUrls.slice(0, maxItems);
-    stats.eventsFound = urls.length;
+    allPerformances.push(...page.performances);
+    hasMore = page.has_next_page;
+    offset += PAGE_SIZE;
+  }
 
-    // Step 2: 상세 페이지 순회
-    for (const url of urls) {
-      await sleep(RATE_LIMIT_MS);
+  const performances = allPerformances.slice(0, maxItems);
+  stats.eventsFound = performances.length;
 
-      let html = "";
-      try {
-        html = await fetchWithBrowser(browser, url);
-        stats.pagesCrawled++;
-      } catch (e) {
-        await logCrawlError(jobId, SOURCE_NAME, url, e);
-        stats.errorCount++;
-        errors.push({ url, step: "crawl", message: String(e) });
-        continue;
+  for (const perf of performances) {
+    const sourceUrl = `${DETAIL_BASE}/${perf.id}`;
+    const { start: startDate, end: endDate } = parseStagepickDate(perf.formatted_date);
+
+    // Parse ticket open date (ISO datetime → date string)
+    let ticketOpenDate: string | null = null;
+    if (perf.ticket_open_date) {
+      const d = new Date(perf.ticket_open_date);
+      if (!isNaN(d.getTime())) {
+        ticketOpenDate = d.toISOString().slice(0, 10);
+      }
+    }
+
+    const rawInput = {
+      sourceUrl,
+      sourceName: SOURCE_NAME,
+      title: perf.title ?? "",
+      posterUrl: perf.image_url ?? null,
+      venueName: perf.venue ?? null,
+      venueAddress: null,
+      startDate,
+      endDate,
+      ticketOpenDate,
+      ticketProvider: "스테이지픽" as const,
+      ticketUrl: sourceUrl,
+      artists: [],
+      genre: null,
+      description: null,
+      status: "upcoming" as const,
+      rawHtml: null,
+    };
+
+    let rawPayloadId: string | null = null;
+
+    try {
+      const parsed = RawScrapedEventSchema.safeParse(rawInput);
+      if (!parsed.success) {
+        throw new Error(`Validation: ${parsed.error.message}`);
       }
 
-      // Step 3: 파싱
-      let rawPayloadId: string | null = null;
-      let parsed;
-      try {
-        const detail = parseDetailPage(html, url);
-        const rawInput = {
-          sourceUrl: url,
+      if (!dryRun) {
+        rawPayloadId = await saveRawPayload({
+          jobId,
           sourceName: SOURCE_NAME,
-          title: detail.title,
-          posterUrl: detail.posterUrl,
-          venueName: detail.venueName,
-          venueAddress: detail.venueAddress,
-          startDate: detail.dateRange,
-          endDate: detail.dateRange,
-          ticketOpenDate: detail.ticketOpenDate,
-          ticketProvider: detail.ticketProvider,
-          ticketUrl: detail.ticketUrl,
-          artists: detail.artists,
-          genre: detail.genre,
-          description: detail.description,
-          status: "upcoming" as const,
-          rawHtml: dryRun ? null : html,
-        };
-
-        parsed = RawScrapedEventSchema.safeParse(rawInput);
-        if (!parsed.success) {
-          throw new Error(`Validation: ${parsed.error.message}`);
-        }
-
-        // Step 4: raw payload 저장
-        if (!dryRun) {
-          rawPayloadId = await saveRawPayload({
-            jobId,
-            sourceName: SOURCE_NAME,
-            sourceUrl: url,
-            rawHtml: dryRun ? null : html,
-            parsedJson: rawInput as Record<string, unknown>,
-          });
-        }
-      } catch (e) {
-        await logParseError(jobId, SOURCE_NAME, url, e);
-        stats.errorCount++;
-        errors.push({ url, step: "parse", message: String(e) });
-        continue;
+          sourceUrl,
+          rawHtml: null,
+          parsedJson: rawInput as Record<string, unknown>,
+        });
       }
 
       if (dryRun) {
@@ -134,28 +188,27 @@ export async function runStagepickScraper(
         continue;
       }
 
-      // Step 5: 정규화 + upsert
-      try {
-        const normalized = normalizeEvent(parsed.data);
-        const result = await upsertEvent(normalized, jobId);
+      const normalized = normalizeEvent(parsed.data);
+      const result = await upsertEvent(normalized, jobId);
 
-        if (rawPayloadId && result.eventId) {
-          await markRawPayloadProcessed(rawPayloadId, result.eventId);
-        }
-
-        if (result.action === "skipped") {
-          stats.eventsSkipped++;
-        } else {
-          stats.eventsUpserted++;
-        }
-      } catch (e) {
-        await logUpsertError(jobId, SOURCE_NAME, e);
-        stats.errorCount++;
-        errors.push({ url, step: "upsert", message: String(e) });
+      if (rawPayloadId && result.eventId) {
+        await markRawPayloadProcessed(rawPayloadId, result.eventId);
       }
+
+      if (result.action === "skipped") {
+        stats.eventsSkipped++;
+      } else {
+        stats.eventsUpserted++;
+      }
+    } catch (e) {
+      if (rawPayloadId === null) {
+        await logParseError(jobId, SOURCE_NAME, sourceUrl, e);
+      } else {
+        await logUpsertError(jobId, SOURCE_NAME, e);
+      }
+      stats.errorCount++;
+      errors.push({ url: sourceUrl, step: rawPayloadId ? "upsert" : "parse", message: String(e) });
     }
-  } finally {
-    await browser?.close();
   }
 
   return {

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
+import { normalizeTitle, normalizeVenueName } from "@/lib/ingestion/normalize";
+import { generateDedupKey } from "@/lib/ingestion/dedup";
 import type { EventRow, OptionItem } from "@/types/event";
 import {
   buildPaginationMeta,
@@ -148,8 +150,56 @@ export async function POST(request: Request) {
   }
 
   const supabase = createServiceRoleClient();
+
+  // Compute dedup fields
+  const normalizedTitleVal = normalizeTitle(body.title.trim());
+  const startDateStr = (body.start_date as string).slice(0, 10);
+
+  // Look up venue name for dedup_key
+  const { data: venueRow } = await supabase
+    .from("venues")
+    .select("name")
+    .eq("id", body.venue_id)
+    .maybeSingle();
+  const normalizedVenueVal = normalizeVenueName(
+    (venueRow as { name?: string } | null)?.name ?? null,
+  );
+  const dedupKey = generateDedupKey(
+    normalizedTitleVal,
+    normalizedVenueVal,
+    startDateStr,
+  );
+
+  // Duplicate check: by dedup_key first, then by normalized_title + date
+  const { data: dupByKey } = await supabase
+    .from("events")
+    .select("id, title")
+    .eq("dedup_key", dedupKey)
+    .maybeSingle();
+  const { data: dupByTitle } = !dupByKey
+    ? await supabase
+        .from("events")
+        .select("id, title")
+        .eq("normalized_title", normalizedTitleVal)
+        .gte("start_date", startDateStr)
+        .lt("start_date", `${startDateStr}T23:59:59`)
+        .maybeSingle()
+    : { data: null };
+  const dup = dupByKey ?? dupByTitle;
+  if (dup) {
+    return NextResponse.json(
+      {
+        error: "duplicate_event",
+        detail: `같은 제목+날짜 이벤트가 이미 존재합니다: "${(dup as { title: string }).title}"`,
+      },
+      { status: 409 },
+    );
+  }
+
   const { error } = await supabase.from("events").insert({
     title: body.title.trim(),
+    normalized_title: normalizedTitleVal,
+    dedup_key: dedupKey,
     artist_id: body.artist_id,
     venue_id: body.venue_id,
     poster_url: body.poster_url ?? null,

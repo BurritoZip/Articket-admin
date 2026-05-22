@@ -1,11 +1,12 @@
-import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
 import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
+import { withErrorHandler } from "@/lib/api-handler";
+import { NextResponse } from "next/server";
 
-export const maxDuration = 300; // Vercel: 5분 허용
+export const maxDuration = 300;
 
-export async function POST(request: Request) {
+export const POST = withErrorHandler(async (request) => {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
@@ -46,8 +47,15 @@ export async function POST(request: Request) {
         );
     }
 
+    const status =
+      result.errorCount > 0 && result.eventsUpserted === 0
+        ? "failed"
+        : result.errorCount > 0
+          ? "partial"
+          : "success";
+
     await finishCrawlerJob(job.id, {
-      status: result.errorCount > 0 && result.eventsUpserted === 0 ? "failed" : result.errorCount > 0 ? "partial" : "success",
+      status,
       pagesCrawled: result.pagesCrawled,
       eventsFound: result.eventsFound,
       eventsUpserted: result.eventsUpserted,
@@ -68,4 +76,4 @@ export async function POST(request: Request) {
     const msg = e instanceof Error ? e.message : String(e);
     return NextResponse.json({ error: msg, jobId: job.id }, { status: 500 });
   }
-}
+});

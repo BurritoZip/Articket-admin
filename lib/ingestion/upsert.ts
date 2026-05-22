@@ -3,8 +3,14 @@ import { matchOrCreateArtist, matchOrCreateVenue } from "./artist-matcher";
 import type { NormalizedEvent, UpsertResult } from "@/types/ingestion";
 
 const TRACKED_FIELDS = [
-  "title", "poster_url", "start_date", "end_date",
-  "ticket_open_date", "ticket_provider", "status", "genre",
+  "title",
+  "poster_url",
+  "start_date",
+  "end_date",
+  "ticket_open_date",
+  "ticket_provider",
+  "status",
+  "genre",
 ] as const;
 
 export async function upsertEvent(
@@ -19,11 +25,33 @@ export async function upsertEvent(
   const venueId = await matchOrCreateVenue(event.venueName, event.venueAddress);
 
   // 기존 이벤트 조회 (dedup_key 기반)
-  const { data: existing } = await db
+  let { data: existing } = await db
     .from("events")
-    .select("id, title, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls")
+    .select(
+      "id, title, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls",
+    )
     .eq("dedup_key", event.dedupKey)
     .maybeSingle();
+
+  // dedup_key 미매칭 시 normalized_title + start_date 로 이중 확인 (수동 등록 이벤트 중복 방지)
+  if (!existing && event.normalizedTitle && event.startDate) {
+    const { data: byTitle } = await db
+      .from("events")
+      .select(
+        "id, title, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls",
+      )
+      .eq("normalized_title", event.normalizedTitle)
+      .eq("start_date", event.startDate)
+      .maybeSingle();
+    if (byTitle) {
+      existing = byTitle;
+      // dedup_key 동기화
+      await db
+        .from("events")
+        .update({ dedup_key: event.dedupKey })
+        .eq("id", (byTitle as { id: string }).id);
+    }
+  }
 
   if (!existing) {
     // INSERT
@@ -54,7 +82,11 @@ export async function upsertEvent(
       .single();
 
     if (error) throw new Error(`Upsert insert failed: ${error.message}`);
-    return { action: "inserted", eventId: (inserted as { id: string }).id, changes: [] };
+    return {
+      action: "inserted",
+      eventId: (inserted as { id: string }).id,
+      changes: [],
+    };
   }
 
   // UPDATE — detect changes
@@ -76,15 +108,25 @@ export async function upsertEvent(
   for (const field of TRACKED_FIELDS) {
     const newVal = fieldMap[field];
     const oldVal = ex[field];
-    if (newVal !== undefined && newVal !== null && String(newVal) !== String(oldVal ?? "")) {
+    if (
+      newVal !== undefined &&
+      newVal !== null &&
+      String(newVal) !== String(oldVal ?? "")
+    ) {
       patch[field] = newVal;
-      changes.push({ field, oldValue: oldVal as string | null, newValue: newVal as string });
+      changes.push({
+        field,
+        oldValue: oldVal as string | null,
+        newValue: newVal as string,
+      });
     }
   }
 
   // source_urls 병합
   const existingUrls = (ex.source_urls as string[] | null) ?? [];
-  const mergedUrls = Array.from(new Set([...existingUrls, ...event.sourceUrls]));
+  const mergedUrls = Array.from(
+    new Set([...existingUrls, ...event.sourceUrls]),
+  );
   if (mergedUrls.length !== existingUrls.length) patch.source_urls = mergedUrls;
 
   if (Object.keys(patch).length > 0) {
@@ -95,7 +137,8 @@ export async function upsertEvent(
       .from("events")
       .update(patch)
       .eq("id", ex.id as string);
-    if (updateError) throw new Error(`Upsert update failed: ${updateError.message}`);
+    if (updateError)
+      throw new Error(`Upsert update failed: ${updateError.message}`);
 
     // 변경 이력 저장
     if (changes.length > 0) {

@@ -22,6 +22,3 @@ export interface ScrapeOptions {
   dryRun?: boolean;
   jobId?: string;
 }
-
-export type BrowserContext = import("playwright-core").BrowserContext;
-export type Page = import("playwright-core").Page;
