@@ -10,6 +10,8 @@ import {
   parseAdminPagination,
 } from "@/lib/admin-pagination";
 
+const VALID_STATUSES = ["upcoming", "on_sale", "ongoing", "ended"];
+
 export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
@@ -53,7 +55,7 @@ export async function GET(request: Request) {
     .order("start_date", { ascending: false });
 
   if (search) eventsQuery = eventsQuery.ilike("title", `%${search}%`);
-  if (status && ["upcoming", "on_sale", "ended"].includes(status)) {
+  if (status && VALID_STATUSES.includes(status)) {
     eventsQuery = eventsQuery.eq("status", status);
   }
 
@@ -85,6 +87,8 @@ export async function GET(request: Request) {
         rows: [],
         artists: artistsRes.data ?? [],
         venues: venuesRes.data ?? [],
+        eventArtists: [],
+        eventVenues: [],
         ...buildPaginationMeta(page, pageSize, 0),
       });
     }
@@ -109,6 +113,8 @@ export async function GET(request: Request) {
         rows: [],
         artists: [],
         venues: [],
+        eventArtists: [],
+        eventVenues: [],
         ...buildPaginationMeta(page, pageSize, 0),
         warning: "events 테이블이 아직 없습니다.",
       });
@@ -119,12 +125,34 @@ export async function GET(request: Request) {
     );
   }
 
+  const eventIds = (eventsRes.data ?? []).map((e) => (e as { id: string }).id);
+
+  const [eventArtistsRes, eventVenuesRes] = await Promise.all([
+    eventIds.length > 0
+      ? supabase
+          .from("event_artists")
+          .select("event_id, artist_id, artist_name, display_order")
+          .in("event_id", eventIds)
+          .order("display_order")
+      : { data: [], error: null },
+    eventIds.length > 0
+      ? supabase
+          .from("event_venues")
+          .select("event_id, venue_id, display_order")
+          .in("event_id", eventIds)
+          .order("display_order")
+      : { data: [], error: null },
+  ]);
+
   const total = eventsRes.count ?? 0;
 
   return NextResponse.json({
     rows: (eventsRes.data ?? []) as EventRow[],
     artists: (artistsRes.data ?? []) as OptionItem[],
     venues: (venuesRes.data ?? []) as OptionItem[],
+    // 테이블 미존재 시 빈 배열로 graceful degradation
+    eventArtists: eventArtistsRes.error ? [] : (eventArtistsRes.data ?? []),
+    eventVenues: eventVenuesRes.error ? [] : (eventVenuesRes.data ?? []),
     ...buildPaginationMeta(page, pageSize, total),
   });
 }
@@ -133,12 +161,29 @@ export async function POST(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const body = (await request.json()) as Partial<EventRow>;
+  const body = (await request.json()) as Partial<EventRow> & {
+    artist_ids?: string[];
+    venue_ids?: string[];
+  };
+
+  const artistIds: string[] =
+    body.artist_ids && body.artist_ids.length > 0
+      ? body.artist_ids
+      : body.artist_id
+        ? [body.artist_id]
+        : [];
+  const venueIds: string[] =
+    body.venue_ids && body.venue_ids.length > 0
+      ? body.venue_ids
+      : body.venue_id
+        ? [body.venue_id]
+        : [];
+
   if (
     !body.title?.trim() ||
     !body.start_date ||
-    !body.artist_id ||
-    !body.venue_id
+    artistIds.length === 0 ||
+    venueIds.length === 0
   ) {
     return NextResponse.json(
       { error: "missing_required_fields" },
@@ -158,15 +203,13 @@ export async function POST(request: Request) {
 
   const supabase = createServiceRoleClient();
 
-  // Compute dedup fields
   const normalizedTitleVal = normalizeTitle(body.title.trim());
   const startDateStr = (body.start_date as string).slice(0, 10);
 
-  // Look up venue name for dedup_key
   const { data: venueRow } = await supabase
     .from("venues")
     .select("name")
-    .eq("id", body.venue_id)
+    .eq("id", venueIds[0])
     .maybeSingle();
   const normalizedVenueVal = normalizeVenueName(
     (venueRow as { name?: string } | null)?.name ?? null,
@@ -177,7 +220,6 @@ export async function POST(request: Request) {
     startDateStr,
   );
 
-  // Duplicate check: by dedup_key first, then by normalized_title + date
   const { data: dupByKey } = await supabase
     .from("events")
     .select("id, title")
@@ -203,25 +245,41 @@ export async function POST(request: Request) {
     );
   }
 
-  const { error } = await supabase.from("events").insert({
-    title: body.title.trim(),
-    normalized_title: normalizedTitleVal,
-    dedup_key: dedupKey,
-    artist_id: body.artist_id,
-    venue_id: body.venue_id,
-    poster_url: body.poster_url ?? null,
-    start_date: body.start_date,
-    end_date: body.end_date ?? null,
-    status: body.status ?? "upcoming",
-    genre: body.genre ?? null,
-    duration: body.duration ?? null,
-    age_restriction: body.age_restriction ?? null,
-    ticket_open_date: body.ticket_open_date ?? null,
-    ticket_provider: body.ticket_provider ?? null,
-    notice_text: body.notice_text ?? null,
-    is_banner: body.is_banner ?? false,
-    has_timetable: body.has_timetable ?? false,
-  });
+  // Fetch artist names for event_artists
+  const { data: artistRows } = await supabase
+    .from("artists")
+    .select("id, name")
+    .in("id", artistIds);
+  const artistNameMap = new Map(
+    ((artistRows as { id: string; name: string }[] | null) ?? []).map((a) => [
+      a.id,
+      a.name,
+    ]),
+  );
+
+  const { data: insertedEvent, error } = await supabase
+    .from("events")
+    .insert({
+      title: body.title.trim(),
+      normalized_title: normalizedTitleVal,
+      dedup_key: dedupKey,
+      artist_id: artistIds[0],
+      venue_id: venueIds[0],
+      poster_url: body.poster_url ?? null,
+      start_date: body.start_date,
+      end_date: body.end_date ?? null,
+      status: body.status ?? "upcoming",
+      genre: body.genre ?? null,
+      duration: body.duration ?? null,
+      age_restriction: body.age_restriction ?? null,
+      ticket_open_date: body.ticket_open_date ?? null,
+      ticket_provider: body.ticket_provider ?? null,
+      notice_text: body.notice_text ?? null,
+      is_banner: body.is_banner ?? false,
+      has_timetable: body.has_timetable ?? false,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     return NextResponse.json(
@@ -230,9 +288,29 @@ export async function POST(request: Request) {
     );
   }
 
-  if (body.artist_id) {
-    await recomputeUpcomingCount(body.artist_id);
-  }
+  const newEventId = (insertedEvent as { id: string }).id;
+
+  // Insert event_artists
+  await supabase.from("event_artists").insert(
+    artistIds.map((aid, i) => ({
+      event_id: newEventId,
+      artist_id: aid,
+      artist_name: artistNameMap.get(aid) ?? "",
+      role: "lineup",
+      display_order: i,
+    })),
+  );
+
+  // Insert event_venues
+  await supabase.from("event_venues").insert(
+    venueIds.map((vid, i) => ({
+      event_id: newEventId,
+      venue_id: vid,
+      display_order: i,
+    })),
+  );
+
+  await Promise.all(artistIds.map(recomputeUpcomingCount));
 
   return NextResponse.json({ ok: true });
 }

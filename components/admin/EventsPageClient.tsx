@@ -89,6 +89,13 @@ type EventQueryResponse = {
   rows: EventRow[];
   artists: OptionItem[];
   venues: OptionItem[];
+  eventArtists?: {
+    event_id: string;
+    artist_id: string;
+    artist_name: string;
+    display_order: number;
+  }[];
+  eventVenues?: { event_id: string; venue_id: string; display_order: number }[];
   warning?: string;
   total?: number;
   totalPages?: number;
@@ -99,6 +106,7 @@ type EventQueryResponse = {
 const STATUS_LABEL: Record<EventStatus, string> = {
   upcoming: "예정",
   on_sale: "예매중",
+  ongoing: "진행중",
   ended: "종료",
 };
 
@@ -147,6 +155,8 @@ export function EventsPageClient() {
   };
 
   const [form, setForm] = React.useState<Partial<EventRow>>(emptyForm);
+  const [artistIds, setArtistIds] = React.useState<string[]>([]);
+  const [venueIds, setVenueIds] = React.useState<string[]>([]);
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
@@ -241,12 +251,32 @@ export function EventsPageClient() {
     [venues],
   );
 
+  // event_id → sorted artist list
+  const eventArtistsMap = React.useMemo(() => {
+    const map = new Map<string, { artist_id: string; artist_name: string }[]>();
+    for (const ea of data?.eventArtists ?? []) {
+      const list = map.get(ea.event_id) ?? [];
+      list.push({ artist_id: ea.artist_id, artist_name: ea.artist_name });
+      map.set(ea.event_id, list);
+    }
+    return map;
+  }, [data]);
+
+  // event_id → sorted venue id list
+  const eventVenuesMap = React.useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const ev of data?.eventVenues ?? []) {
+      const list = map.get(ev.event_id) ?? [];
+      list.push(ev.venue_id);
+      map.set(ev.event_id, list);
+    }
+    return map;
+  }, [data]);
+
   const openCreate = () => {
-    setForm({
-      ...emptyForm,
-      artist_id: artists[0]?.id ?? "",
-      venue_id: venues[0]?.id ?? "",
-    });
+    setForm({ ...emptyForm });
+    setArtistIds([]);
+    setVenueIds([]);
     setCreateOpen(true);
   };
 
@@ -269,15 +299,40 @@ export function EventsPageClient() {
           ticketOpenDate?: string | null;
           ticketProvider?: string | null;
           genre?: string | null;
+          artists?: string[];
+          venueName?: string | null;
         };
         detail?: string;
       };
       if (!res.ok) throw new Error(json.detail ?? "불러오기 실패");
       const p = json.parsed ?? {};
+
+      // 아티스트명 → DB artist 이름 매칭
+      const parsedArtistNames = p.artists ?? [];
+      const matchedArtistIds = parsedArtistNames
+        .map((name) =>
+          artists.find(
+            (a) =>
+              a.name.toLowerCase() === name.toLowerCase() ||
+              a.name.toLowerCase().includes(name.toLowerCase()) ||
+              name.toLowerCase().includes(a.name.toLowerCase()),
+          ),
+        )
+        .filter(Boolean)
+        .map((a) => a!.id);
+
+      // 장소명 → DB venue 이름 매칭
+      const parsedVenueName = (p.venueName ?? "").toLowerCase();
+      const matchedVenue = parsedVenueName
+        ? venues.find(
+            (v) =>
+              v.name.toLowerCase().includes(parsedVenueName) ||
+              parsedVenueName.includes(v.name.toLowerCase()),
+          )
+        : undefined;
+
       setForm({
         ...emptyForm,
-        artist_id: artists[0]?.id ?? "",
-        venue_id: venues[0]?.id ?? "",
         title: p.title ?? "",
         poster_url: p.posterUrl ?? "",
         start_date: p.startDate ? `${p.startDate}T00:00` : "",
@@ -286,10 +341,25 @@ export function EventsPageClient() {
         ticket_provider: p.ticketProvider ?? "",
         genre: p.genre ?? "",
       });
+      setArtistIds(matchedArtistIds);
+      setVenueIds(matchedVenue ? [matchedVenue.id] : []);
+
       setFromUrlOpen(false);
       setFromUrlInput("");
       setCreateOpen(true);
-      toast.success("URL에서 정보를 가져왔습니다. 내용을 확인 후 저장하세요.");
+
+      const artistMsg =
+        matchedArtistIds.length > 0
+          ? `아티스트 ${matchedArtistIds.length}명 자동 선택됨.`
+          : "아티스트를 직접 선택하세요.";
+      const venueMsg = matchedVenue
+        ? `공연장 "${matchedVenue.name}" 자동 선택됨.`
+        : p.venueName
+          ? `공연장 "${p.venueName}"을 직접 선택하세요.`
+          : "공연장을 직접 선택하세요.";
+      toast.success("URL에서 정보를 가져왔습니다.", {
+        description: `${artistMsg} ${venueMsg}`,
+      });
     } catch (e) {
       toast.error("가져오기 실패", {
         description: e instanceof Error ? e.message : "알 수 없는 오류",
@@ -307,6 +377,22 @@ export function EventsPageClient() {
       end_date: event.end_date?.slice(0, 16) ?? "",
       ticket_open_date: event.ticket_open_date?.slice(0, 16) ?? "",
     });
+    const eaList = eventArtistsMap.get(event.id);
+    setArtistIds(
+      eaList && eaList.length > 0
+        ? eaList.map((a) => a.artist_id)
+        : event.artist_id
+          ? [event.artist_id]
+          : [],
+    );
+    const evList = eventVenuesMap.get(event.id);
+    setVenueIds(
+      evList && evList.length > 0
+        ? evList
+        : event.venue_id
+          ? [event.venue_id]
+          : [],
+    );
     setEditOpen(true);
   };
 
@@ -333,11 +419,11 @@ export function EventsPageClient() {
   const submitCreate = async () => {
     if (
       !form.title?.trim() ||
-      !form.artist_id ||
-      !form.venue_id ||
-      !form.start_date
+      !form.start_date ||
+      artistIds.length === 0 ||
+      venueIds.length === 0
     ) {
-      toast.error("필수 항목을 입력하세요.");
+      toast.error("필수 항목을 입력하세요. (공연명, 아티스트, 공연장, 시작일)");
       return;
     }
     setSubmitting(true);
@@ -348,6 +434,8 @@ export function EventsPageClient() {
         body: JSON.stringify({
           ...form,
           title: form.title.trim(),
+          artist_ids: artistIds,
+          venue_ids: venueIds,
           end_date: form.end_date || null,
           ticket_open_date: form.ticket_open_date || null,
           duration: form.duration || null,
@@ -372,8 +460,13 @@ export function EventsPageClient() {
 
   const submitEdit = async () => {
     if (!editingEvent) return;
-    if (!form.title?.trim() || !form.start_date) {
-      toast.error("필수 항목을 입력하세요.");
+    if (
+      !form.title?.trim() ||
+      !form.start_date ||
+      artistIds.length === 0 ||
+      venueIds.length === 0
+    ) {
+      toast.error("필수 항목을 입력하세요. (공연명, 아티스트, 공연장, 시작일)");
       return;
     }
     setSubmitting(true);
@@ -384,6 +477,8 @@ export function EventsPageClient() {
         body: JSON.stringify({
           ...form,
           title: form.title.trim(),
+          artist_ids: artistIds,
+          venue_ids: venueIds,
           end_date: form.end_date || null,
           ticket_open_date: form.ticket_open_date || null,
           duration: form.duration || null,
@@ -553,6 +648,7 @@ export function EventsPageClient() {
                 <SelectItem value="all">전체 상태</SelectItem>
                 <SelectItem value="upcoming">예정</SelectItem>
                 <SelectItem value="on_sale">예매중</SelectItem>
+                <SelectItem value="ongoing">진행중</SelectItem>
                 <SelectItem value="ended">종료</SelectItem>
               </SelectContent>
             </Select>
@@ -579,6 +675,7 @@ export function EventsPageClient() {
                 <SelectContent>
                   <SelectItem value="upcoming">예정</SelectItem>
                   <SelectItem value="on_sale">예매중</SelectItem>
+                  <SelectItem value="ongoing">진행중</SelectItem>
                   <SelectItem value="ended">종료</SelectItem>
                 </SelectContent>
               </Select>
@@ -657,9 +754,23 @@ export function EventsPageClient() {
                       </TableCell>
                       <TableCell className="font-medium">{row.title}</TableCell>
                       <TableCell>
-                        {artistMap.get(row.artist_id) ?? "-"}
+                        {(() => {
+                          const ea = eventArtistsMap.get(row.id);
+                          if (ea && ea.length > 0)
+                            return ea.map((a) => a.artist_name).join(", ");
+                          return artistMap.get(row.artist_id) ?? "-";
+                        })()}
                       </TableCell>
-                      <TableCell>{venueMap.get(row.venue_id) ?? "-"}</TableCell>
+                      <TableCell>
+                        {(() => {
+                          const ev = eventVenuesMap.get(row.id);
+                          if (ev && ev.length > 0)
+                            return ev
+                              .map((vid) => venueMap.get(vid) ?? vid)
+                              .join(", ");
+                          return venueMap.get(row.venue_id) ?? "-";
+                        })()}
+                      </TableCell>
                       <TableCell>{formatKst(row.start_date)}</TableCell>
                       <TableCell>
                         <TicketOpenBadge date={row.ticket_open_date} />
@@ -675,6 +786,7 @@ export function EventsPageClient() {
                           <SelectContent>
                             <SelectItem value="upcoming">예정</SelectItem>
                             <SelectItem value="on_sale">예매중</SelectItem>
+                            <SelectItem value="ongoing">진행중</SelectItem>
                             <SelectItem value="ended">종료</SelectItem>
                           </SelectContent>
                         </Select>
@@ -778,6 +890,10 @@ export function EventsPageClient() {
             setForm={setForm}
             artists={artists}
             venues={venues}
+            artistIds={artistIds}
+            setArtistIds={setArtistIds}
+            venueIds={venueIds}
+            setVenueIds={setVenueIds}
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>
@@ -804,6 +920,10 @@ export function EventsPageClient() {
             setForm={setForm}
             artists={artists}
             venues={venues}
+            artistIds={artistIds}
+            setArtistIds={setArtistIds}
+            venueIds={venueIds}
+            setVenueIds={setVenueIds}
           />
           <DialogFooter>
             <Button
@@ -830,8 +950,19 @@ export function EventsPageClient() {
               <SheetHeader>
                 <SheetTitle>{detailEvent.title}</SheetTitle>
                 <SheetDescription>
-                  {artistMap.get(detailEvent.artist_id) ?? "-"} ·{" "}
-                  {venueMap.get(detailEvent.venue_id) ?? "-"}
+                  {(() => {
+                    const ea = eventArtistsMap.get(detailEvent.id);
+                    return ea && ea.length > 0
+                      ? ea.map((a) => a.artist_name).join(", ")
+                      : (artistMap.get(detailEvent.artist_id) ?? "-");
+                  })()}{" "}
+                  ·{" "}
+                  {(() => {
+                    const ev = eventVenuesMap.get(detailEvent.id);
+                    return ev && ev.length > 0
+                      ? ev.map((vid) => venueMap.get(vid) ?? vid).join(", ")
+                      : (venueMap.get(detailEvent.venue_id) ?? "-");
+                  })()}
                 </SheetDescription>
               </SheetHeader>
               <div className="flex-1 space-y-4 overflow-y-auto py-4 text-body-sm">
@@ -1060,16 +1191,92 @@ function TicketOpenBadge({ date }: { date: string | null }) {
   return <span>{formatKst(date)}</span>;
 }
 
+function MultiSelect({
+  label,
+  required,
+  options,
+  selectedIds,
+  setSelectedIds,
+  placeholder,
+}: {
+  label: string;
+  required?: boolean;
+  options: OptionItem[];
+  selectedIds: string[];
+  setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
+  placeholder: string;
+}) {
+  const selectedSet = new Set(selectedIds);
+  const unselected = options.filter((o) => !selectedSet.has(o.id));
+  const nameMap = new Map(options.map((o) => [o.id, o.name]));
+
+  return (
+    <div className="space-y-2">
+      <Label>
+        {label} {required && <span className="text-red-500">*</span>}
+      </Label>
+      {selectedIds.length > 0 && (
+        <div className="flex flex-wrap gap-1">
+          {selectedIds.map((id) => (
+            <span
+              key={id}
+              className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 text-xs"
+            >
+              {nameMap.get(id) ?? id}
+              <button
+                type="button"
+                className="ml-0.5 text-text-tertiary hover:text-text-primary"
+                onClick={() =>
+                  setSelectedIds((prev) => prev.filter((x) => x !== id))
+                }
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {unselected.length > 0 && (
+        <Select
+          value=""
+          onValueChange={(v) => {
+            if (v) setSelectedIds((prev) => [...prev, v]);
+          }}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder={placeholder} />
+          </SelectTrigger>
+          <SelectContent>
+            {unselected.map((o) => (
+              <SelectItem key={o.id} value={o.id}>
+                {o.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+    </div>
+  );
+}
+
 function EventFormFields({
   form,
   setForm,
   artists,
   venues,
+  artistIds,
+  setArtistIds,
+  venueIds,
+  setVenueIds,
 }: {
   form: Partial<EventRow>;
   setForm: React.Dispatch<React.SetStateAction<Partial<EventRow>>>;
   artists: OptionItem[];
   venues: OptionItem[];
+  artistIds: string[];
+  setArtistIds: React.Dispatch<React.SetStateAction<string[]>>;
+  venueIds: string[];
+  setVenueIds: React.Dispatch<React.SetStateAction<string[]>>;
 }) {
   return (
     <div className="grid gap-4 py-2">
@@ -1085,46 +1292,22 @@ function EventFormFields({
         />
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>
-            아티스트 <span className="text-red-500">*</span>
-          </Label>
-          <Select
-            value={form.artist_id ?? ""}
-            onValueChange={(v) => setForm((s) => ({ ...s, artist_id: v }))}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="아티스트 선택" />
-            </SelectTrigger>
-            <SelectContent>
-              {artists.map((a) => (
-                <SelectItem key={a.id} value={a.id}>
-                  {a.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>
-            공연장 <span className="text-red-500">*</span>
-          </Label>
-          <Select
-            value={form.venue_id ?? ""}
-            onValueChange={(v) => setForm((s) => ({ ...s, venue_id: v }))}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="공연장 선택" />
-            </SelectTrigger>
-            <SelectContent>
-              {venues.map((v) => (
-                <SelectItem key={v.id} value={v.id}>
-                  {v.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+        <MultiSelect
+          label="아티스트"
+          required
+          options={artists}
+          selectedIds={artistIds}
+          setSelectedIds={setArtistIds}
+          placeholder="아티스트 추가"
+        />
+        <MultiSelect
+          label="공연장"
+          required
+          options={venues}
+          selectedIds={venueIds}
+          setSelectedIds={setVenueIds}
+          placeholder="공연장 추가"
+        />
       </div>
 
       {/* 날짜 */}
@@ -1199,6 +1382,7 @@ function EventFormFields({
             <SelectContent>
               <SelectItem value="upcoming">예정</SelectItem>
               <SelectItem value="on_sale">예매중</SelectItem>
+              <SelectItem value="ongoing">진행중</SelectItem>
               <SelectItem value="ended">종료</SelectItem>
             </SelectContent>
           </Select>

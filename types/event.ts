@@ -1,4 +1,4 @@
-export type EventStatus = "upcoming" | "on_sale" | "ended";
+export type EventStatus = "upcoming" | "on_sale" | "ongoing" | "ended";
 
 export type EventRow = {
   id: string;
@@ -31,6 +31,14 @@ export type EventArtistRow = {
   source_name: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type EventVenueRow = {
+  id: string;
+  event_id: string;
+  venue_id: string;
+  display_order: number;
+  created_at: string;
 };
 
 export type OptionItem = {

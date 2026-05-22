@@ -25,7 +25,10 @@ export async function PATCH(
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
-  const body = (await request.json()) as Partial<EventRow>;
+  const body = (await request.json()) as Partial<EventRow> & {
+    artist_ids?: string[];
+    venue_ids?: string[];
+  };
 
   if (
     body.start_date &&
@@ -41,12 +44,22 @@ export async function PATCH(
     );
   }
 
-  const payload: Partial<EventRow> = { ...body };
+  const { artist_ids, venue_ids, ...eventFields } = body;
+  const payload: Partial<EventRow> = { ...eventFields };
   if (typeof payload.title === "string") payload.title = payload.title.trim();
+
+  // If artist_ids provided, set artist_id to first
+  if (artist_ids && artist_ids.length > 0) {
+    payload.artist_id = artist_ids[0];
+  }
+  // If venue_ids provided, set venue_id to first
+  if (venue_ids && venue_ids.length > 0) {
+    payload.venue_id = venue_ids[0];
+  }
 
   const supabase = createServiceRoleClient();
 
-  // Recompute normalized_title and dedup_key when relevant fields change
+  // Recompute dedup fields if relevant columns changed
   const needsDedup = payload.title || payload.venue_id || payload.start_date;
   if (needsDedup) {
     const { data: current } = await supabase
@@ -87,7 +100,11 @@ export async function PATCH(
     );
   }
 
-  const affectsCount = "artist_id" in payload || "status" in payload;
+  const affectsCount =
+    "artist_id" in payload ||
+    "status" in payload ||
+    (artist_ids !== undefined && artist_ids.length > 0);
+
   let oldArtistId: string | null = null;
   if (affectsCount) {
     const { data: current } = await supabase
@@ -111,11 +128,50 @@ export async function PATCH(
     );
   }
 
+  // Update event_artists if artist_ids provided
+  if (artist_ids !== undefined) {
+    await supabase.from("event_artists").delete().eq("event_id", params.id);
+    if (artist_ids.length > 0) {
+      const { data: artistRows } = await supabase
+        .from("artists")
+        .select("id, name")
+        .in("id", artist_ids);
+      const artistNameMap = new Map(
+        (artistRows as { id: string; name: string }[] | null ?? []).map((a) => [a.id, a.name]),
+      );
+      await supabase.from("event_artists").insert(
+        artist_ids.map((aid, i) => ({
+          event_id: params.id,
+          artist_id: aid,
+          artist_name: artistNameMap.get(aid) ?? "",
+          role: "lineup",
+          display_order: i,
+        })),
+      );
+    }
+  }
+
+  // Update event_venues if venue_ids provided
+  if (venue_ids !== undefined) {
+    await supabase.from("event_venues").delete().eq("event_id", params.id);
+    if (venue_ids.length > 0) {
+      await supabase.from("event_venues").insert(
+        venue_ids.map((vid, i) => ({
+          event_id: params.id,
+          venue_id: vid,
+          display_order: i,
+        })),
+      );
+    }
+  }
+
   if (affectsCount) {
     const newArtistId =
       (payload.artist_id as string | null | undefined) ?? oldArtistId;
     const artistsToUpdate = new Set<string>(
-      [oldArtistId, newArtistId].filter(Boolean) as string[],
+      [...(artist_ids ?? []), oldArtistId, newArtistId].filter(
+        Boolean,
+      ) as string[],
     );
     await Promise.all(Array.from(artistsToUpdate).map(recomputeUpcomingCount));
   }
@@ -132,13 +188,26 @@ export async function DELETE(
 
   const supabase = createServiceRoleClient();
 
-  const { data: existing } = await supabase
-    .from("events")
+  // Fetch all artists for this event before deletion
+  const { data: eventArtists } = await supabase
+    .from("event_artists")
     .select("artist_id")
-    .eq("id", params.id)
-    .single();
-  const artistId =
-    (existing as { artist_id: string | null } | null)?.artist_id ?? null;
+    .eq("event_id", params.id);
+  const artistIds = (eventArtists as { artist_id: string }[] | null ?? []).map(
+    (a) => a.artist_id,
+  );
+
+  // Fallback to events.artist_id if event_artists is empty
+  if (artistIds.length === 0) {
+    const { data: existing } = await supabase
+      .from("events")
+      .select("artist_id")
+      .eq("id", params.id)
+      .single();
+    const artistId =
+      (existing as { artist_id: string | null } | null)?.artist_id ?? null;
+    if (artistId) artistIds.push(artistId);
+  }
 
   const { error } = await supabase.from("events").delete().eq("id", params.id);
 
@@ -149,9 +218,7 @@ export async function DELETE(
     );
   }
 
-  if (artistId) {
-    await recomputeUpcomingCount(artistId);
-  }
+  await Promise.all(artistIds.map(recomputeUpcomingCount));
 
   return NextResponse.json({ ok: true });
 }
