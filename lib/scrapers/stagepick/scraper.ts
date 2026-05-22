@@ -1,8 +1,15 @@
 import { parseArtistDetailPage, parseDetailPage } from "./parser";
 import { normalizeEvent } from "@/lib/ingestion/normalize";
 import { upsertEvent } from "@/lib/ingestion/upsert";
-import { saveRawPayload, markRawPayloadProcessed } from "@/lib/crawler/job-manager";
-import { logCrawlError, logParseError, logUpsertError } from "@/lib/crawler/error-logger";
+import {
+  saveRawPayload,
+  markRawPayloadProcessed,
+} from "@/lib/crawler/job-manager";
+import {
+  logCrawlError,
+  logParseError,
+  logUpsertError,
+} from "@/lib/crawler/error-logger";
 import { RawScrapedEventSchema } from "@/types/ingestion";
 import type { IngestionPipelineResult } from "@/types/ingestion";
 import type { ScrapeOptions } from "@/lib/scrapers/base/adapter";
@@ -30,7 +37,10 @@ interface StagepickApiResponse {
   items_per_page: number;
 }
 
-function parseStagepickDate(formatted: string | null): { start: string | null; end: string | null } {
+function parseStagepickDate(formatted: string | null): {
+  start: string | null;
+  end: string | null;
+} {
   if (!formatted) return { start: null, end: null };
 
   const currentYear = new Date().getFullYear();
@@ -50,7 +60,9 @@ function parseStagepickDate(formatted: string | null): { start: string | null; e
   }
 
   // "05. 22 ~ 05. 24" (no year)
-  const shortRangeMatch = formatted.match(/(\d{1,2})\.\s*(\d{1,2})\s*[~–-]\s*(\d{1,2})\.\s*(\d{1,2})/);
+  const shortRangeMatch = formatted.match(
+    /(\d{1,2})\.\s*(\d{1,2})\s*[~–-]\s*(\d{1,2})\.\s*(\d{1,2})/,
+  );
   if (shortRangeMatch) {
     const [, sm, sd, em, ed] = shortRangeMatch;
     return {
@@ -162,7 +174,12 @@ export async function runStagepickScraper(
       page = await fetchPage(offset);
       stats.pagesCrawled++;
     } catch (e) {
-      await logCrawlError(jobId, SOURCE_NAME, `${API_BASE}?offset=${offset}`, e);
+      await logCrawlError(
+        jobId,
+        SOURCE_NAME,
+        `${API_BASE}?offset=${offset}`,
+        e,
+      );
       stats.errorCount++;
       errors.push({ url: API_BASE, step: "crawl", message: String(e) });
       break;
@@ -217,7 +234,7 @@ export async function runStagepickScraper(
       startDate,
       endDate,
       ticketOpenDate: detail?.ticketOpenDate ?? ticketOpenDate,
-      ticketProvider: detail?.ticketProvider ?? "스테이지픽",
+      ticketProvider: detail?.ticketProvider ?? null,
       ticketUrl: detail?.ticketUrl ?? sourceUrl,
       artists: detail?.artists ?? [],
       artistProfiles,
@@ -269,7 +286,11 @@ export async function runStagepickScraper(
         await logUpsertError(jobId, SOURCE_NAME, e);
       }
       stats.errorCount++;
-      errors.push({ url: sourceUrl, step: rawPayloadId ? "upsert" : "parse", message: String(e) });
+      errors.push({
+        url: sourceUrl,
+        step: rawPayloadId ? "upsert" : "parse",
+        message: String(e),
+      });
     }
   }
 

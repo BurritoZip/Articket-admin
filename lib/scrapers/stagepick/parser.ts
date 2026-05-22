@@ -147,9 +147,7 @@ export function parseDetailPage(
 
   const headingTitle = $("h1").first().text().trim();
   const title = cleanTitle(
-    (headingTitle && headingTitle !== "공연 상세정보"
-      ? headingTitle
-      : null) ||
+    (headingTitle && headingTitle !== "공연 상세정보" ? headingTitle : null) ||
       titleLine ||
       $('[class*="title"]').first().text().trim() ||
       $("title").text().split("|")[0].trim(),
@@ -235,9 +233,7 @@ export function parseDetailPage(
       "다른 회차",
     ];
     for (const line of lines.slice(artistStart + 1)) {
-      if (
-        sectionEndLabels.some((stop) => line.startsWith(stop))
-      ) {
+      if (sectionEndLabels.some((stop) => line.startsWith(stop))) {
         break;
       }
       const artist = line
@@ -254,13 +250,7 @@ export function parseDetailPage(
       const name = cleanText($el.text());
       if (!name) return;
       const beforeText = cleanText(
-        $el
-          .parent()
-          .prevAll()
-          .text()
-          .split(/\r?\n/)
-          .slice(-5)
-          .join(" "),
+        $el.parent().prevAll().text().split(/\r?\n/).slice(-5).join(" "),
       );
       const aroundText = cleanText($el.parent().text()) ?? "";
       if (beforeText && new RegExp(stopText).test(beforeText)) return;
@@ -323,21 +313,27 @@ export function parseArtistDetailPage(
     $("title").text().split("|")[0].trim();
   const titleIndex = lines.findIndex((line) => line === name);
   const occupation =
-    titleIndex >= 0 && lines[titleIndex + 1] && !isArtistProfileLabel(lines[titleIndex + 1])
+    titleIndex >= 0 &&
+    lines[titleIndex + 1] &&
+    !isArtistProfileLabel(lines[titleIndex + 1])
       ? lines[titleIndex + 1]
       : null;
   const birthDateIndex = lines.findIndex((line) => line === "생년월일");
   const birthDateLine =
     birthDateIndex >= 0
       ? lines[birthDateIndex + 1]
-      : lines.find((line) => line.startsWith("생년월일"))?.replace(/^생년월일\s*/, "");
+      : lines
+          .find((line) => line.startsWith("생년월일"))
+          ?.replace(/^생년월일\s*/, "");
   const relatedIndex = lines.findIndex((line) => line === "소속그룹");
   const agencyIndex = lines.findIndex((line) => line === "소속사");
   const debutIndex = lines.findIndex((line) => line === "데뷔");
   const agencyLine =
     agencyIndex >= 0
       ? lines[agencyIndex + 1]
-      : lines.find((line) => line.startsWith("소속사"))?.replace(/^소속사\s*/, "");
+      : lines
+          .find((line) => line.startsWith("소속사"))
+          ?.replace(/^소속사\s*/, "");
   const debutLine =
     debutIndex >= 0
       ? lines[debutIndex + 1]
@@ -361,7 +357,7 @@ export function parseArtistDetailPage(
         ? lines[relatedIndex + 1]
         : null,
     metadata: {
-      englishName: titleIndex >= 0 ? lines[titleIndex + 2] ?? null : null,
+      englishName: titleIndex >= 0 ? (lines[titleIndex + 2] ?? null) : null,
       agency: agencyLine ?? null,
       debut: debutLine ?? null,
       sourceUrl,
@@ -396,7 +392,9 @@ function dedupArtistDetails(
 }
 
 function isArtistProfileLabel(value: string): boolean {
-  return /^(소속사|데뷔|생년월일|소속그룹|AI 연관 아티스트|공연 목록)/.test(value);
+  return /^(소속사|데뷔|생년월일|소속그룹|AI 연관 아티스트|공연 목록)/.test(
+    value,
+  );
 }
 
 function parseKoreanDate(value: string | null | undefined): string | null {
@@ -412,6 +410,7 @@ function detectTicketProvider(url: string | null): string | null {
   if (url.includes("melon")) return "멜론티켓";
   if (url.includes("yes24")) return "예스24";
   if (url.includes("ticketlink")) return "티켓링크";
-  if (url.includes("stagepick")) return "스테이지픽";
+  if (url.includes("kyobo")) return "교보문고티켓";
+  if (url.includes("auction")) return "옥션티켓";
   return null;
 }
