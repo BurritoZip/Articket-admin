@@ -124,18 +124,13 @@ export async function autoImportTimetableForEvent(
     parsed_json?: Record<string, unknown> | null;
   } | null;
 
-  // 3. Try StagePick API (manual URL takes priority over raw payload)
-  let apiArtists: StagepickArtistItem[] = [];
   const effectiveSourceUrl =
     manualSourceUrl?.trim() || rawPayload?.source_url || null;
   const perfId = extractPerfId(effectiveSourceUrl);
-  if (perfId) {
-    apiArtists = await fetchStagepickArtists(perfId);
-  }
 
-  // 4. Fallback: parsed_json.artists / artistProfiles
-  let artistNames: string[] = apiArtists.map((a) => a.name!.trim());
-  if (artistNames.length === 0 && rawPayload?.parsed_json) {
+  // 3. Artist names from raw payload first (HTML parsing = accurate lineup)
+  let artistNames: string[] = [];
+  if (rawPayload?.parsed_json) {
     const parsed = rawPayload.parsed_json;
     const fallback = (parsed.artists ?? parsed.artistProfiles) as unknown;
     if (Array.isArray(fallback)) {
@@ -145,6 +140,22 @@ export async function autoImportTimetableForEvent(
         .map((n) => n.trim());
     }
   }
+
+  // 4. Fetch StagePick API for profile enrichment (avatarUrl, agency)
+  //    Only use API artist names as fallback when raw payload has none
+  let apiArtists: StagepickArtistItem[] = [];
+  if (perfId && artistNames.length === 0) {
+    apiArtists = await fetchStagepickArtists(perfId);
+    artistNames = apiArtists.map((a) => a.name!.trim());
+  } else if (perfId) {
+    // Fetch API only for profile enrichment; don't override artist list
+    apiArtists = await fetchStagepickArtists(perfId);
+  }
+
+  // Build a lookup from name → API artist (for avatar/agency enrichment)
+  const apiByName = new Map(
+    apiArtists.map((a) => [a.name?.trim().toLowerCase(), a]),
+  );
 
   if (artistNames.length === 0) {
     const reason =
@@ -173,7 +184,7 @@ export async function autoImportTimetableForEvent(
 
   for (let i = 0; i < artistNames.length; i++) {
     const name = artistNames[i];
-    const apiArtist = apiArtists[i];
+    const apiArtist = apiByName.get(name.toLowerCase());
 
     const profile: ArtistProfileInput | undefined = apiArtist?.image_url
       ? {

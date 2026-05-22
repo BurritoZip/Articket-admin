@@ -15,7 +15,9 @@ function normalizeArtistName(name: string): string {
   return name.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-function buildArtistPatch(profile: ArtistProfileInput): Record<string, unknown> {
+function buildArtistPatch(
+  profile: ArtistProfileInput,
+): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (profile.avatarUrl) patch.avatar_url = profile.avatarUrl;
   if (profile.occupation) patch.occupation = profile.occupation;
@@ -37,7 +39,9 @@ async function fillMissingArtistProfile(
   const db = createServiceRoleClient();
   const { data } = await db
     .from("artists")
-    .select("avatar_url, occupation, birth_date, birth_place, related, metadata")
+    .select(
+      "avatar_url, occupation, birth_date, birth_place, related, metadata",
+    )
     .eq("id", artistId)
     .single();
   const current = (data ?? {}) as Record<string, unknown>;
@@ -110,7 +114,9 @@ export async function matchOrCreateArtist(
     .single();
 
   if (error) {
-    console.warn(`[ArtistMatcher] Failed to create artist "${rawName}": ${error.message}`);
+    console.warn(
+      `[ArtistMatcher] Failed to create artist "${rawName}": ${error.message}`,
+    );
     return null;
   }
   return (created as { id: string }).id;
@@ -130,7 +136,10 @@ export async function matchOrCreateArtists(
   for (const name of uniqueNames) {
     results.push({
       name,
-      id: await matchOrCreateArtist(name, profileByName.get(normalizeArtistName(name))),
+      id: await matchOrCreateArtist(
+        name,
+        profileByName.get(normalizeArtistName(name)),
+      ),
     });
   }
   return results;
@@ -142,7 +151,9 @@ export async function linkEventArtists(
   sourceName: string,
 ): Promise<void> {
   const rows = artists
-    .filter((artist): artist is { name: string; id: string } => Boolean(artist.id))
+    .filter((artist): artist is { name: string; id: string } =>
+      Boolean(artist.id),
+    )
     .map((artist, index) => ({
       event_id: eventId,
       artist_id: artist.id,
@@ -158,6 +169,26 @@ export async function linkEventArtists(
     .upsert(rows, { onConflict: "event_id,artist_id" });
   if (error) {
     throw new Error(`Event artist link failed: ${error.message}`);
+  }
+}
+
+export async function linkEventVenues(
+  eventId: string,
+  venueIds: string[],
+): Promise<void> {
+  const validIds = venueIds.filter(Boolean);
+  if (validIds.length === 0) return;
+  const db = createServiceRoleClient();
+  const rows = validIds.map((venueId, index) => ({
+    event_id: eventId,
+    venue_id: venueId,
+    display_order: index,
+  }));
+  const { error } = await db
+    .from("event_venues")
+    .upsert(rows, { onConflict: "event_id,venue_id" });
+  if (error) {
+    throw new Error(`Event venue link failed: ${error.message}`);
   }
 }
 
@@ -200,7 +231,9 @@ export async function matchOrCreateVenue(
     .single();
 
   if (error) {
-    console.warn(`[VenueMatcher] Failed to create venue "${venueName}": ${error.message}`);
+    console.warn(
+      `[VenueMatcher] Failed to create venue "${venueName}": ${error.message}`,
+    );
     return null;
   }
   return (created as { id: string }).id;

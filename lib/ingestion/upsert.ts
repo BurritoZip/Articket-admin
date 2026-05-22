@@ -1,6 +1,7 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
   linkEventArtists,
+  linkEventVenues,
   matchOrCreateArtists,
   matchOrCreateVenue,
 } from "./artist-matcher";
@@ -88,14 +89,14 @@ export async function upsertEvent(
       .single();
 
     if (error) throw new Error(`Upsert insert failed: ${error.message}`);
-    await linkEventArtists(
-      (inserted as { id: string }).id,
-      matchedArtists,
-      event.sourceName,
-    );
+    const insertedId = (inserted as { id: string }).id;
+    await Promise.all([
+      linkEventArtists(insertedId, matchedArtists, event.sourceName),
+      linkEventVenues(insertedId, venueId ? [venueId] : []),
+    ]);
     return {
       action: "inserted",
-      eventId: (inserted as { id: string }).id,
+      eventId: insertedId,
       changes: [],
     };
   }
@@ -173,10 +174,16 @@ export async function upsertEvent(
       );
     }
 
-    await linkEventArtists(ex.id as string, matchedArtists, event.sourceName);
+    await Promise.all([
+      linkEventArtists(ex.id as string, matchedArtists, event.sourceName),
+      linkEventVenues(ex.id as string, venueId ? [venueId] : []),
+    ]);
     return { action: "updated", eventId: ex.id as string, changes };
   }
 
-  await linkEventArtists(ex.id as string, matchedArtists, event.sourceName);
+  await Promise.all([
+    linkEventArtists(ex.id as string, matchedArtists, event.sourceName),
+    linkEventVenues(ex.id as string, venueId ? [venueId] : []),
+  ]);
   return { action: "skipped", eventId: ex.id as string, changes: [] };
 }
