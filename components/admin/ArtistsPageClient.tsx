@@ -103,6 +103,8 @@ export function ArtistsPageClient() {
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
+    React.useState(false);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
   React.useEffect(() => {
@@ -312,6 +314,7 @@ export function ArtistsPageClient() {
       void refetch();
     } finally {
       setBulkDeleting(false);
+      setBulkDeleteConfirmOpen(false);
     }
   };
 
@@ -380,7 +383,7 @@ export function ArtistsPageClient() {
                 size="sm"
                 variant="danger"
                 disabled={bulkDeleting}
-                onClick={() => void bulkDelete()}
+                onClick={() => setBulkDeleteConfirmOpen(true)}
               >
                 <Trash2 className="mr-1 h-3 w-3" />
                 삭제
@@ -720,6 +723,28 @@ export function ArtistsPageClient() {
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction onClick={() => void confirmRemove()}>
               삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={(o) => !o && setBulkDeleteConfirmOpen(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {selectedIds.size}건을 일괄 삭제할까요?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              선택한 아티스트 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void bulkDelete()}>
+              {bulkDeleting ? "삭제 중..." : "삭제"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

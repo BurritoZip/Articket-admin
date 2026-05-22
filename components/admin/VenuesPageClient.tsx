@@ -77,6 +77,10 @@ export function VenuesPageClient() {
   );
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
+    React.useState(false);
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
   React.useEffect(() => {
     setPage(1);
@@ -142,6 +146,20 @@ export function VenuesPageClient() {
   const total = data?.total ?? 0;
   const totalPages = data?.totalPages ?? 1;
 
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelectedIds(
+      selectedIds.size === list.length
+        ? new Set()
+        : new Set(list.map((row) => row.id)),
+    );
+
   const startEdit = (row: VenueRow) => {
     setEditingId(row.id);
     setDraft({
@@ -175,6 +193,33 @@ export function VenuesPageClient() {
   };
 
   const removeVenue = (id: string) => setDeleteId(id);
+
+  const bulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/admin/venues/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, action: "delete" }),
+      });
+      const json = (await res.json()) as { detail?: string };
+      if (!res.ok) {
+        toast.error("일괄 삭제 실패", {
+          description: json.detail ?? "공연장 삭제 중 오류가 발생했습니다.",
+        });
+        return;
+      }
+      toast.success(`${ids.length}건 삭제 완료`);
+      setSelectedIds(new Set());
+      const result = await refetch();
+      if (result.data?.rows.length === 0 && page > 1) setPage((p) => p - 1);
+      queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    } finally {
+      setBulkDeleting(false);
+      setBulkDeleteConfirmOpen(false);
+    }
+  };
 
   const confirmRemove = async () => {
     if (!deleteId) return;
@@ -232,6 +277,29 @@ export function VenuesPageClient() {
             onMissingFilter={setMissingFilter}
             onDuplicatesFilter={setDuplicatesFilter}
           />
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-body-sm">
+              <span className="font-medium text-brand">
+                {selectedIds.size}개 선택됨
+              </span>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={bulkDeleting}
+                onClick={() => setBulkDeleteConfirmOpen(true)}
+              >
+                <Trash2 className="mr-1 h-3 w-3" />
+                삭제
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                취소
+              </Button>
+            </div>
+          )}
           {isLoading ? (
             <div className="space-y-2" aria-busy>
               <Skeleton className="h-12 w-full" />
@@ -249,6 +317,16 @@ export function VenuesPageClient() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[40px]">
+                      <input
+                        type="checkbox"
+                        className="cursor-pointer"
+                        checked={
+                          selectedIds.size === list.length && list.length > 0
+                        }
+                        onChange={toggleAll}
+                      />
+                    </TableHead>
                     <TableHead>이름</TableHead>
                     <TableHead>주소</TableHead>
                     <TableHead>연락처</TableHead>
@@ -260,7 +338,19 @@ export function VenuesPageClient() {
                   {list.map((row) => {
                     const editing = editingId === row.id;
                     return (
-                      <TableRow key={row.id}>
+                      <TableRow
+                        key={row.id}
+                        data-selected={selectedIds.has(row.id)}
+                        className="data-[selected=true]:bg-brand/5"
+                      >
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            className="cursor-pointer"
+                            checked={selectedIds.has(row.id)}
+                            onChange={() => toggleSelect(row.id)}
+                          />
+                        </TableCell>
                         <TableCell>
                           {editing ? (
                             <Input
@@ -490,6 +580,28 @@ export function VenuesPageClient() {
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction onClick={() => void confirmRemove()}>
               삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={(o) => !o && setBulkDeleteConfirmOpen(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {selectedIds.size}건을 일괄 삭제할까요?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              선택한 공연장 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void bulkDelete()}>
+              {bulkDeleting ? "삭제 중..." : "삭제"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

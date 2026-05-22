@@ -2,11 +2,12 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil, Clock, Music2 } from "lucide-react";
+import { Plus, Trash2, Pencil, Clock, Music2, Wand2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
+import { Textarea } from "@/components/ui/Textarea";
 import {
   Select,
   SelectContent,
@@ -72,11 +73,21 @@ export function TimetableSheet({
 }: Props) {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = React.useState(false);
+  const [importOpen, setImportOpen] = React.useState(false);
+  const [importText, setImportText] = React.useState("");
+  const [replaceExisting, setReplaceExisting] = React.useState(false);
+  const [importResult, setImportResult] = React.useState<{
+    parsedCount: number;
+    insertedCount: number;
+    skippedCount: number;
+    issues: Array<{ line: string; reason: string }>;
+  } | null>(null);
   const [editTarget, setEditTarget] =
     React.useState<TimetablePerformanceRow | null>(null);
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
   const [form, setForm] = React.useState({ ...EMPTY_FORM });
   const [submitting, setSubmitting] = React.useState(false);
+  const [importing, setImporting] = React.useState(false);
 
   const { data: artistsData } = useQuery({
     queryKey: ["admin-artists-list"],
@@ -127,6 +138,13 @@ export function TimetableSheet({
     setAddOpen(true);
   };
 
+  const openImport = () => {
+    setImportText("");
+    setReplaceExisting(false);
+    setImportResult(null);
+    setImportOpen(true);
+  };
+
   const openEdit = (row: TimetablePerformanceRow) => {
     setEditTarget(row);
     setForm({
@@ -170,6 +188,47 @@ export function TimetableSheet({
       toast.error(e instanceof Error ? e.message : "생성 실패");
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const submitImport = async () => {
+    if (!event) return;
+    if (!importText.trim()) {
+      toast.error("타임테이블 텍스트를 입력하세요.");
+      return;
+    }
+    setImporting(true);
+    try {
+      const res = await fetch("/api/admin/timetable/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_id: event.id,
+          text: importText,
+          replaceExisting,
+        }),
+      });
+      const json = (await res.json()) as {
+        result?: {
+          parsedCount: number;
+          insertedCount: number;
+          skippedCount: number;
+          issues: Array<{ line: string; reason: string }>;
+        };
+        detail?: string;
+      };
+      if (!res.ok || !json.result) {
+        throw new Error(json.detail ?? "타임테이블 자동 입력 실패");
+      }
+      setImportResult(json.result);
+      toast.success(`${json.result.insertedCount}개 출연을 자동 추가했습니다.`);
+      refetch();
+      onHasTimetableChange();
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "자동 입력 실패");
+    } finally {
+      setImporting(false);
     }
   };
 
@@ -236,10 +295,16 @@ export function TimetableSheet({
             <p className="text-body-sm text-text-secondary">
               총 {rows.length}개 출연
             </p>
-            <Button size="sm" onClick={openAdd}>
-              <Plus className="mr-1 h-4 w-4" />
-              공연 추가
-            </Button>
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" onClick={openImport}>
+                <Wand2 className="mr-1 h-4 w-4" />
+                자동 입력
+              </Button>
+              <Button size="sm" onClick={openAdd}>
+                <Plus className="mr-1 h-4 w-4" />
+                공연 추가
+              </Button>
+            </div>
           </div>
 
           <div className="flex-1 space-y-6 overflow-y-auto py-2">
@@ -324,6 +389,63 @@ export function TimetableSheet({
             </Button>
             <Button loading={submitting} onClick={() => void submitAdd()}>
               추가
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>타임테이블 자동 입력</DialogTitle>
+            <DialogDescription>
+              공지, 사이트, OCR 결과에서 복사한 타임테이블을 붙여넣으면 출연 항목을 한 번에 생성합니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <Textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              rows={12}
+              placeholder={`DAY 1 2026.05.22 MAIN STAGE\n14:00-14:40 아티스트A\n15:00-15:40 아티스트B @ SUB STAGE\nDAY 2\n13:20 ~ 14:00 아티스트C`}
+            />
+            <div className="flex items-center gap-2">
+              <input
+                id="replace-existing-timetable"
+                type="checkbox"
+                checked={replaceExisting}
+                onChange={(e) => setReplaceExisting(e.target.checked)}
+                className="h-4 w-4"
+              />
+              <Label htmlFor="replace-existing-timetable">
+                기존 타임테이블을 지우고 새로 생성
+              </Label>
+            </div>
+            {importResult && (
+              <div className="rounded-md border border-border bg-surface-muted p-3 text-body-sm">
+                <p>
+                  파싱 {importResult.parsedCount}개 · 추가{" "}
+                  {importResult.insertedCount}개 · 실패{" "}
+                  {importResult.skippedCount + importResult.issues.length}개
+                </p>
+                {importResult.issues.length > 0 && (
+                  <div className="mt-2 max-h-28 overflow-y-auto text-caption text-text-secondary">
+                    {importResult.issues.slice(0, 8).map((issue, index) => (
+                      <p key={`${issue.line}-${index}`}>
+                        {issue.line} · {issue.reason}
+                      </p>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>
+              닫기
+            </Button>
+            <Button loading={importing} onClick={() => void submitImport()}>
+              자동 생성
             </Button>
           </DialogFooter>
         </DialogContent>

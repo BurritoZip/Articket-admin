@@ -39,6 +39,7 @@ export async function finishCrawlerJob(
     eventsUpserted: number;
     eventsSkipped: number;
     errorCount: number;
+    meta?: Record<string, unknown>;
   },
 ): Promise<void> {
   await updateCrawlerJob(jobId, {
@@ -49,6 +50,7 @@ export async function finishCrawlerJob(
     events_upserted: stats.eventsUpserted,
     events_skipped: stats.eventsSkipped,
     error_count: stats.errorCount,
+    ...(stats.meta ? { meta: stats.meta } : {}),
   });
 }
 

@@ -1,6 +1,7 @@
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
 import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
+import { auditCrawlerJobArtists } from "@/lib/ingestion/artist-audit";
 import { withErrorHandler } from "@/lib/api-handler";
 import { NextResponse } from "next/server";
 
@@ -47,10 +48,14 @@ export const POST = withErrorHandler(async (request) => {
         );
     }
 
+    const artistAudit = body.dryRun
+      ? { checkedCount: 0, missingCount: 0, issues: [] }
+      : await auditCrawlerJobArtists(job.id);
+    const totalErrorCount = result.errorCount + artistAudit.missingCount;
     const status =
-      result.errorCount > 0 && result.eventsUpserted === 0
+      totalErrorCount > 0 && result.eventsUpserted === 0
         ? "failed"
-        : result.errorCount > 0
+        : totalErrorCount > 0
           ? "partial"
           : "success";
 
@@ -60,10 +65,25 @@ export const POST = withErrorHandler(async (request) => {
       eventsFound: result.eventsFound,
       eventsUpserted: result.eventsUpserted,
       eventsSkipped: result.eventsSkipped,
-      errorCount: result.errorCount,
+      errorCount: totalErrorCount,
+      meta: {
+        artistAudit: {
+          checkedCount: artistAudit.checkedCount,
+          missingCount: artistAudit.missingCount,
+          issues: artistAudit.issues.slice(0, 20),
+        },
+      },
     });
 
-    return NextResponse.json({ ok: true, jobId: job.id, result });
+    return NextResponse.json({
+      ok: true,
+      jobId: job.id,
+      result: {
+        ...result,
+        errorCount: totalErrorCount,
+        artistAudit,
+      },
+    });
   } catch (e) {
     await finishCrawlerJob(job.id, {
       status: "failed",

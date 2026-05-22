@@ -34,6 +34,11 @@ import {
 import { PageHeader } from "@/components/layout/PageHeader";
 import type { CrawlerJob, CrawlerSource } from "@/types/crawler";
 
+type ArtistAuditMeta = {
+  checkedCount?: number;
+  missingCount?: number;
+};
+
 function StatusBadge({ status }: { status: CrawlerJob["status"] }) {
   const map = {
     pending: { label: "대기", variant: "secondary" as const, icon: Clock },
@@ -53,6 +58,12 @@ function StatusBadge({ status }: { status: CrawlerJob["status"] }) {
       {label}
     </Badge>
   );
+}
+
+function getArtistAudit(job: CrawlerJob): ArtistAuditMeta {
+  const audit = job.meta?.artistAudit;
+  if (!audit || typeof audit !== "object") return {};
+  return audit as ArtistAuditMeta;
 }
 
 function formatDuration(start: string | null, end: string | null): string {
@@ -105,13 +116,17 @@ export function CrawlerPageClient() {
       });
       const json = (await res.json()) as {
         ok?: boolean;
-        result?: { eventsUpserted: number; errorCount: number };
+        result?: {
+          eventsUpserted: number;
+          errorCount: number;
+          artistAudit?: { missingCount: number };
+        };
         error?: string;
       };
       if (!res.ok) throw new Error(json.error ?? "크롤링 실패");
       const r = json.result;
       toast.success(
-        `완료: ${r?.eventsUpserted ?? 0}건 저장, 오류 ${r?.errorCount ?? 0}건`,
+        `완료: ${r?.eventsUpserted ?? 0}건 저장, 아티스트 누락 ${r?.artistAudit?.missingCount ?? 0}건, 오류 ${r?.errorCount ?? 0}건`,
         { id },
       );
       void queryClient.invalidateQueries({ queryKey: ["crawler-jobs"] });
@@ -226,6 +241,7 @@ export function CrawlerPageClient() {
                 <TableHead className="text-right">발견</TableHead>
                 <TableHead className="text-right">저장</TableHead>
                 <TableHead className="text-right">스킵</TableHead>
+                <TableHead className="text-right">아티스트 누락</TableHead>
                 <TableHead className="text-right">오류</TableHead>
                 <TableHead>소요시간</TableHead>
                 <TableHead>시작</TableHead>
@@ -235,7 +251,7 @@ export function CrawlerPageClient() {
               {isLoading ? (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={9}
                     className="h-24 text-center text-text-secondary"
                   >
                     로딩중...
@@ -244,7 +260,7 @@ export function CrawlerPageClient() {
               ) : jobs.length === 0 ? (
                 <TableRow>
                   <TableCell
-                    colSpan={8}
+                    colSpan={9}
                     className="h-24 text-center text-text-secondary"
                   >
                     <Database className="mx-auto mb-2 h-6 w-6 text-text-tertiary" />
@@ -252,36 +268,45 @@ export function CrawlerPageClient() {
                   </TableCell>
                 </TableRow>
               ) : (
-                jobs.map((job) => (
-                  <TableRow key={job.id}>
-                    <TableCell className="font-mono text-body-sm">
-                      {job.source_name}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={job.status} />
-                    </TableCell>
-                    <TableCell className="text-right">
-                      {job.events_found}
-                    </TableCell>
-                    <TableCell className="text-right font-medium text-green-600">
-                      {job.events_upserted}
-                    </TableCell>
-                    <TableCell className="text-right text-text-tertiary">
-                      {job.events_skipped}
-                    </TableCell>
-                    <TableCell className="text-right text-red-500">
-                      {job.error_count}
-                    </TableCell>
-                    <TableCell className="text-body-sm text-text-secondary">
-                      {formatDuration(job.started_at, job.finished_at)}
-                    </TableCell>
-                    <TableCell className="text-caption text-text-tertiary">
-                      {job.created_at
-                        ? new Date(job.created_at).toLocaleString("ko-KR")
-                        : "-"}
-                    </TableCell>
-                  </TableRow>
-                ))
+                jobs.map((job) => {
+                  const artistAudit = getArtistAudit(job);
+                  const missingCount = artistAudit.missingCount ?? 0;
+                  return (
+                    <TableRow key={job.id}>
+                      <TableCell className="font-mono text-body-sm">
+                        {job.source_name}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge status={job.status} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {job.events_found}
+                      </TableCell>
+                      <TableCell className="text-right font-medium text-green-600">
+                        {job.events_upserted}
+                      </TableCell>
+                      <TableCell className="text-right text-text-tertiary">
+                        {job.events_skipped}
+                      </TableCell>
+                      <TableCell
+                        className={`text-right ${missingCount > 0 ? "text-amber-600" : "text-text-tertiary"}`}
+                      >
+                        {missingCount}
+                      </TableCell>
+                      <TableCell className="text-right text-red-500">
+                        {job.error_count}
+                      </TableCell>
+                      <TableCell className="text-body-sm text-text-secondary">
+                        {formatDuration(job.started_at, job.finished_at)}
+                      </TableCell>
+                      <TableCell className="text-caption text-text-tertiary">
+                        {job.created_at
+                          ? new Date(job.created_at).toLocaleString("ko-KR")
+                          : "-"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
               )}
             </TableBody>
           </Table>

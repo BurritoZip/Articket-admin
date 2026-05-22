@@ -24,6 +24,8 @@ export async function GET(request: Request) {
   const to = from + pageSize - 1;
 
   const VALID_MISSING = new Set([
+    "artist_id",
+    "venue_id",
     "poster_url",
     "end_date",
     "genre",
@@ -33,7 +35,12 @@ export async function GET(request: Request) {
     "ticket_provider",
     "notice_text",
   ]);
-  const NULL_ONLY = new Set(["end_date", "ticket_open_date"]);
+  const NULL_ONLY = new Set([
+    "artist_id",
+    "venue_id",
+    "end_date",
+    "ticket_open_date",
+  ]);
 
   const supabase = createClient();
 
