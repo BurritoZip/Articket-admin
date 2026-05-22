@@ -1,0 +1,117 @@
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { matchOrCreateArtist, matchOrCreateVenue } from "./artist-matcher";
+import type { NormalizedEvent, UpsertResult } from "@/types/ingestion";
+
+const TRACKED_FIELDS = [
+  "title", "poster_url", "start_date", "end_date",
+  "ticket_open_date", "ticket_provider", "status", "genre",
+] as const;
+
+export async function upsertEvent(
+  event: NormalizedEvent,
+  jobId: string,
+): Promise<UpsertResult> {
+  const db = createServiceRoleClient();
+
+  const artistId = event.artists[0]
+    ? await matchOrCreateArtist(event.artists[0])
+    : null;
+  const venueId = await matchOrCreateVenue(event.venueName, event.venueAddress);
+
+  // 기존 이벤트 조회 (dedup_key 기반)
+  const { data: existing } = await db
+    .from("events")
+    .select("id, title, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls")
+    .eq("dedup_key", event.dedupKey)
+    .maybeSingle();
+
+  if (!existing) {
+    // INSERT
+    const { data: inserted, error } = await db
+      .from("events")
+      .insert({
+        title: event.title,
+        normalized_title: event.normalizedTitle,
+        artist_id: artistId,
+        venue_id: venueId,
+        poster_url: event.posterUrl,
+        start_date: event.startDate,
+        end_date: event.endDate,
+        status: event.status,
+        genre: event.genre,
+        ticket_open_date: event.ticketOpenDate,
+        ticket_provider: event.ticketProvider,
+        dedup_key: event.dedupKey,
+        source_urls: event.sourceUrls,
+        source_name: event.sourceName,
+        crawled_at: new Date().toISOString(),
+        updated_by_crawler: true,
+        raw_payload: { description: event.description },
+        has_timetable: false,
+        is_banner: false,
+      })
+      .select("id")
+      .single();
+
+    if (error) throw new Error(`Upsert insert failed: ${error.message}`);
+    return { action: "inserted", eventId: (inserted as { id: string }).id, changes: [] };
+  }
+
+  // UPDATE — detect changes
+  const ex = existing as Record<string, unknown>;
+  const changes: UpsertResult["changes"] = [];
+  const patch: Record<string, unknown> = {};
+
+  const fieldMap: Record<string, unknown> = {
+    title: event.title,
+    poster_url: event.posterUrl,
+    start_date: event.startDate,
+    end_date: event.endDate,
+    ticket_open_date: event.ticketOpenDate,
+    ticket_provider: event.ticketProvider,
+    status: event.status,
+    genre: event.genre,
+  };
+
+  for (const field of TRACKED_FIELDS) {
+    const newVal = fieldMap[field];
+    const oldVal = ex[field];
+    if (newVal !== undefined && newVal !== null && String(newVal) !== String(oldVal ?? "")) {
+      patch[field] = newVal;
+      changes.push({ field, oldValue: oldVal as string | null, newValue: newVal as string });
+    }
+  }
+
+  // source_urls 병합
+  const existingUrls = (ex.source_urls as string[] | null) ?? [];
+  const mergedUrls = Array.from(new Set([...existingUrls, ...event.sourceUrls]));
+  if (mergedUrls.length !== existingUrls.length) patch.source_urls = mergedUrls;
+
+  if (Object.keys(patch).length > 0) {
+    patch.crawled_at = new Date().toISOString();
+    patch.updated_by_crawler = true;
+
+    const { error: updateError } = await db
+      .from("events")
+      .update(patch)
+      .eq("id", ex.id as string);
+    if (updateError) throw new Error(`Upsert update failed: ${updateError.message}`);
+
+    // 변경 이력 저장
+    if (changes.length > 0) {
+      await db.from("event_change_logs").insert(
+        changes.map((c) => ({
+          event_id: ex.id as string,
+          job_id: jobId,
+          field_name: c.field,
+          old_value: c.oldValue,
+          new_value: c.newValue,
+        })),
+      );
+    }
+
+    return { action: "updated", eventId: ex.id as string, changes };
+  }
+
+  return { action: "skipped", eventId: ex.id as string, changes: [] };
+}
