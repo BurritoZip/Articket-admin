@@ -20,13 +20,14 @@ export async function GET(request: Request) {
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
+  const q = url.searchParams.get("q")?.trim();
   const { page, pageSize } = parseAdminPagination(url.searchParams);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
 
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
   if (!looksLikeServiceRoleKey(serviceRoleKey)) {
-    const fallbackRows = [
-      buildSelfFallbackRow(guard.user.id, guard.user.email),
-    ];
+    const fallbackRows = [buildSelfFallbackRow(guard.user.id, guard.user.email)];
     return NextResponse.json({
       rows: fallbackRows,
       ...buildPaginationMeta(1, pageSize, 1),
@@ -35,16 +36,45 @@ export async function GET(request: Request) {
     });
   }
 
-  try {
-    const admin = createServiceRoleClient();
+  const admin = createServiceRoleClient();
 
+  try {
+    if (q) {
+      // user_profiles.display_name 기반 서버 검색
+      const { data: profiles, count, error: profileErr } = await admin
+        .from("user_profiles")
+        .select("id, display_name, role, last_visit_date", { count: "exact" })
+        .ilike("display_name", `%${q}%`)
+        .range(from, to);
+
+      if (profileErr) throw profileErr;
+
+      const authResults = await Promise.all(
+        (profiles ?? []).map((p) => admin.auth.admin.getUserById(p.id)),
+      );
+
+      const users: AuthUser[] = authResults
+        .filter((r) => !r.error && r.data.user)
+        .map((r) => ({
+          id: r.data.user!.id,
+          email: r.data.user!.email,
+          created_at: r.data.user!.created_at,
+          last_sign_in_at: r.data.user!.last_sign_in_at ?? null,
+        }));
+
+      const rows = await mergeAuthUsersToAdminRows(admin, users);
+      return NextResponse.json({
+        rows,
+        ...buildPaginationMeta(page, pageSize, count ?? 0),
+      });
+    }
+
+    // 검색 없을 때: listUsers
     const { data: usersData, error: userListError } =
       await admin.auth.admin.listUsers({ page, perPage: pageSize });
 
     if (userListError) {
-      const fallbackRows = [
-        buildSelfFallbackRow(guard.user.id, guard.user.email),
-      ];
+      const fallbackRows = [buildSelfFallbackRow(guard.user.id, guard.user.email)];
       return NextResponse.json({
         rows: fallbackRows,
         ...buildPaginationMeta(1, pageSize, 1),
@@ -53,10 +83,7 @@ export async function GET(request: Request) {
       });
     }
 
-    const listPayload = usersData as {
-      users?: AuthUser[];
-      total?: number;
-    };
+    const listPayload = usersData as { users?: AuthUser[]; total?: number };
     const users = (listPayload.users ?? []) as AuthUser[];
 
     let total =
@@ -64,23 +91,16 @@ export async function GET(request: Request) {
         ? listPayload.total
         : 0;
     if (total <= 0 && users.length > 0) {
-      if (users.length < pageSize) {
-        total = (page - 1) * pageSize + users.length;
-      } else {
-        total = page * pageSize + 1;
-      }
+      total =
+        users.length < pageSize
+          ? (page - 1) * pageSize + users.length
+          : page * pageSize + 1;
     }
 
     const rows: AdminUserRow[] = await mergeAuthUsersToAdminRows(admin, users);
-
-    return NextResponse.json({
-      rows,
-      ...buildPaginationMeta(page, pageSize, total),
-    });
+    return NextResponse.json({ rows, ...buildPaginationMeta(page, pageSize, total) });
   } catch (error) {
-    const fallbackRows = [
-      buildSelfFallbackRow(guard.user.id, guard.user.email),
-    ];
+    const fallbackRows = [buildSelfFallbackRow(guard.user.id, guard.user.email)];
     return NextResponse.json({
       rows: fallbackRows,
       ...buildPaginationMeta(1, pageSize, 1),

@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -14,7 +14,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/AlertDialog";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import {
@@ -59,7 +58,7 @@ function StarBadge({ count }: { count: number }) {
   const filled = "★".repeat(count);
   const empty = "☆".repeat(5 - count);
   return (
-    <span className="text-yellow-500">
+    <span className="text-yellow-500 tabular-nums">
       {filled}
       <span className="text-text-tertiary">{empty}</span>
     </span>
@@ -76,6 +75,7 @@ export function ReviewsPageClient() {
     DEFAULT_ADMIN_PAGE_SIZE,
   );
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
+  const [expandedId, setExpandedId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => {
@@ -175,36 +175,84 @@ export function ReviewsPageClient() {
                   <TableHead>별점</TableHead>
                   <TableHead>제목</TableHead>
                   <TableHead>작성일</TableHead>
-                  <TableHead className="w-[60px]">삭제</TableHead>
+                  <TableHead className="w-[80px]">작업</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => (
-                  <TableRow key={row.id}>
-                    <TableCell className="font-medium">
-                      {row.events?.title ?? "-"}
-                    </TableCell>
-                    <TableCell>{row.username ?? "-"}</TableCell>
-                    <TableCell>
-                      <StarBadge count={row.star_count} />
-                    </TableCell>
-                    <TableCell className="max-w-[200px] truncate">
-                      {row.title ?? "-"}
-                    </TableCell>
-                    <TableCell>
-                      {new Date(row.created_at).toLocaleDateString("ko-KR")}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="text-destructive hover:bg-destructive/10"
-                        onClick={() => setDeleteId(row.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
+                  <React.Fragment key={row.id}>
+                    <TableRow
+                      className="cursor-pointer hover:bg-surface-hover"
+                      onClick={() =>
+                        setExpandedId((prev) =>
+                          prev === row.id ? null : row.id,
+                        )
+                      }
+                    >
+                      <TableCell className="font-medium">
+                        {row.events?.title ?? "-"}
+                      </TableCell>
+                      <TableCell>{row.username ?? "-"}</TableCell>
+                      <TableCell>
+                        <StarBadge count={row.star_count} />
+                      </TableCell>
+                      <TableCell className="max-w-[200px] truncate text-text-secondary">
+                        {row.title ?? "-"}
+                      </TableCell>
+                      <TableCell className="text-text-secondary">
+                        {new Date(row.created_at).toLocaleDateString("ko-KR")}
+                      </TableCell>
+                      <TableCell>
+                        <div
+                          className="flex items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-text-tertiary hover:text-text-primary"
+                            onClick={() =>
+                              setExpandedId((prev) =>
+                                prev === row.id ? null : row.id,
+                              )
+                            }
+                            title="내용 펼치기"
+                          >
+                            {expandedId === row.id ? (
+                              <ChevronUp className="h-4 w-4" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4" />
+                            )}
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="text-destructive hover:bg-destructive/10"
+                            onClick={() => setDeleteId(row.id)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                    {expandedId === row.id && (
+                      <TableRow className="bg-surface-muted/30 hover:bg-surface-muted/30">
+                        <TableCell colSpan={6} className="py-3">
+                          <div className="rounded-md border border-border bg-surface p-4 text-body-sm text-text-secondary">
+                            {row.content?.trim() ? (
+                              <p className="whitespace-pre-wrap leading-relaxed">
+                                {row.content}
+                              </p>
+                            ) : (
+                              <p className="italic text-text-tertiary">
+                                내용이 없습니다.
+                              </p>
+                            )}
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </React.Fragment>
                 ))}
               </TableBody>
             </Table>

@@ -612,12 +612,20 @@ export function ArtistsPageClient() {
                     label="관련 아티스트"
                     value={detailArtist.related ?? "-"}
                   />
-                  <DetailItem
-                    label="아바타 URL"
-                    value={detailArtist.avatar_url ?? "-"}
-                  />
                 </div>
-
+                {detailArtist.avatar_url && (
+                  <div>
+                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                      아바타
+                    </p>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={detailArtist.avatar_url}
+                      alt={detailArtist.name}
+                      className="h-20 w-20 rounded-full border border-border object-cover"
+                    />
+                  </div>
+                )}
                 <div>
                   <p className="mb-2 text-caption font-semibold text-text-tertiary">
                     앨범 ({detailAlbums.length})
@@ -824,40 +832,27 @@ function NestedListEditor({
           <p className="text-caption text-text-tertiary">항목이 없습니다.</p>
         ) : (
           rows.map((row, idx) => (
-            <div key={idx} className="grid gap-2 sm:grid-cols-3">
-              <Input
-                placeholder="제목"
-                value={row.title ?? ""}
-                onChange={(e) =>
-                  setRows((prev) =>
-                    prev.map((r, i) =>
-                      i === idx ? { ...r, title: e.target.value } : r,
-                    ),
-                  )
-                }
-              />
-              <Input
-                placeholder={isVideo ? "썸네일 URL" : "커버 URL"}
-                value={
-                  (isVideo
-                    ? (row as Partial<MusicVideoRow>).thumbnail_url
-                    : (row as Partial<AlbumRow>).cover_url) ?? ""
-                }
-                onChange={(e) =>
-                  setRows((prev) =>
-                    prev.map((r, i) =>
-                      i === idx
-                        ? isVideo
-                          ? { ...r, thumbnail_url: e.target.value }
-                          : { ...r, cover_url: e.target.value }
-                        : r,
-                    ),
-                  )
-                }
-              />
-              <div className="flex gap-2">
+            <div
+              key={idx}
+              className="space-y-2 rounded-md border border-border p-3"
+            >
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="제목"
+                  className="flex-1"
+                  value={row.title ?? ""}
+                  onChange={(e) =>
+                    setRows((prev) =>
+                      prev.map((r, i) =>
+                        i === idx ? { ...r, title: e.target.value } : r,
+                      ),
+                    )
+                  }
+                />
                 <Input
                   placeholder={isVideo ? "업로드일(YYYY-MM-DD)" : "발매연도"}
+                  className="w-36"
+                  type={isVideo ? "date" : "text"}
                   value={
                     (isVideo
                       ? (row as Partial<MusicVideoRow>).uploaded_at
@@ -885,6 +880,26 @@ function NestedListEditor({
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
+              <ImageUploader
+                value={
+                  (isVideo
+                    ? (row as Partial<MusicVideoRow>).thumbnail_url
+                    : (row as Partial<AlbumRow>).cover_url) ?? ""
+                }
+                onChange={(url) =>
+                  setRows((prev) =>
+                    prev.map((r, i) =>
+                      i === idx
+                        ? isVideo
+                          ? { ...r, thumbnail_url: url }
+                          : { ...r, cover_url: url }
+                        : r,
+                    ),
+                  )
+                }
+                folder={isVideo ? "thumbnails" : "covers"}
+                placeholder={isVideo ? "썸네일" : "앨범 커버"}
+              />
             </div>
           ))
         )}

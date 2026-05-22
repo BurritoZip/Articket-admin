@@ -1,16 +1,18 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   MapPin,
   Music,
   Ticket,
   Users,
 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
@@ -39,6 +41,8 @@ interface DashboardStats {
 
 export function DashboardPageClient() {
   const router = useRouter();
+  const queryClient = useQueryClient();
+  const [fixingEnded, setFixingEnded] = React.useState(false);
 
   const { data, isLoading } = useQuery<DashboardStats>({
     queryKey: ["admin-dashboard-stats"],
@@ -49,6 +53,24 @@ export function DashboardPageClient() {
     },
     staleTime: 30_000,
   });
+
+  const handleFixEnded = async () => {
+    setFixingEnded(true);
+    try {
+      const res = await fetch("/api/admin/dashboard/fix-ended", {
+        method: "POST",
+      });
+      const json = (await res.json()) as { ok?: boolean; updated?: number; detail?: string };
+      if (!res.ok) throw new Error(json.detail ?? "처리 실패");
+      toast.success(`${json.updated ?? 0}건 종료 처리 완료`);
+      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "일괄 종료 처리 실패");
+    } finally {
+      setFixingEnded(false);
+    }
+  };
 
   const kpiCards = [
     {
@@ -88,7 +110,6 @@ export function DashboardPageClient() {
 
   return (
     <div className="space-y-6">
-      {/* KPI cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpiCards.map((card) => (
           <Card
@@ -120,7 +141,6 @@ export function DashboardPageClient() {
         ))}
       </div>
 
-      {/* Action items */}
       {isLoading ? (
         <Card>
           <CardHeader>
@@ -141,13 +161,33 @@ export function DashboardPageClient() {
           </CardHeader>
           <CardContent className="space-y-2">
             {data.events.needs_end_update > 0 && (
-              <ActionRow
-                label={`종료 처리 필요 — ${data.events.needs_end_update}건`}
-                description="end_date가 지났지만 status가 ended가 아닌 공연"
-                onClick={() =>
-                  router.push("/admin/events?status=on_sale")
-                }
-              />
+              <div className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-body-sm">
+                <span className="flex flex-col gap-0.5">
+                  <span className="font-medium">
+                    종료 처리 필요 — {data.events.needs_end_update}건
+                  </span>
+                  <span className="text-text-tertiary">
+                    end_date가 지났지만 status가 ended가 아닌 공연
+                  </span>
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => router.push("/admin/events?status=on_sale")}
+                  >
+                    목록 보기
+                  </Button>
+                  <Button
+                    size="sm"
+                    loading={fixingEnded}
+                    onClick={() => void handleFixEnded()}
+                  >
+                    <CheckCircle2 className="mr-1 h-3 w-3" />
+                    일괄 종료 처리
+                  </Button>
+                </div>
+              </div>
             )}
             {data.unlinked_events > 0 && (
               <ActionRow
@@ -162,7 +202,9 @@ export function DashboardPageClient() {
                 label={`티켓 오픈 임박 — ${e.title}`}
                 description={`D-${e.d_day} · ${formatKst(e.ticket_open_date)}`}
                 badge={<Badge variant="warning">D-{e.d_day}</Badge>}
-                onClick={() => router.push("/admin/events")}
+                onClick={() =>
+                  router.push(`/admin/events?q=${encodeURIComponent(e.title)}`)
+                }
               />
             ))}
           </CardContent>

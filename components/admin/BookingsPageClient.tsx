@@ -34,6 +34,7 @@ interface BookingRow {
   delivery_type: string | null;
   booked_at: string;
   status: "active" | "cancelled";
+  booker_name: string;
   events: {
     id: string;
     title: string;
@@ -132,6 +133,7 @@ export function BookingsPageClient() {
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>예매자</TableHead>
                 <TableHead>공연명</TableHead>
                 <TableHead>공연장</TableHead>
                 <TableHead>좌석</TableHead>
@@ -144,8 +146,9 @@ export function BookingsPageClient() {
               {rows.map((row) => (
                 <TableRow key={row.id}>
                   <TableCell className="font-medium">
-                    {row.events?.title ?? "-"}
+                    {row.booker_name}
                   </TableCell>
+                  <TableCell>{row.events?.title ?? "-"}</TableCell>
                   <TableCell>{row.events?.venues?.name ?? "-"}</TableCell>
                   <TableCell>{row.seat ?? "-"}</TableCell>
                   <TableCell>{row.delivery_type ?? "-"}</TableCell>

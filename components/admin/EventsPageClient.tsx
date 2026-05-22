@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
+import { Textarea } from "@/components/ui/Textarea";
 import {
   Sheet,
   SheetContent,
@@ -104,6 +105,7 @@ const STATUS_LABEL: Record<EventStatus, string> = {
 export function EventsPageClient() {
   const queryClient = useQueryClient();
   const [search, setSearch] = React.useState("");
+  const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
   const [page, setPage] = React.useState(1);
   const [pageSize, setPageSize] = React.useState<AdminPageSize>(
@@ -118,12 +120,11 @@ export function EventsPageClient() {
 
   const [editingEvent, setEditingEvent] = React.useState<EventRow | null>(null);
   const [detailEvent, setDetailEvent] = React.useState<EventRow | null>(null);
-  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(
-    null,
-  );
+  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(null);
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = React.useState(false);
 
-  const [form, setForm] = React.useState<Partial<EventRow>>({
+  const emptyForm: Partial<EventRow> = {
     title: "",
     artist_id: "",
     venue_id: "",
@@ -131,22 +132,36 @@ export function EventsPageClient() {
     end_date: "",
     status: "upcoming",
     genre: "",
+    duration: "",
+    age_restriction: "",
+    ticket_open_date: "",
+    ticket_provider: "",
+    notice_text: "",
     is_banner: false,
-  });
+  };
 
+  const [form, setForm] = React.useState<Partial<EventRow>>(emptyForm);
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
   React.useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  React.useEffect(() => {
     setPage(1);
-  }, [search, statusFilter, missingFilter, duplicatesFilter]);
+  }, [statusFilter, missingFilter, duplicatesFilter]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: [
       "admin-events",
-      search,
+      debouncedSearch,
       statusFilter,
       page,
       pageSize,
@@ -155,7 +170,7 @@ export function EventsPageClient() {
     ],
     queryFn: async () => {
       const q = new URLSearchParams();
-      if (search.trim()) q.set("q", search.trim());
+      if (debouncedSearch.trim()) q.set("q", debouncedSearch.trim());
       if (statusFilter !== "all") q.set("status", statusFilter);
       q.set("page", String(page));
       q.set("pageSize", String(pageSize));
@@ -222,14 +237,9 @@ export function EventsPageClient() {
 
   const openCreate = () => {
     setForm({
-      title: "",
+      ...emptyForm,
       artist_id: artists[0]?.id ?? "",
       venue_id: venues[0]?.id ?? "",
-      start_date: "",
-      end_date: "",
-      status: "upcoming",
-      genre: "",
-      is_banner: false,
     });
     setCreateOpen(true);
   };
@@ -240,6 +250,7 @@ export function EventsPageClient() {
       ...event,
       start_date: event.start_date?.slice(0, 16),
       end_date: event.end_date?.slice(0, 16) ?? "",
+      ticket_open_date: event.ticket_open_date?.slice(0, 16) ?? "",
     });
     setEditOpen(true);
   };
@@ -265,12 +276,7 @@ export function EventsPageClient() {
   };
 
   const submitCreate = async () => {
-    if (
-      !form.title?.trim() ||
-      !form.artist_id ||
-      !form.venue_id ||
-      !form.start_date
-    ) {
+    if (!form.title?.trim() || !form.artist_id || !form.venue_id || !form.start_date) {
       toast.error("필수 항목을 입력하세요.");
       return;
     }
@@ -283,6 +289,11 @@ export function EventsPageClient() {
           ...form,
           title: form.title.trim(),
           end_date: form.end_date || null,
+          ticket_open_date: form.ticket_open_date || null,
+          duration: form.duration || null,
+          age_restriction: form.age_restriction || null,
+          ticket_provider: form.ticket_provider || null,
+          notice_text: form.notice_text || null,
         }),
       });
       const json = (await res.json()) as { detail?: string };
@@ -292,10 +303,7 @@ export function EventsPageClient() {
       await refetch();
     } catch (error) {
       toast.error("생성 실패", {
-        description:
-          error instanceof Error
-            ? error.message
-            : "알 수 없는 오류가 발생했습니다.",
+        description: error instanceof Error ? error.message : "알 수 없는 오류",
       });
     } finally {
       setSubmitting(false);
@@ -317,6 +325,11 @@ export function EventsPageClient() {
           ...form,
           title: form.title.trim(),
           end_date: form.end_date || null,
+          ticket_open_date: form.ticket_open_date || null,
+          duration: form.duration || null,
+          age_restriction: form.age_restriction || null,
+          ticket_provider: form.ticket_provider || null,
+          notice_text: form.notice_text || null,
         }),
       });
       const json = (await res.json()) as { detail?: string };
@@ -327,10 +340,7 @@ export function EventsPageClient() {
       await refetch();
     } catch (error) {
       toast.error("수정 실패", {
-        description:
-          error instanceof Error
-            ? error.message
-            : "알 수 없는 오류가 발생했습니다.",
+        description: error instanceof Error ? error.message : "알 수 없는 오류",
       });
     } finally {
       setSubmitting(false);
@@ -338,20 +348,30 @@ export function EventsPageClient() {
   };
 
   const patchStatus = async (id: string, status: string) => {
-    await fetch(`/api/admin/events/${id}`, {
+    const res = await fetch(`/api/admin/events/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status }),
     });
+    if (!res.ok) {
+      toast.error("상태 변경 실패");
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+      return;
+    }
     void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
 
   const patchBanner = async (id: string, is_banner: boolean) => {
-    await fetch(`/api/admin/events/${id}`, {
+    const res = await fetch(`/api/admin/events/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_banner }),
     });
+    if (!res.ok) {
+      toast.error("배너 설정 실패");
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+      return;
+    }
     void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
 
@@ -364,9 +384,7 @@ export function EventsPageClient() {
 
   const toggleAll = () =>
     setSelectedIds(
-      selectedIds.size === rows.length
-        ? new Set()
-        : new Set(rows.map((r) => r.id)),
+      selectedIds.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)),
     );
 
   const bulkSetStatus = async (status: string) => {
@@ -403,6 +421,7 @@ export function EventsPageClient() {
       void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
     } finally {
       setBulkDeleting(false);
+      setBulkDeleteConfirmOpen(false);
     }
   };
 
@@ -494,7 +513,7 @@ export function EventsPageClient() {
                 size="sm"
                 variant="danger"
                 disabled={bulkDeleting}
-                onClick={() => void bulkDelete()}
+                onClick={() => setBulkDeleteConfirmOpen(true)}
               >
                 <Trash2 className="mr-1 h-3 w-3" />
                 삭제
@@ -597,9 +616,7 @@ export function EventsPageClient() {
                         <button
                           className="cursor-pointer"
                           title="클릭으로 배너 ON/OFF"
-                          onClick={() =>
-                            void patchBanner(row.id, !row.is_banner)
-                          }
+                          onClick={() => void patchBanner(row.id, !row.is_banner)}
                         >
                           <Badge
                             variant={row.is_banner ? "success" : "outline"}
@@ -672,8 +689,9 @@ export function EventsPageClient() {
         </CardContent>
       </Card>
 
+      {/* 생성 다이얼로그 */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>공연 추가</DialogTitle>
             <DialogDescription>
@@ -697,8 +715,9 @@ export function EventsPageClient() {
         </DialogContent>
       </Dialog>
 
+      {/* 수정 다이얼로그 */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>공연 수정</DialogTitle>
             <DialogDescription>
@@ -728,6 +747,7 @@ export function EventsPageClient() {
         </DialogContent>
       </Dialog>
 
+      {/* 상세 시트 */}
       <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
         <SheetContent className="flex w-full flex-col sm:max-w-xl">
           {detailEvent ? (
@@ -741,44 +761,27 @@ export function EventsPageClient() {
               </SheetHeader>
               <div className="flex-1 space-y-4 overflow-y-auto py-4 text-body-sm">
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <InfoItem
-                    label="상태"
-                    value={STATUS_LABEL[detailEvent.status]}
-                  />
-                  <InfoItem
-                    label="배너 노출"
-                    value={detailEvent.is_banner ? "ON" : "OFF"}
-                  />
-                  <InfoItem
-                    label="시작일시"
-                    value={formatKst(detailEvent.start_date)}
-                  />
-                  <InfoItem
-                    label="종료일시"
-                    value={formatKst(detailEvent.end_date)}
-                  />
+                  <InfoItem label="상태" value={STATUS_LABEL[detailEvent.status]} />
+                  <InfoItem label="배너 노출" value={detailEvent.is_banner ? "ON" : "OFF"} />
+                  <InfoItem label="시작일시" value={formatKst(detailEvent.start_date)} />
+                  <InfoItem label="종료일시" value={formatKst(detailEvent.end_date)} />
                   <InfoItem label="장르" value={detailEvent.genre ?? "-"} />
-                  <InfoItem
-                    label="러닝타임"
-                    value={detailEvent.duration ?? "-"}
-                  />
-                  <InfoItem
-                    label="관람 연령"
-                    value={detailEvent.age_restriction ?? "-"}
-                  />
-                  <InfoItem
-                    label="예매 오픈일"
-                    value={formatKst(detailEvent.ticket_open_date)}
-                  />
-                  <InfoItem
-                    label="예매처"
-                    value={detailEvent.ticket_provider ?? "-"}
-                  />
-                  <InfoItem
-                    label="포스터 URL"
-                    value={detailEvent.poster_url ?? "-"}
-                  />
+                  <InfoItem label="러닝타임" value={detailEvent.duration ?? "-"} />
+                  <InfoItem label="관람 연령" value={detailEvent.age_restriction ?? "-"} />
+                  <InfoItem label="예매 오픈일" value={formatKst(detailEvent.ticket_open_date)} />
+                  <InfoItem label="예매처" value={detailEvent.ticket_provider ?? "-"} />
                 </div>
+                {detailEvent.poster_url && (
+                  <div>
+                    <p className="mb-2 text-caption font-semibold text-text-tertiary">포스터</p>
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={detailEvent.poster_url}
+                      alt="포스터"
+                      className="h-40 w-auto rounded-md border border-border object-contain"
+                    />
+                  </div>
+                )}
                 {detailEvent.has_timetable && (
                   <div>
                     <p className="mb-2 text-caption font-semibold text-text-tertiary">
@@ -786,9 +789,7 @@ export function EventsPageClient() {
                     </p>
                     <div className="space-y-1">
                       {(detailTimetable ?? []).length === 0 ? (
-                        <p className="text-caption text-text-tertiary">
-                          불러오는 중...
-                        </p>
+                        <p className="text-caption text-text-tertiary">불러오는 중...</p>
                       ) : (
                         (detailTimetable ?? []).map((p) => (
                           <div
@@ -801,12 +802,8 @@ export function EventsPageClient() {
                             <span className="w-[90px] shrink-0 text-caption text-text-tertiary">
                               {p.start_time}–{p.end_time}
                             </span>
-                            <span className="flex-1 font-medium">
-                              {p.artist_name}
-                            </span>
-                            <span className="text-caption text-text-tertiary">
-                              {p.stage_name}
-                            </span>
+                            <span className="flex-1 font-medium">{p.artist_name}</span>
+                            <span className="text-caption text-text-tertiary">{p.stage_name}</span>
                           </div>
                         ))
                       )}
@@ -814,12 +811,9 @@ export function EventsPageClient() {
                   </div>
                 )}
                 <div>
-                  <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                    공지
-                  </p>
-                  <div className="rounded-md border border-border bg-surface-muted/30 p-3 text-text-secondary">
-                    {detailEvent.notice_text?.trim() ||
-                      "등록된 공지가 없습니다."}
+                  <p className="mb-2 text-caption font-semibold text-text-tertiary">공지</p>
+                  <div className="rounded-md border border-border bg-surface-muted/30 p-3 text-text-secondary whitespace-pre-wrap">
+                    {detailEvent.notice_text?.trim() || "등록된 공지가 없습니다."}
                   </div>
                 </div>
               </div>
@@ -848,6 +842,7 @@ export function EventsPageClient() {
         onHasTimetableChange={() => void handleTimetableAdded()}
       />
 
+      {/* 단건 삭제 확인 */}
       <AlertDialog
         open={!!deleteId}
         onOpenChange={(o) => !o && setDeleteId(null)}
@@ -863,6 +858,32 @@ export function EventsPageClient() {
             <AlertDialogCancel>취소</AlertDialogCancel>
             <AlertDialogAction onClick={() => void confirmRemove()}>
               삭제
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* 벌크 삭제 확인 */}
+      <AlertDialog
+        open={bulkDeleteConfirmOpen}
+        onOpenChange={(o) => !o && setBulkDeleteConfirmOpen(false)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {selectedIds.size}건을 일괄 삭제할까요?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              선택한 공연 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수 없습니다.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>취소</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => void bulkDelete()}
+            >
+              {bulkDeleting ? "삭제 중..." : "삭제"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -905,8 +926,11 @@ function EventFormFields({
 }) {
   return (
     <div className="grid gap-4 py-2">
+      {/* 기본 정보 */}
       <div className="space-y-2">
-        <Label htmlFor="event-title">공연명</Label>
+        <Label htmlFor="event-title">
+          공연명 <span className="text-red-500">*</span>
+        </Label>
         <Input
           id="event-title"
           value={form.title ?? ""}
@@ -915,7 +939,9 @@ function EventFormFields({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>아티스트</Label>
+          <Label>
+            아티스트 <span className="text-red-500">*</span>
+          </Label>
           <Select
             value={form.artist_id ?? ""}
             onValueChange={(v) => setForm((s) => ({ ...s, artist_id: v }))}
@@ -933,7 +959,9 @@ function EventFormFields({
           </Select>
         </div>
         <div className="space-y-2">
-          <Label>공연장</Label>
+          <Label>
+            공연장 <span className="text-red-500">*</span>
+          </Label>
           <Select
             value={form.venue_id ?? ""}
             onValueChange={(v) => setForm((s) => ({ ...s, venue_id: v }))}
@@ -951,16 +979,18 @@ function EventFormFields({
           </Select>
         </div>
       </div>
+
+      {/* 날짜 */}
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="event-start">시작일시</Label>
+          <Label htmlFor="event-start">
+            시작일시 <span className="text-red-500">*</span>
+          </Label>
           <Input
             id="event-start"
             type="datetime-local"
             value={form.start_date ? form.start_date.slice(0, 16) : ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, start_date: e.target.value }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, start_date: e.target.value }))}
           />
         </div>
         <div className="space-y-2">
@@ -969,20 +999,44 @@ function EventFormFields({
             id="event-end"
             type="datetime-local"
             value={form.end_date ? form.end_date.slice(0, 16) : ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, end_date: e.target.value }))
-            }
+            onChange={(e) => setForm((s) => ({ ...s, end_date: e.target.value }))}
           />
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
-          <Label>상태</Label>
+          <Label htmlFor="event-ticket-open">예매 오픈일시</Label>
+          <Input
+            id="event-ticket-open"
+            type="datetime-local"
+            value={form.ticket_open_date ? form.ticket_open_date.slice(0, 16) : ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, ticket_open_date: e.target.value }))
+            }
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="event-ticket-provider">예매처</Label>
+          <Input
+            id="event-ticket-provider"
+            placeholder="예) 인터파크, YES24"
+            value={form.ticket_provider ?? ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, ticket_provider: e.target.value }))
+            }
+          />
+        </div>
+      </div>
+
+      {/* 공연 정보 */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <div className="space-y-2">
+          <Label>
+            상태 <span className="text-red-500">*</span>
+          </Label>
           <Select
             value={(form.status as string) ?? "upcoming"}
-            onValueChange={(v: EventStatus) =>
-              setForm((s) => ({ ...s, status: v }))
-            }
+            onValueChange={(v: EventStatus) => setForm((s) => ({ ...s, status: v }))}
           >
             <SelectTrigger>
               <SelectValue />
@@ -998,11 +1052,36 @@ function EventFormFields({
           <Label htmlFor="event-genre">장르</Label>
           <Input
             id="event-genre"
+            placeholder="예) K-POP, ROCK"
             value={form.genre ?? ""}
             onChange={(e) => setForm((s) => ({ ...s, genre: e.target.value }))}
           />
         </div>
+        <div className="space-y-2">
+          <Label htmlFor="event-duration">러닝타임</Label>
+          <Input
+            id="event-duration"
+            placeholder="예) 120분"
+            value={form.duration ?? ""}
+            onChange={(e) => setForm((s) => ({ ...s, duration: e.target.value }))}
+          />
+        </div>
       </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="event-age">관람 연령</Label>
+          <Input
+            id="event-age"
+            placeholder="예) 전체관람가, 만 12세 이상"
+            value={form.age_restriction ?? ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, age_restriction: e.target.value }))
+            }
+          />
+        </div>
+      </div>
+
+      {/* 포스터 */}
       <div className="space-y-2">
         <Label>포스터 이미지</Label>
         <ImageUploader
@@ -1012,6 +1091,19 @@ function EventFormFields({
           placeholder="포스터 이미지"
         />
       </div>
+
+      {/* 공지 */}
+      <div className="space-y-2">
+        <Label htmlFor="event-notice">공지사항</Label>
+        <Textarea
+          id="event-notice"
+          placeholder="관람객에게 안내할 내용을 입력하세요."
+          rows={4}
+          value={form.notice_text ?? ""}
+          onChange={(e) => setForm((s) => ({ ...s, notice_text: e.target.value }))}
+        />
+      </div>
+
       <div className="flex items-center gap-2 rounded-md border border-border p-3 text-body-sm text-text-secondary">
         <CalendarDays className="h-4 w-4" />
         모든 날짜/시간은 KST 기준으로 표시됩니다.
