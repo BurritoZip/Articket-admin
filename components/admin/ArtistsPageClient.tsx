@@ -48,6 +48,7 @@ import {
 } from "@/components/ui/AlertDialog";
 import { AvatarImage } from "@/components/ui/Avatar";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
+import { ImageUploader } from "@/components/admin/ImageUploader";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
   type AdminPageSize,
@@ -100,6 +101,8 @@ export function ArtistsPageClient() {
   );
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
   React.useEffect(() => {
     setPage(1);
@@ -274,6 +277,41 @@ export function ArtistsPageClient() {
     }
   };
 
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const toggleAll = (allRows: { id: string }[]) =>
+    setSelectedIds(
+      selectedIds.size === allRows.length
+        ? new Set()
+        : new Set(allRows.map((r) => r.id)),
+    );
+
+  const bulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/admin/artists/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, action: "delete" }),
+      });
+      if (!res.ok) {
+        toast.error("일괄 삭제 실패");
+        return;
+      }
+      toast.success(`${ids.length}건 삭제 완료`);
+      setSelectedIds(new Set());
+      void refetch();
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   const removeArtist = (id: string) => setDeleteId(id);
 
   const confirmRemove = async () => {
@@ -330,6 +368,30 @@ export function ArtistsPageClient() {
             onDuplicatesFilter={setDuplicatesFilter}
           />
 
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-body-sm">
+              <span className="font-medium text-brand">
+                {selectedIds.size}개 선택됨
+              </span>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={bulkDeleting}
+                onClick={() => void bulkDelete()}
+              >
+                <Trash2 className="mr-1 h-3 w-3" />
+                삭제
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                취소
+              </Button>
+            </div>
+          )}
+
           {isLoading ? (
             <div className="space-y-2" aria-busy>
               <Skeleton className="h-12 w-full" />
@@ -347,6 +409,16 @@ export function ArtistsPageClient() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[40px]">
+                      <input
+                        type="checkbox"
+                        className="cursor-pointer"
+                        checked={
+                          selectedIds.size === list.length && list.length > 0
+                        }
+                        onChange={() => toggleAll(list)}
+                      />
+                    </TableHead>
                     <TableHead>아바타</TableHead>
                     <TableHead>이름</TableHead>
                     <TableHead>직업</TableHead>
@@ -358,7 +430,19 @@ export function ArtistsPageClient() {
                 </TableHeader>
                 <TableBody>
                   {list.map((row) => (
-                    <TableRow key={row.id}>
+                    <TableRow
+                      key={row.id}
+                      data-selected={selectedIds.has(row.id)}
+                      className="data-[selected=true]:bg-brand/5"
+                    >
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          className="cursor-pointer"
+                          checked={selectedIds.has(row.id)}
+                          onChange={() => toggleSelect(row.id)}
+                        />
+                      </TableCell>
                       <TableCell>
                         <Avatar className="h-9 w-9">
                           <AvatarImage
@@ -696,13 +780,12 @@ function ArtistForm({
         </div>
       </div>
       <div className="space-y-2">
-        <Label htmlFor="artist-avatar">아바타 URL</Label>
-        <Input
-          id="artist-avatar"
+        <Label>아바타 이미지</Label>
+        <ImageUploader
           value={form.avatar_url ?? ""}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, avatar_url: e.target.value }))
-          }
+          onChange={(url) => setForm((s) => ({ ...s, avatar_url: url }))}
+          folder="avatars"
+          placeholder="아바타 이미지"
         />
       </div>
     </div>

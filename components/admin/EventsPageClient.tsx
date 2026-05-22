@@ -49,7 +49,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/Table";
+import { differenceInCalendarDays, parseISO } from "date-fns";
 import { formatKst } from "@/lib/format-kst";
+import { ImageUploader } from "@/components/admin/ImageUploader";
 import type { EventRow, EventStatus, OptionItem } from "@/types/event";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
 import {
@@ -134,6 +136,8 @@ export function EventsPageClient() {
 
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
+  const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
   React.useEffect(() => {
     setPage(1);
@@ -333,6 +337,75 @@ export function EventsPageClient() {
     }
   };
 
+  const patchStatus = async (id: string, status: string) => {
+    await fetch(`/api/admin/events/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+  };
+
+  const patchBanner = async (id: string, is_banner: boolean) => {
+    await fetch(`/api/admin/events/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_banner }),
+    });
+    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+  };
+
+  const toggleSelect = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const toggleAll = () =>
+    setSelectedIds(
+      selectedIds.size === rows.length
+        ? new Set()
+        : new Set(rows.map((r) => r.id)),
+    );
+
+  const bulkSetStatus = async (status: string) => {
+    const ids = Array.from(selectedIds);
+    const res = await fetch("/api/admin/events/bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids, action: "set_status", payload: { status } }),
+    });
+    if (!res.ok) {
+      toast.error("일괄 상태 변경 실패");
+      return;
+    }
+    toast.success(`${ids.length}건 상태 변경 완료`);
+    setSelectedIds(new Set());
+    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+  };
+
+  const bulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    setBulkDeleting(true);
+    try {
+      const res = await fetch("/api/admin/events/bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids, action: "delete" }),
+      });
+      if (!res.ok) {
+        toast.error("일괄 삭제 실패");
+        return;
+      }
+      toast.success(`${ids.length}건 삭제 완료`);
+      setSelectedIds(new Set());
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
+
   const removeEvent = (id: string) => setDeleteId(id);
 
   const confirmRemove = async () => {
@@ -402,6 +475,40 @@ export function EventsPageClient() {
             onDuplicatesFilter={setDuplicatesFilter}
           />
 
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2 rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-body-sm">
+              <span className="font-medium text-brand">
+                {selectedIds.size}개 선택됨
+              </span>
+              <Select onValueChange={(v) => void bulkSetStatus(v)}>
+                <SelectTrigger className="h-7 w-32 text-xs">
+                  <SelectValue placeholder="상태 변경" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="upcoming">예정</SelectItem>
+                  <SelectItem value="on_sale">예매중</SelectItem>
+                  <SelectItem value="ended">종료</SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={bulkDeleting}
+                onClick={() => void bulkDelete()}
+              >
+                <Trash2 className="mr-1 h-3 w-3" />
+                삭제
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelectedIds(new Set())}
+              >
+                취소
+              </Button>
+            </div>
+          )}
+
           {isLoading ? (
             <div className="space-y-2" aria-busy>
               <Skeleton className="h-12 w-full" />
@@ -419,10 +526,21 @@ export function EventsPageClient() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-[40px]">
+                      <input
+                        type="checkbox"
+                        className="cursor-pointer"
+                        checked={
+                          selectedIds.size === rows.length && rows.length > 0
+                        }
+                        onChange={toggleAll}
+                      />
+                    </TableHead>
                     <TableHead>공연명</TableHead>
                     <TableHead>아티스트</TableHead>
                     <TableHead>공연장</TableHead>
                     <TableHead>시작일</TableHead>
+                    <TableHead>티켓오픈</TableHead>
                     <TableHead>상태</TableHead>
                     <TableHead>완성도</TableHead>
                     <TableHead>배너</TableHead>
@@ -432,7 +550,19 @@ export function EventsPageClient() {
                 </TableHeader>
                 <TableBody>
                   {rows.map((row) => (
-                    <TableRow key={row.id}>
+                    <TableRow
+                      key={row.id}
+                      data-selected={selectedIds.has(row.id)}
+                      className="data-[selected=true]:bg-brand/5"
+                    >
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          className="cursor-pointer"
+                          checked={selectedIds.has(row.id)}
+                          onChange={() => toggleSelect(row.id)}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">{row.title}</TableCell>
                       <TableCell>
                         {artistMap.get(row.artist_id) ?? "-"}
@@ -440,17 +570,22 @@ export function EventsPageClient() {
                       <TableCell>{venueMap.get(row.venue_id) ?? "-"}</TableCell>
                       <TableCell>{formatKst(row.start_date)}</TableCell>
                       <TableCell>
-                        <Badge
-                          variant={
-                            row.status === "on_sale"
-                              ? "success"
-                              : row.status === "upcoming"
-                                ? "warning"
-                                : "outline"
-                          }
+                        <TicketOpenBadge date={row.ticket_open_date} />
+                      </TableCell>
+                      <TableCell>
+                        <Select
+                          value={row.status}
+                          onValueChange={(v) => void patchStatus(row.id, v)}
                         >
-                          {STATUS_LABEL[row.status]}
-                        </Badge>
+                          <SelectTrigger className="h-7 w-24 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="upcoming">예정</SelectItem>
+                            <SelectItem value="on_sale">예매중</SelectItem>
+                            <SelectItem value="ended">종료</SelectItem>
+                          </SelectContent>
+                        </Select>
                       </TableCell>
                       <TableCell>
                         <MissingFieldChips
@@ -459,9 +594,19 @@ export function EventsPageClient() {
                         />
                       </TableCell>
                       <TableCell>
-                        <Badge variant={row.is_banner ? "success" : "outline"}>
-                          {row.is_banner ? "ON" : "OFF"}
-                        </Badge>
+                        <button
+                          className="cursor-pointer"
+                          title="클릭으로 배너 ON/OFF"
+                          onClick={() =>
+                            void patchBanner(row.id, !row.is_banner)
+                          }
+                        >
+                          <Badge
+                            variant={row.is_banner ? "success" : "outline"}
+                          >
+                            {row.is_banner ? "ON" : "OFF"}
+                          </Badge>
+                        </button>
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
@@ -735,6 +880,18 @@ function InfoItem({ label, value }: { label: string; value: string }) {
   );
 }
 
+function TicketOpenBadge({ date }: { date: string | null }) {
+  if (!date) return <span className="text-text-tertiary">-</span>;
+  const diff = differenceInCalendarDays(parseISO(date), new Date());
+  if (diff >= 0 && diff <= 7)
+    return (
+      <Badge variant="warning">
+        D-{diff} {formatKst(date)}
+      </Badge>
+    );
+  return <span>{formatKst(date)}</span>;
+}
+
 function EventFormFields({
   form,
   setForm,
@@ -845,6 +1002,15 @@ function EventFormFields({
             onChange={(e) => setForm((s) => ({ ...s, genre: e.target.value }))}
           />
         </div>
+      </div>
+      <div className="space-y-2">
+        <Label>포스터 이미지</Label>
+        <ImageUploader
+          value={form.poster_url ?? ""}
+          onChange={(url) => setForm((s) => ({ ...s, poster_url: url }))}
+          folder="posters"
+          placeholder="포스터 이미지"
+        />
       </div>
       <div className="flex items-center gap-2 rounded-md border border-border p-3 text-body-sm text-text-secondary">
         <CalendarDays className="h-4 w-4" />

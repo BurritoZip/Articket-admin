@@ -6,19 +6,26 @@ Next.js 14 App Router + Supabase + TanStack Query 기반 관리 콘솔.
 
 **iOS 앱**: `/Users/sjw/ted.urssu/Articket-iOS`
 
-### DB 변경 시 반드시 양쪽 동기화
+### DB 변경 시 반드시 양쪽 동기화 (필수)
+
+**migration 파일 위치 (source of truth)**: `/Users/sjw/ted.urssu/Articket-iOS/supabase/migrations/YYYYMMDDHHMMSS_설명.sql`
 
 Admin에서 Supabase 스키마를 변경하면 **iOS 쪽도 즉시 반영**해야 한다.
 
 | Admin 변경 | iOS 업데이트 대상 |
 |---|---|
-| `events` 테이블 컬럼 추가/수정 | `Articket-iOS/.../Data/DTO/EventRow.swift` + `Domain/Entity/Event.swift` |
-| `artists` 테이블 컬럼 추가/수정 | `Articket-iOS/.../Data/DTO/ArtistRow.swift` + `Domain/Entity/Artist.swift` |
-| `venues` 테이블 컬럼 추가/수정 | `Articket-iOS/.../Data/DTO/` 해당 DTO |
-| 새 테이블 추가 | iOS에 DTO + Entity + RepositoryProtocol + SupabaseRepository + MockRepository 신규 생성 |
+| `events` 테이블 컬럼 추가/수정 | iOS migration SQL + `Data/DTO/EventRow.swift` + `Domain/Entity/Event.swift` |
+| `artists` 테이블 컬럼 추가/수정 | iOS migration SQL + `Data/DTO/ArtistRow.swift` + `Domain/Entity/Artist.swift` |
+| `venues` 테이블 컬럼 추가/수정 | iOS migration SQL + 해당 DTO |
+| 새 테이블 추가 | iOS migration SQL + DTO + Entity + RepositoryProtocol + SupabaseRepository + MockRepository |
 | API 응답 구조 변경 | iOS Repository fetch 쿼리 확인 |
 
-**규칙**: Admin에서 SQL 변경 작업이 끝나면 항상 iOS 레포를 열어서 관련 DTO/Entity가 새 컬럼을 포함하고 있는지 확인한다.
+**Admin에서 DB 변경 후 필수 체크리스트**:
+1. `/Users/sjw/ted.urssu/Articket-iOS/supabase/migrations/` 에 SQL 파일 추가 또는 업데이트
+2. iOS DTO/Entity Swift 파일 교차 반영
+3. types/ 타입 파일 업데이트
+
+**규칙**: Admin에서 SQL 변경 작업이 끝나면 **즉시** iOS 레포 migration 파일도 업데이트한다. 나중으로 미루지 않는다.
 
 ## 프로젝트 구조
 
