@@ -82,8 +82,27 @@ export async function GET(request: Request) {
   }
 
   const total = res.count ?? 0;
+  const artistIds = (res.data ?? []).map((a) => (a as { id: string }).id);
+
+  let followMap: Record<string, number> = {};
+  if (artistIds.length > 0) {
+    const { data: follows } = await supabase
+      .from("user_artist_followings")
+      .select("artist_id")
+      .in("artist_id", artistIds);
+    for (const row of follows ?? []) {
+      const id = (row as { artist_id: string }).artist_id;
+      followMap[id] = (followMap[id] ?? 0) + 1;
+    }
+  }
+
+  const rows = (res.data ?? []).map((artist) => ({
+    ...artist,
+    followers_count: followMap[(artist as { id: string }).id] ?? 0,
+  }));
+
   return NextResponse.json({
-    rows: (res.data ?? []) as ArtistRow[],
+    rows: rows as ArtistRow[],
     ...buildPaginationMeta(page, pageSize, total),
   });
 }

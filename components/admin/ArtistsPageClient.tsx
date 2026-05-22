@@ -74,6 +74,9 @@ export function ArtistsPageClient() {
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [detailLoading, setDetailLoading] = React.useState(false);
+  const [fromUrlOpen, setFromUrlOpen] = React.useState(false);
+  const [fromUrlInput, setFromUrlInput] = React.useState("");
+  const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
   const [form, setForm] = React.useState<Partial<ArtistRow>>({
     name: "",
@@ -174,6 +177,38 @@ export function ArtistsPageClient() {
       related: "",
     });
     setCreateOpen(true);
+  };
+
+  const importArtistFromUrl = async () => {
+    const url = fromUrlInput.trim();
+    if (!url) return;
+    setFromUrlLoading(true);
+    try {
+      const res = await fetch("/api/admin/artists/from-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const json = (await res.json()) as {
+        action?: string;
+        artist?: { name: string };
+        detail?: string;
+      };
+      if (!res.ok) throw new Error(json.detail ?? "불러오기 실패");
+      const label = json.action === "created" ? "추가" : "업데이트";
+      toast.success(`아티스트가 ${label}되었습니다.`, {
+        description: json.artist?.name,
+      });
+      setFromUrlOpen(false);
+      setFromUrlInput("");
+      await refetch();
+    } catch (e) {
+      toast.error("가져오기 실패", {
+        description: e instanceof Error ? e.message : "알 수 없는 오류",
+      });
+    } finally {
+      setFromUrlLoading(false);
+    }
   };
 
   const fetchArtistDetail = async (artistId: string) => {
@@ -346,10 +381,21 @@ export function ArtistsPageClient() {
         title="아티스트 관리"
         description="아티스트 기본 정보와 앨범/뮤직비디오를 함께 관리합니다."
         action={
-          <Button onClick={openCreate}>
-            <Plus className="h-5 w-5" />
-            아티스트 추가
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFromUrlInput("");
+                setFromUrlOpen(true);
+              }}
+            >
+              URL로 추가
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus className="h-5 w-5" />
+              아티스트 추가
+            </Button>
+          </div>
         }
       />
 
@@ -738,7 +784,8 @@ export function ArtistsPageClient() {
               {selectedIds.size}건을 일괄 삭제할까요?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              선택한 아티스트 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수 없습니다.
+              선택한 아티스트 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수
+              없습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -749,6 +796,43 @@ export function ArtistsPageClient() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* URL로 아티스트 추가 */}
+      <Dialog open={fromUrlOpen} onOpenChange={setFromUrlOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>URL로 아티스트 추가</DialogTitle>
+            <DialogDescription>
+              StagePick 아티스트 상세 URL을 붙여넣으면 정보를 자동으로
+              가져옵니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="artist-from-url-input">아티스트 URL</Label>
+            <Input
+              id="artist-from-url-input"
+              placeholder="https://www.stagepick.co.kr/artists/detail/..."
+              value={fromUrlInput}
+              onChange={(e) => setFromUrlInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void importArtistFromUrl();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFromUrlOpen(false)}>
+              취소
+            </Button>
+            <Button
+              loading={fromUrlLoading}
+              disabled={!fromUrlInput.trim()}
+              onClick={() => void importArtistFromUrl()}
+            >
+              가져오기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

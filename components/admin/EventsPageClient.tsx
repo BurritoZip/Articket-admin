@@ -117,12 +117,18 @@ export function EventsPageClient() {
   const [detailOpen, setDetailOpen] = React.useState(false);
   const [timetableOpen, setTimetableOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
+  const [fromUrlOpen, setFromUrlOpen] = React.useState(false);
+  const [fromUrlInput, setFromUrlInput] = React.useState("");
+  const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
   const [editingEvent, setEditingEvent] = React.useState<EventRow | null>(null);
   const [detailEvent, setDetailEvent] = React.useState<EventRow | null>(null);
-  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(null);
+  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(
+    null,
+  );
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
-  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] = React.useState(false);
+  const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
+    React.useState(false);
 
   const emptyForm: Partial<EventRow> = {
     title: "",
@@ -244,6 +250,55 @@ export function EventsPageClient() {
     setCreateOpen(true);
   };
 
+  const importFromUrl = async () => {
+    const url = fromUrlInput.trim();
+    if (!url) return;
+    setFromUrlLoading(true);
+    try {
+      const res = await fetch("/api/admin/events/from-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const json = (await res.json()) as {
+        parsed?: {
+          title?: string | null;
+          posterUrl?: string | null;
+          startDate?: string | null;
+          endDate?: string | null;
+          ticketOpenDate?: string | null;
+          ticketProvider?: string | null;
+          genre?: string | null;
+        };
+        detail?: string;
+      };
+      if (!res.ok) throw new Error(json.detail ?? "불러오기 실패");
+      const p = json.parsed ?? {};
+      setForm({
+        ...emptyForm,
+        artist_id: artists[0]?.id ?? "",
+        venue_id: venues[0]?.id ?? "",
+        title: p.title ?? "",
+        poster_url: p.posterUrl ?? "",
+        start_date: p.startDate ? `${p.startDate}T00:00` : "",
+        end_date: p.endDate ? `${p.endDate}T00:00` : "",
+        ticket_open_date: p.ticketOpenDate ? `${p.ticketOpenDate}T00:00` : "",
+        ticket_provider: p.ticketProvider ?? "",
+        genre: p.genre ?? "",
+      });
+      setFromUrlOpen(false);
+      setFromUrlInput("");
+      setCreateOpen(true);
+      toast.success("URL에서 정보를 가져왔습니다. 내용을 확인 후 저장하세요.");
+    } catch (e) {
+      toast.error("가져오기 실패", {
+        description: e instanceof Error ? e.message : "알 수 없는 오류",
+      });
+    } finally {
+      setFromUrlLoading(false);
+    }
+  };
+
   const openEdit = (event: EventRow) => {
     setEditingEvent(event);
     setForm({
@@ -276,7 +331,12 @@ export function EventsPageClient() {
   };
 
   const submitCreate = async () => {
-    if (!form.title?.trim() || !form.artist_id || !form.venue_id || !form.start_date) {
+    if (
+      !form.title?.trim() ||
+      !form.artist_id ||
+      !form.venue_id ||
+      !form.start_date
+    ) {
       toast.error("필수 항목을 입력하세요.");
       return;
     }
@@ -384,7 +444,9 @@ export function EventsPageClient() {
 
   const toggleAll = () =>
     setSelectedIds(
-      selectedIds.size === rows.length ? new Set() : new Set(rows.map((r) => r.id)),
+      selectedIds.size === rows.length
+        ? new Set()
+        : new Set(rows.map((r) => r.id)),
     );
 
   const bulkSetStatus = async (status: string) => {
@@ -453,10 +515,21 @@ export function EventsPageClient() {
         title="공연 관리"
         description="공연 정보를 조회/생성/수정/삭제하고 상태를 관리합니다."
         action={
-          <Button onClick={openCreate}>
-            <Plus className="h-5 w-5" />
-            공연 추가
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => {
+                setFromUrlInput("");
+                setFromUrlOpen(true);
+              }}
+            >
+              URL로 추가
+            </Button>
+            <Button onClick={openCreate}>
+              <Plus className="h-5 w-5" />
+              공연 추가
+            </Button>
+          </div>
         }
       />
 
@@ -616,7 +689,9 @@ export function EventsPageClient() {
                         <button
                           className="cursor-pointer"
                           title="클릭으로 배너 ON/OFF"
-                          onClick={() => void patchBanner(row.id, !row.is_banner)}
+                          onClick={() =>
+                            void patchBanner(row.id, !row.is_banner)
+                          }
                         >
                           <Badge
                             variant={row.is_banner ? "success" : "outline"}
@@ -761,19 +836,45 @@ export function EventsPageClient() {
               </SheetHeader>
               <div className="flex-1 space-y-4 overflow-y-auto py-4 text-body-sm">
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <InfoItem label="상태" value={STATUS_LABEL[detailEvent.status]} />
-                  <InfoItem label="배너 노출" value={detailEvent.is_banner ? "ON" : "OFF"} />
-                  <InfoItem label="시작일시" value={formatKst(detailEvent.start_date)} />
-                  <InfoItem label="종료일시" value={formatKst(detailEvent.end_date)} />
+                  <InfoItem
+                    label="상태"
+                    value={STATUS_LABEL[detailEvent.status]}
+                  />
+                  <InfoItem
+                    label="배너 노출"
+                    value={detailEvent.is_banner ? "ON" : "OFF"}
+                  />
+                  <InfoItem
+                    label="시작일시"
+                    value={formatKst(detailEvent.start_date)}
+                  />
+                  <InfoItem
+                    label="종료일시"
+                    value={formatKst(detailEvent.end_date)}
+                  />
                   <InfoItem label="장르" value={detailEvent.genre ?? "-"} />
-                  <InfoItem label="러닝타임" value={detailEvent.duration ?? "-"} />
-                  <InfoItem label="관람 연령" value={detailEvent.age_restriction ?? "-"} />
-                  <InfoItem label="예매 오픈일" value={formatKst(detailEvent.ticket_open_date)} />
-                  <InfoItem label="예매처" value={detailEvent.ticket_provider ?? "-"} />
+                  <InfoItem
+                    label="러닝타임"
+                    value={detailEvent.duration ?? "-"}
+                  />
+                  <InfoItem
+                    label="관람 연령"
+                    value={detailEvent.age_restriction ?? "-"}
+                  />
+                  <InfoItem
+                    label="예매 오픈일"
+                    value={formatKst(detailEvent.ticket_open_date)}
+                  />
+                  <InfoItem
+                    label="예매처"
+                    value={detailEvent.ticket_provider ?? "-"}
+                  />
                 </div>
                 {detailEvent.poster_url && (
                   <div>
-                    <p className="mb-2 text-caption font-semibold text-text-tertiary">포스터</p>
+                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                      포스터
+                    </p>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
                       src={detailEvent.poster_url}
@@ -789,7 +890,9 @@ export function EventsPageClient() {
                     </p>
                     <div className="space-y-1">
                       {(detailTimetable ?? []).length === 0 ? (
-                        <p className="text-caption text-text-tertiary">불러오는 중...</p>
+                        <p className="text-caption text-text-tertiary">
+                          불러오는 중...
+                        </p>
                       ) : (
                         (detailTimetable ?? []).map((p) => (
                           <div
@@ -802,8 +905,12 @@ export function EventsPageClient() {
                             <span className="w-[90px] shrink-0 text-caption text-text-tertiary">
                               {p.start_time}–{p.end_time}
                             </span>
-                            <span className="flex-1 font-medium">{p.artist_name}</span>
-                            <span className="text-caption text-text-tertiary">{p.stage_name}</span>
+                            <span className="flex-1 font-medium">
+                              {p.artist_name}
+                            </span>
+                            <span className="text-caption text-text-tertiary">
+                              {p.stage_name}
+                            </span>
                           </div>
                         ))
                       )}
@@ -811,9 +918,12 @@ export function EventsPageClient() {
                   </div>
                 )}
                 <div>
-                  <p className="mb-2 text-caption font-semibold text-text-tertiary">공지</p>
+                  <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                    공지
+                  </p>
                   <div className="rounded-md border border-border bg-surface-muted/30 p-3 text-text-secondary whitespace-pre-wrap">
-                    {detailEvent.notice_text?.trim() || "등록된 공지가 없습니다."}
+                    {detailEvent.notice_text?.trim() ||
+                      "등록된 공지가 없습니다."}
                   </div>
                 </div>
               </div>
@@ -874,7 +984,8 @@ export function EventsPageClient() {
               {selectedIds.size}건을 일괄 삭제할까요?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              선택한 공연 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수 없습니다.
+              선택한 공연 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수
+              없습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -888,6 +999,42 @@ export function EventsPageClient() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* URL로 공연 추가 */}
+      <Dialog open={fromUrlOpen} onOpenChange={setFromUrlOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>URL로 공연 추가</DialogTitle>
+            <DialogDescription>
+              StagePick 공연 상세 URL을 붙여넣으면 정보를 자동으로 가져옵니다.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="from-url-input">공연 URL</Label>
+            <Input
+              id="from-url-input"
+              placeholder="https://www.stagepick.co.kr/performances/detail/..."
+              value={fromUrlInput}
+              onChange={(e) => setFromUrlInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void importFromUrl();
+              }}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFromUrlOpen(false)}>
+              취소
+            </Button>
+            <Button
+              loading={fromUrlLoading}
+              disabled={!fromUrlInput.trim()}
+              onClick={() => void importFromUrl()}
+            >
+              가져오기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -990,7 +1137,9 @@ function EventFormFields({
             id="event-start"
             type="datetime-local"
             value={form.start_date ? form.start_date.slice(0, 16) : ""}
-            onChange={(e) => setForm((s) => ({ ...s, start_date: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, start_date: e.target.value }))
+            }
           />
         </div>
         <div className="space-y-2">
@@ -999,7 +1148,9 @@ function EventFormFields({
             id="event-end"
             type="datetime-local"
             value={form.end_date ? form.end_date.slice(0, 16) : ""}
-            onChange={(e) => setForm((s) => ({ ...s, end_date: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, end_date: e.target.value }))
+            }
           />
         </div>
       </div>
@@ -1009,7 +1160,9 @@ function EventFormFields({
           <Input
             id="event-ticket-open"
             type="datetime-local"
-            value={form.ticket_open_date ? form.ticket_open_date.slice(0, 16) : ""}
+            value={
+              form.ticket_open_date ? form.ticket_open_date.slice(0, 16) : ""
+            }
             onChange={(e) =>
               setForm((s) => ({ ...s, ticket_open_date: e.target.value }))
             }
@@ -1036,7 +1189,9 @@ function EventFormFields({
           </Label>
           <Select
             value={(form.status as string) ?? "upcoming"}
-            onValueChange={(v: EventStatus) => setForm((s) => ({ ...s, status: v }))}
+            onValueChange={(v: EventStatus) =>
+              setForm((s) => ({ ...s, status: v }))
+            }
           >
             <SelectTrigger>
               <SelectValue />
@@ -1063,7 +1218,9 @@ function EventFormFields({
             id="event-duration"
             placeholder="예) 120분"
             value={form.duration ?? ""}
-            onChange={(e) => setForm((s) => ({ ...s, duration: e.target.value }))}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, duration: e.target.value }))
+            }
           />
         </div>
       </div>
@@ -1100,7 +1257,9 @@ function EventFormFields({
           placeholder="관람객에게 안내할 내용을 입력하세요."
           rows={4}
           value={form.notice_text ?? ""}
-          onChange={(e) => setForm((s) => ({ ...s, notice_text: e.target.value }))}
+          onChange={(e) =>
+            setForm((s) => ({ ...s, notice_text: e.target.value }))
+          }
         />
       </div>
 
