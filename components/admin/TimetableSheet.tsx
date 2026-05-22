@@ -2,7 +2,16 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Pencil, Clock, Music2, Wand2 } from "lucide-react";
+import {
+  Plus,
+  Trash2,
+  Pencil,
+  Clock,
+  Music2,
+  Wand2,
+  ImagePlus,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -99,6 +108,30 @@ export function TimetableSheet({
   const [submitting, setSubmitting] = React.useState(false);
   const [importing, setImporting] = React.useState(false);
 
+  // Image import state
+  type ParsedPerf = {
+    artist_name: string;
+    stage_name: string;
+    start_time: string;
+    end_time: string;
+    day_number: number;
+    date_string: string;
+  };
+  const [imageFile, setImageFile] = React.useState<File | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(
+    null,
+  );
+  const [imageParsed, setImageParsed] = React.useState<ParsedPerf[] | null>(
+    null,
+  );
+  const [imageSelected, setImageSelected] = React.useState<Set<number>>(
+    new Set(),
+  );
+  const [imageParsing, setImageParsing] = React.useState(false);
+  const [imageCommitting, setImageCommitting] = React.useState(false);
+  const [imageOpen, setImageOpen] = React.useState(false);
+  const imageInputRef = React.useRef<HTMLInputElement>(null);
+
   const { data: artistsData } = useQuery({
     queryKey: ["admin-artists-list"],
     queryFn: async () => {
@@ -156,7 +189,97 @@ export function TimetableSheet({
     setAutoResult(null);
     setAutoSourceUrl("");
     setManualOpen(false);
+    setImageOpen(false);
+    setImageFile(null);
+    setImagePreviewUrl(null);
+    setImageParsed(null);
+    setImageSelected(new Set());
     setImportOpen(true);
+  };
+
+  const handleImageFile = (file: File) => {
+    setImageFile(file);
+    setImagePreviewUrl(URL.createObjectURL(file));
+    setImageParsed(null);
+    setImageSelected(new Set());
+  };
+
+  const submitImageParse = async () => {
+    if (!event || !imageFile) return;
+    setImageParsing(true);
+    setImageParsed(null);
+    try {
+      const fd = new FormData();
+      fd.append("image", imageFile);
+      if (event.start_date)
+        fd.append("start_date", event.start_date.slice(0, 10));
+      if (event.end_date) fd.append("end_date", event.end_date.slice(0, 10));
+      const res = await fetch("/api/admin/timetable/from-image", {
+        method: "POST",
+        body: fd,
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        performances?: ParsedPerf[];
+        error?: string;
+        detail?: string;
+      };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.detail ?? json.error ?? "이미지 파싱 실패");
+      }
+      const perfs = json.performances ?? [];
+      setImageParsed(perfs);
+      setImageSelected(new Set(perfs.map((_, i) => i)));
+      toast.success(
+        `${perfs.length}개 공연 정보를 인식했습니다. 확인 후 저장하세요.`,
+      );
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "이미지 분석 실패");
+    } finally {
+      setImageParsing(false);
+    }
+  };
+
+  const submitImageCommit = async () => {
+    if (!event || !imageParsed) return;
+    const selected = imageParsed.filter((_, i) => imageSelected.has(i));
+    if (selected.length === 0) {
+      toast.error("저장할 항목을 선택하세요.");
+      return;
+    }
+    setImageCommitting(true);
+    try {
+      const res = await fetch("/api/admin/timetable/batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event_id: event.id,
+          replaceExisting,
+          performances: selected,
+        }),
+      });
+      const json = (await res.json()) as {
+        ok?: boolean;
+        inserted?: number;
+        errors?: string[];
+        detail?: string;
+      };
+      if (!res.ok || !json.ok) {
+        throw new Error(json.detail ?? "저장 실패");
+      }
+      toast.success(`${json.inserted}개 공연이 타임테이블에 저장되었습니다.`);
+      setImageParsed(null);
+      setImageFile(null);
+      setImagePreviewUrl(null);
+      setImportOpen(false);
+      refetch();
+      onHasTimetableChange();
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "저장 실패");
+    } finally {
+      setImageCommitting(false);
+    }
   };
 
   const submitAutoImport = async () => {
@@ -485,15 +608,15 @@ export function TimetableSheet({
       </Dialog>
 
       <Dialog open={importOpen} onOpenChange={setImportOpen}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>타임테이블 자동화</DialogTitle>
             <DialogDescription>
-              StagePick API에서 출연 아티스트를 자동으로 가져와 타임테이블을
-              생성합니다.
+              StagePick URL 또는 타임테이블 이미지로 공연 정보를 자동으로
+              가져옵니다.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
+          <div className="flex-1 space-y-4 overflow-y-auto py-2">
             {/* StagePick URL 직접 입력 */}
             <div className="space-y-1">
               <Label htmlFor="auto-source-url">
@@ -538,6 +661,192 @@ export function TimetableSheet({
                 </p>
               </div>
             )}
+
+            {/* 이미지로 가져오기 (접기/펼치기) */}
+            <div>
+              <button
+                type="button"
+                onClick={() => setImageOpen((v) => !v)}
+                className="text-caption text-text-secondary underline underline-offset-2"
+              >
+                {imageOpen
+                  ? "▲ 이미지 업로드 닫기"
+                  : "▼ 이미지로 타임테이블 가져오기"}
+              </button>
+              {imageOpen && (
+                <div className="mt-3 space-y-3">
+                  {/* Drop zone */}
+                  <div
+                    className="relative flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed border-border bg-surface-muted/40 p-6 text-center transition-colors hover:border-primary/50 hover:bg-surface-muted"
+                    onClick={() => imageInputRef.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const f = e.dataTransfer.files[0];
+                      if (f) handleImageFile(f);
+                    }}
+                  >
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        if (f) handleImageFile(f);
+                      }}
+                    />
+                    {imagePreviewUrl ? (
+                      <div className="relative">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={imagePreviewUrl}
+                          alt="타임테이블 미리보기"
+                          className="max-h-48 max-w-full rounded object-contain"
+                        />
+                        <button
+                          type="button"
+                          className="absolute -right-2 -top-2 rounded-full bg-surface p-0.5 shadow-elevation1"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setImageFile(null);
+                            setImagePreviewUrl(null);
+                            setImageParsed(null);
+                            setImageSelected(new Set());
+                          }}
+                        >
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <ImagePlus className="mb-2 h-8 w-8 text-text-tertiary" />
+                        <p className="text-body-sm text-text-secondary">
+                          이미지를 여기에 드래그하거나 클릭해서 선택
+                        </p>
+                        <p className="mt-1 text-caption text-text-tertiary">
+                          PNG, JPG, WEBP 지원
+                        </p>
+                      </>
+                    )}
+                  </div>
+
+                  {imageFile && !imageParsed && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      loading={imageParsing}
+                      onClick={() => void submitImageParse()}
+                    >
+                      <Wand2 className="mr-1 h-4 w-4" />
+                      {imageParsing ? "AI 분석 중..." : "이미지 분석하기"}
+                    </Button>
+                  )}
+
+                  {/* 파싱 결과 미리보기 */}
+                  {imageParsed && (
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <p className="text-body-sm font-medium">
+                          {imageParsed.length}개 공연 인식됨 ·{" "}
+                          <span className="text-text-secondary">
+                            {imageSelected.size}개 선택됨
+                          </span>
+                        </p>
+                        <div className="flex gap-2">
+                          <button
+                            type="button"
+                            className="text-caption text-text-secondary underline underline-offset-2"
+                            onClick={() =>
+                              setImageSelected(
+                                new Set(imageParsed.map((_, i) => i)),
+                              )
+                            }
+                          >
+                            전체 선택
+                          </button>
+                          <button
+                            type="button"
+                            className="text-caption text-text-secondary underline underline-offset-2"
+                            onClick={() => setImageSelected(new Set())}
+                          >
+                            전체 해제
+                          </button>
+                        </div>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto rounded-md border border-border">
+                        <table className="w-full text-caption">
+                          <thead className="sticky top-0 bg-surface-muted">
+                            <tr>
+                              <th className="p-2 text-left font-medium">
+                                선택
+                              </th>
+                              <th className="p-2 text-left font-medium">
+                                아티스트
+                              </th>
+                              <th className="p-2 text-left font-medium">
+                                시간
+                              </th>
+                              <th className="p-2 text-left font-medium">
+                                스테이지
+                              </th>
+                              <th className="p-2 text-left font-medium">DAY</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {imageParsed.map((p, i) => (
+                              <tr
+                                key={i}
+                                className={`border-t border-border ${imageSelected.has(i) ? "" : "opacity-40"}`}
+                              >
+                                <td className="p-2">
+                                  <input
+                                    type="checkbox"
+                                    checked={imageSelected.has(i)}
+                                    onChange={() => {
+                                      setImageSelected((prev) => {
+                                        const next = new Set(prev);
+                                        next.has(i)
+                                          ? next.delete(i)
+                                          : next.add(i);
+                                        return next;
+                                      });
+                                    }}
+                                    className="h-3.5 w-3.5"
+                                  />
+                                </td>
+                                <td className="p-2 font-medium">
+                                  {p.artist_name}
+                                </td>
+                                <td className="p-2 text-text-secondary">
+                                  {p.start_time || "—"}
+                                  {p.end_time ? `–${p.end_time}` : ""}
+                                </td>
+                                <td className="p-2 text-text-secondary">
+                                  {p.stage_name || "—"}
+                                </td>
+                                <td className="p-2 text-text-secondary">
+                                  {p.day_number}
+                                  {p.date_string ? ` (${p.date_string})` : ""}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <Button
+                        size="sm"
+                        loading={imageCommitting}
+                        onClick={() => void submitImageCommit()}
+                        disabled={imageSelected.size === 0}
+                      >
+                        {imageSelected.size}개 저장하기
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* 수동 입력 (접기/펼치기) */}
             <div>
