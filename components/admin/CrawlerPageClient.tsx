@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { safeJson } from "@/lib/api-handler";
 import {
   Play,
   RefreshCw,
@@ -74,8 +75,7 @@ export function CrawlerPageClient() {
     queryKey: ["crawler-sources"],
     queryFn: async () => {
       const res = await fetch("/api/admin/crawler/sources");
-      if (!res.ok) return { rows: [] as CrawlerSource[] };
-      return res.json() as Promise<{ rows: CrawlerSource[] }>;
+      return safeJson(res, { rows: [] as CrawlerSource[] });
     },
   });
   const sources = sourcesData?.rows ?? [];
@@ -84,8 +84,7 @@ export function CrawlerPageClient() {
     queryKey: ["crawler-jobs"],
     queryFn: async () => {
       const res = await fetch("/api/admin/crawler/jobs?limit=30");
-      if (!res.ok) return { rows: [] as CrawlerJob[] };
-      return res.json() as Promise<{ rows: CrawlerJob[] }>;
+      return safeJson(res, { rows: [] as CrawlerJob[] });
     },
     refetchInterval: running ? 3000 : false,
   });

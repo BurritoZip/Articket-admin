@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
+import { safeJson } from "@/lib/api-handler";
 import { AlertCircle, FileText, Layers } from "lucide-react";
 import {
   Table,
@@ -64,8 +65,7 @@ function ErrorsTab() {
     queryKey: ["ingestion-errors"],
     queryFn: async () => {
       const res = await fetch("/api/admin/ingestion/errors?limit=50");
-      if (!res.ok) return { rows: [] as IngestionError[], total: 0 };
-      return res.json() as Promise<{ rows: IngestionError[]; total: number }>;
+      return safeJson(res, { rows: [] as IngestionError[], total: 0 });
     },
   });
 
@@ -144,8 +144,7 @@ function RawPayloadsTab() {
     queryKey: ["raw-payloads"],
     queryFn: async () => {
       const res = await fetch("/api/admin/ingestion/raw-payloads?limit=50");
-      if (!res.ok) return { rows: [] as RawEventPayload[], total: 0 };
-      return res.json() as Promise<{ rows: RawEventPayload[]; total: number }>;
+      return safeJson(res, { rows: [] as RawEventPayload[], total: 0 });
     },
   });
 
@@ -231,27 +230,16 @@ function AIQueueTab() {
     queryKey: ["ai-queue"],
     queryFn: async () => {
       const res = await fetch("/api/admin/ingestion/queue?limit=50");
-      if (!res.ok)
-        return {
-          rows: [] as Array<{
-            id: string;
-            task_type: string;
-            status: string;
-            created_at: string;
-            attempts: number;
-          }>,
-          total: 0,
-        };
-      return res.json() as Promise<{
-        rows: Array<{
+      return safeJson(res, {
+        rows: [] as Array<{
           id: string;
           task_type: string;
           status: string;
           created_at: string;
           attempts: number;
-        }>;
-        total: number;
-      }>;
+        }>,
+        total: 0,
+      });
     },
   });
 
