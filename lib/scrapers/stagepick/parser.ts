@@ -43,8 +43,7 @@ export function parseListPage(html: string): StagepickListItem[] {
     ".item",
   ];
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let cards: ReturnType<typeof $> = $([] as any);
+  let cards: ReturnType<typeof $> = $([] as Parameters<typeof $>[0]);
   for (const sel of selectors) {
     const found = $(sel);
     if (found.length > 0) {
