@@ -204,13 +204,12 @@ export function parseDetailPage(
       .trim() ||
     null;
 
-  // 티켓 링크
+  // 티켓 링크 — 실제 외부 예매처 URL만 검사
   const ticketLink = $(
-    'a[href*="ticket"], a[href*="interpark"], a[href*="melon"], a[href*="yes24"]',
+    'a[href*="interpark"], a[href*="melon"], a[href*="yes24"], a[href*="ticketlink"], a[href*="kyobo"]',
   ).first();
   const ticketUrl = absoluteUrl(ticketLink.attr("href")) ?? null;
-  const ticketProvider =
-    detectTicketProvider(ticketUrl) ?? (ticketLink.text().trim() || null);
+  const ticketProvider = detectTicketProvider(ticketUrl);
 
   // 아티스트 목록
   const artists: string[] = [];
