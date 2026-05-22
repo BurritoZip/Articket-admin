@@ -27,6 +27,7 @@ type ArtistBackfillResult = {
   scannedCount: number;
   linkedCount: number;
   createdOrMatchedArtistCount: number;
+  catalogCreatedOrMatchedCount: number;
   enrichmentQueuedCount: number;
   unresolvedCount: number;
   dryRun: boolean;
@@ -171,12 +172,16 @@ function WorkflowsTab() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-5 p-5">
-            <div className="grid gap-3 md:grid-cols-5">
+            <div className="grid gap-3 md:grid-cols-6">
               <Metric label="스캔" value={result.scannedCount} />
               <Metric label="연결" value={result.linkedCount} />
               <Metric
-                label="매칭/생성"
+                label="대표 매칭"
                 value={result.createdOrMatchedArtistCount}
+              />
+              <Metric
+                label="출연진 DB"
+                value={result.catalogCreatedOrMatchedCount}
               />
               <Metric label="보강 큐" value={result.enrichmentQueuedCount} />
               <Metric label="미해결" value={result.unresolvedCount} />

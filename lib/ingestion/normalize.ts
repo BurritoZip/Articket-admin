@@ -101,6 +101,7 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
     sourceUrls: [raw.sourceUrl],
     sourceName: raw.sourceName,
     artists: raw.artists,
+    artistProfiles: raw.artistProfiles,
     genre: raw.genre?.trim() ?? null,
     description: raw.description?.trim() ?? null,
     status: raw.status ?? inferStatus(startDate),

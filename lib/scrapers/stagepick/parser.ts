@@ -16,8 +16,19 @@ export interface StagepickDetailData {
   ticketUrl: string | null;
   ticketProvider: string | null;
   artists: string[];
+  artistDetails: Array<{ name: string; detailUrl: string | null }>;
   genre: string | null;
   description: string | null;
+}
+
+export interface StagepickArtistProfile {
+  name: string;
+  sourceUrl: string;
+  avatarUrl: string | null;
+  occupation: string | null;
+  birthDate: string | null;
+  related: string | null;
+  metadata: Record<string, unknown>;
 }
 
 const BASE_URL = "https://www.stagepick.co.kr";
@@ -114,11 +125,35 @@ export function parseDetailPage(
   _sourceUrl: string,
 ): StagepickDetailData {
   const $ = cheerio.load(html);
+  const lines = $("body")
+    .text()
+    .split(/\r?\n/)
+    .map(cleanText)
+    .filter((line): line is string => Boolean(line));
 
-  const title =
-    $("h1").first().text().trim() ||
-    $('[class*="title"]').first().text().trim() ||
-    $("title").text().split("|")[0].trim();
+  const lineAfter = (label: string): string | null => {
+    const index = lines.findIndex((line) => line === label);
+    return index >= 0 ? (lines[index + 1] ?? null) : null;
+  };
+  const statusIndex = lines.findIndex((line) =>
+    ["공연중", "공연예정", "공연종료"].includes(line),
+  );
+  const titleLine =
+    statusIndex >= 0
+      ? lines[statusIndex + 1]
+      : lines[0] === "공연 상세정보"
+        ? (lines[1] ?? null)
+        : null;
+
+  const headingTitle = $("h1").first().text().trim();
+  const title = cleanTitle(
+    (headingTitle && headingTitle !== "공연 상세정보"
+      ? headingTitle
+      : null) ||
+      titleLine ||
+      $('[class*="title"]').first().text().trim() ||
+      $("title").text().split("|")[0].trim(),
+  );
 
   const posterUrl = absoluteUrl(
     $('img[class*="poster"], img[class*="main"], .thumbnail img, .cover img')
@@ -135,20 +170,31 @@ export function parseDetailPage(
     $('dt:contains("기간"), dt:contains("일정"), dt:contains("날짜")')
       .next("dd")
       .text()
-      .trim();
+      .trim() ||
+    lineAfter("공연 기간");
 
   // 공연장 추출
+  const venueIndex = lines.findIndex((line) => line === "공연 장소");
+  const venueLine = venueIndex >= 0 ? (lines[venueIndex + 1] ?? null) : null;
+  const venueAddressLine =
+    venueIndex >= 0 && lines[venueIndex + 2] === "자세히 보기"
+      ? (lines[venueIndex + 3] ?? null)
+      : null;
+  const venueParts = venueLine?.split(/\s*자세히 보기\s*/);
   const venueName =
     $('[class*="venue"], [class*="location"], [class*="place"]')
       .first()
       .text()
       .trim() ||
     $('dt:contains("장소"), dt:contains("공연장")').next("dd").text().trim() ||
+    venueParts?.[0] ||
     null;
 
   const venueAddress =
     $('[class*="address"]').first().text().trim() ||
     $('dt:contains("주소")').next("dd").text().trim() ||
+    venueAddressLine ||
+    venueParts?.[1] ||
     null;
 
   // 티켓 오픈일
@@ -170,17 +216,67 @@ export function parseDetailPage(
 
   // 아티스트 목록
   const artists: string[] = [];
+  const artistDetails: Array<{ name: string; detailUrl: string | null }> = [];
   $('[class*="artist"], [class*="lineup"], [class*="performer"]').each(
     (_, el) => {
       const name = $(el).text().trim();
       if (name && name.length > 0 && name.length < 60) artists.push(name);
     },
   );
+  const artistStart = lines.findIndex((line) => line === "출연진");
+  if (artistStart >= 0) {
+    const sectionEndLabels = [
+      "최종 업데이트:",
+      "등록일:",
+      "시즌별 역대 페스티벌",
+      "예매하기",
+      "예매 상품 선택",
+      "공연 소개",
+      "다른 회차",
+    ];
+    for (const line of lines.slice(artistStart + 1)) {
+      if (
+        sectionEndLabels.some((stop) => line.startsWith(stop))
+      ) {
+        break;
+      }
+      const artist = line
+        .replace(/^#+\s*/, "")
+        .replace(/\s*자세히 보기\s*$/, "")
+        .trim();
+      if (artist && artist.length < 80 && !artist.includes("공연 장소")) {
+        artists.push(artist);
+      }
+    }
+    const stopText = sectionEndLabels.join("|");
+    $("a[href*='/artists/detail/']").each((_, el) => {
+      const $el = $(el);
+      const name = cleanText($el.text());
+      if (!name) return;
+      const beforeText = cleanText(
+        $el
+          .parent()
+          .prevAll()
+          .text()
+          .split(/\r?\n/)
+          .slice(-5)
+          .join(" "),
+      );
+      const aroundText = cleanText($el.parent().text()) ?? "";
+      if (beforeText && new RegExp(stopText).test(beforeText)) return;
+      if (new RegExp(stopText).test(aroundText)) return;
+      artistDetails.push({
+        name,
+        detailUrl: absoluteUrl($el.attr("href")),
+      });
+    });
+  }
 
   // 장르
   const genre =
     $('[class*="genre"]').first().text().trim() ||
     $('dt:contains("장르")').next("dd").text().trim() ||
+    lineAfter("장르") ||
     null;
 
   // 설명
@@ -202,14 +298,112 @@ export function parseDetailPage(
     ticketUrl,
     ticketProvider,
     artists: Array.from(new Set(artists.filter(Boolean))),
+    artistDetails: dedupArtistDetails(artistDetails, artists),
     genre: cleanText(genre),
     description: description ? description.slice(0, 2000) : null,
+  };
+}
+
+export function parseArtistDetailPage(
+  html: string,
+  sourceUrl: string,
+): StagepickArtistProfile {
+  const $ = cheerio.load(html);
+  const lines = $("body")
+    .text()
+    .split(/\r?\n/)
+    .map(cleanText)
+    .filter((line): line is string => Boolean(line));
+  const headingTitle = $("h1").first().text().trim();
+  const name =
+    (headingTitle && headingTitle !== "아티스트 상세정보"
+      ? headingTitle
+      : null) ??
+    (lines[0] === "아티스트 상세정보" ? lines[1] : null) ??
+    $("title").text().split("|")[0].trim();
+  const titleIndex = lines.findIndex((line) => line === name);
+  const occupation =
+    titleIndex >= 0 && lines[titleIndex + 1] && !isArtistProfileLabel(lines[titleIndex + 1])
+      ? lines[titleIndex + 1]
+      : null;
+  const birthDateIndex = lines.findIndex((line) => line === "생년월일");
+  const birthDateLine =
+    birthDateIndex >= 0
+      ? lines[birthDateIndex + 1]
+      : lines.find((line) => line.startsWith("생년월일"))?.replace(/^생년월일\s*/, "");
+  const relatedIndex = lines.findIndex((line) => line === "소속그룹");
+  const agencyIndex = lines.findIndex((line) => line === "소속사");
+  const debutIndex = lines.findIndex((line) => line === "데뷔");
+  const agencyLine =
+    agencyIndex >= 0
+      ? lines[agencyIndex + 1]
+      : lines.find((line) => line.startsWith("소속사"))?.replace(/^소속사\s*/, "");
+  const debutLine =
+    debutIndex >= 0
+      ? lines[debutIndex + 1]
+      : lines.find((line) => line.startsWith("데뷔"))?.replace(/^데뷔\s*/, "");
+  const avatarUrl = absoluteUrl(
+    $('meta[property="og:image"]').attr("content") ??
+      $("img")
+        .filter((_, el) => ($(el).attr("alt") ?? "").includes(name))
+        .first()
+        .attr("src"),
+  );
+
+  return {
+    name: name.trim(),
+    sourceUrl,
+    avatarUrl,
+    occupation,
+    birthDate: parseKoreanDate(birthDateLine),
+    related:
+      relatedIndex >= 0 && lines[relatedIndex + 1]
+        ? lines[relatedIndex + 1]
+        : null,
+    metadata: {
+      englishName: titleIndex >= 0 ? lines[titleIndex + 2] ?? null : null,
+      agency: agencyLine ?? null,
+      debut: debutLine ?? null,
+      sourceUrl,
+    },
   };
 }
 
 function cleanText(s: string | null | undefined): string | null {
   if (!s?.trim()) return null;
   return s.replace(/\s+/g, " ").trim();
+}
+
+function cleanTitle(s: string): string {
+  return s
+    .replace(/\s*\(\d{4}\.\d{2}\.\d{2}\)\s*-\s*StagePick$/i, "")
+    .replace(/\s*-\s*StagePick$/i, "")
+    .trim();
+}
+
+function dedupArtistDetails(
+  details: Array<{ name: string; detailUrl: string | null }>,
+  fallbackArtists: string[],
+): Array<{ name: string; detailUrl: string | null }> {
+  const map = new Map<string, { name: string; detailUrl: string | null }>();
+  for (const detail of details) {
+    if (!map.has(detail.name)) map.set(detail.name, detail);
+  }
+  for (const name of fallbackArtists) {
+    if (!map.has(name)) map.set(name, { name, detailUrl: null });
+  }
+  return Array.from(map.values());
+}
+
+function isArtistProfileLabel(value: string): boolean {
+  return /^(소속사|데뷔|생년월일|소속그룹|AI 연관 아티스트|공연 목록)/.test(value);
+}
+
+function parseKoreanDate(value: string | null | undefined): string | null {
+  if (!value?.trim()) return null;
+  const match = value.match(/(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/);
+  if (!match) return null;
+  return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
 }
 
 function detectTicketProvider(url: string | null): string | null {

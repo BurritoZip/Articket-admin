@@ -76,6 +76,8 @@ export function TimetableSheet({
   const [importOpen, setImportOpen] = React.useState(false);
   const [importText, setImportText] = React.useState("");
   const [replaceExisting, setReplaceExisting] = React.useState(false);
+  const [sourceLoading, setSourceLoading] = React.useState(false);
+  const [sourceIssues, setSourceIssues] = React.useState<string[]>([]);
   const [importResult, setImportResult] = React.useState<{
     parsedCount: number;
     insertedCount: number;
@@ -141,6 +143,7 @@ export function TimetableSheet({
   const openImport = () => {
     setImportText("");
     setReplaceExisting(false);
+    setSourceIssues([]);
     setImportResult(null);
     setImportOpen(true);
   };
@@ -193,10 +196,6 @@ export function TimetableSheet({
 
   const submitImport = async () => {
     if (!event) return;
-    if (!importText.trim()) {
-      toast.error("타임테이블 텍스트를 입력하세요.");
-      return;
-    }
     setImporting(true);
     try {
       const res = await fetch("/api/admin/timetable/import", {
@@ -206,6 +205,7 @@ export function TimetableSheet({
           event_id: event.id,
           text: importText,
           replaceExisting,
+          autoFetchSource: true,
         }),
       });
       const json = (await res.json()) as {
@@ -215,11 +215,14 @@ export function TimetableSheet({
           skippedCount: number;
           issues: Array<{ line: string; reason: string }>;
         };
+        source?: { text?: string; issues?: string[] };
         detail?: string;
       };
       if (!res.ok || !json.result) {
         throw new Error(json.detail ?? "타임테이블 자동 입력 실패");
       }
+      if (json.source?.issues?.length) setSourceIssues(json.source.issues);
+      if (!importText.trim() && json.source?.text) setImportText(json.source.text);
       setImportResult(json.result);
       toast.success(`${json.result.insertedCount}개 출연을 자동 추가했습니다.`);
       refetch();
@@ -229,6 +232,35 @@ export function TimetableSheet({
       toast.error(e instanceof Error ? e.message : "자동 입력 실패");
     } finally {
       setImporting(false);
+    }
+  };
+
+  const loadSourceText = async () => {
+    if (!event) return;
+    setSourceLoading(true);
+    setSourceIssues([]);
+    try {
+      const res = await fetch(`/api/admin/timetable/source?event_id=${event.id}`, {
+        cache: "no-store",
+      });
+      const json = (await res.json()) as {
+        source?: { text: string; issues: string[]; assetUrls?: string[] };
+        detail?: string;
+      };
+      if (!res.ok || !json.source) {
+        throw new Error(json.detail ?? "원본 추출 실패");
+      }
+      setImportText(json.source.text);
+      setSourceIssues(json.source.issues ?? []);
+      if (json.source.text.trim()) {
+        toast.success("원본에서 타임테이블 후보 텍스트를 가져왔습니다.");
+      } else {
+        toast.error("원본에서 바로 파싱 가능한 텍스트를 찾지 못했습니다.");
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "원본 추출 실패");
+    } finally {
+      setSourceLoading(false);
     }
   };
 
@@ -399,10 +431,20 @@ export function TimetableSheet({
           <DialogHeader>
             <DialogTitle>타임테이블 자동 입력</DialogTitle>
             <DialogDescription>
-              공지, 사이트, OCR 결과에서 복사한 타임테이블을 붙여넣으면 출연 항목을 한 번에 생성합니다.
+              원본 상세 페이지에서 타임테이블 후보를 먼저 가져오고, 필요하면 직접 보정한 뒤 출연 항목을 생성합니다.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                loading={sourceLoading}
+                onClick={() => void loadSourceText()}
+              >
+                원본에서 가져오기
+              </Button>
+            </div>
             <Textarea
               value={importText}
               onChange={(e) => setImportText(e.target.value)}
@@ -421,6 +463,13 @@ export function TimetableSheet({
                 기존 타임테이블을 지우고 새로 생성
               </Label>
             </div>
+            {sourceIssues.length > 0 && (
+              <div className="rounded-md border border-border bg-surface-muted p-3 text-caption text-text-secondary">
+                {sourceIssues.slice(0, 4).map((issue, index) => (
+                  <p key={`${issue}-${index}`}>{issue}</p>
+                ))}
+              </div>
+            )}
             {importResult && (
               <div className="rounded-md border border-border bg-surface-muted p-3 text-body-sm">
                 <p>

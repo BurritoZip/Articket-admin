@@ -1,5 +1,9 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { matchOrCreateArtist, matchOrCreateVenue } from "./artist-matcher";
+import {
+  linkEventArtists,
+  matchOrCreateArtists,
+  matchOrCreateVenue,
+} from "./artist-matcher";
 import type { NormalizedEvent, UpsertResult } from "@/types/ingestion";
 
 const TRACKED_FIELDS = [
@@ -19,16 +23,18 @@ export async function upsertEvent(
 ): Promise<UpsertResult> {
   const db = createServiceRoleClient();
 
-  const artistId = event.artists[0]
-    ? await matchOrCreateArtist(event.artists[0])
-    : null;
+  const matchedArtists = await matchOrCreateArtists(
+    event.artists,
+    event.artistProfiles,
+  );
+  const artistId = matchedArtists[0]?.id ?? null;
   const venueId = await matchOrCreateVenue(event.venueName, event.venueAddress);
 
   // 기존 이벤트 조회 (dedup_key 기반)
   let { data: existing } = await db
     .from("events")
     .select(
-      "id, title, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls",
+      "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls",
     )
     .eq("dedup_key", event.dedupKey)
     .maybeSingle();
@@ -38,7 +44,7 @@ export async function upsertEvent(
     const { data: byTitle } = await db
       .from("events")
       .select(
-        "id, title, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls",
+        "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, status, genre, source_urls",
       )
       .eq("normalized_title", event.normalizedTitle)
       .eq("start_date", event.startDate)
@@ -82,6 +88,11 @@ export async function upsertEvent(
       .single();
 
     if (error) throw new Error(`Upsert insert failed: ${error.message}`);
+    await linkEventArtists(
+      (inserted as { id: string }).id,
+      matchedArtists,
+      event.sourceName,
+    );
     return {
       action: "inserted",
       eventId: (inserted as { id: string }).id,
@@ -104,6 +115,15 @@ export async function upsertEvent(
     status: event.status,
     genre: event.genre,
   };
+
+  if (!ex.artist_id && artistId) {
+    patch.artist_id = artistId;
+    changes.push({
+      field: "artist_id",
+      oldValue: null,
+      newValue: artistId,
+    });
+  }
 
   for (const field of TRACKED_FIELDS) {
     const newVal = fieldMap[field];
@@ -153,8 +173,10 @@ export async function upsertEvent(
       );
     }
 
+    await linkEventArtists(ex.id as string, matchedArtists, event.sourceName);
     return { action: "updated", eventId: ex.id as string, changes };
   }
 
+  await linkEventArtists(ex.id as string, matchedArtists, event.sourceName);
   return { action: "skipped", eventId: ex.id as string, changes: [] };
 }

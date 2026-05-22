@@ -21,6 +21,18 @@ export type EventRow = {
   has_timetable: boolean;
 };
 
+export type EventArtistRow = {
+  id: string;
+  event_id: string;
+  artist_id: string;
+  artist_name: string;
+  role: string;
+  display_order: number;
+  source_name: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type OptionItem = {
   id: string;
   name: string;

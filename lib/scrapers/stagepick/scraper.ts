@@ -1,3 +1,4 @@
+import { parseArtistDetailPage, parseDetailPage } from "./parser";
 import { normalizeEvent } from "@/lib/ingestion/normalize";
 import { upsertEvent } from "@/lib/ingestion/upsert";
 import { saveRawPayload, markRawPayloadProcessed } from "@/lib/crawler/job-manager";
@@ -8,7 +9,7 @@ import type { ScrapeOptions } from "@/lib/scrapers/base/adapter";
 
 const SOURCE_NAME = "stagepick";
 const API_BASE = "https://api.stagepick.co.kr/v1/performances";
-const DETAIL_BASE = "https://www.stagepick.co.kr/performance";
+const DETAIL_BASE = "https://www.stagepick.co.kr/performances/detail";
 const PAGE_SIZE = 50;
 
 interface StagepickPerformance {
@@ -36,7 +37,7 @@ function parseStagepickDate(formatted: string | null): { start: string | null; e
 
   // "2026. 05. 22 ~ 2026. 05. 24" or "2026. 05. 22 ~ 05. 24"
   const fullRangeMatch = formatted.match(
-    /(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\s*~\s*(?:(\d{4})\.\s*)?(\d{1,2})\.\s*(\d{1,2})/,
+    /(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\s*[~–-]\s*(?:(\d{4})\.\s*)?(\d{1,2})\.\s*(\d{1,2})/,
   );
   if (fullRangeMatch) {
     const [, sy, sm, sd, ey, em, ed] = fullRangeMatch;
@@ -49,7 +50,7 @@ function parseStagepickDate(formatted: string | null): { start: string | null; e
   }
 
   // "05. 22 ~ 05. 24" (no year)
-  const shortRangeMatch = formatted.match(/(\d{1,2})\.\s*(\d{1,2})\s*~\s*(\d{1,2})\.\s*(\d{1,2})/);
+  const shortRangeMatch = formatted.match(/(\d{1,2})\.\s*(\d{1,2})\s*[~–-]\s*(\d{1,2})\.\s*(\d{1,2})/);
   if (shortRangeMatch) {
     const [, sm, sd, em, ed] = shortRangeMatch;
     return {
@@ -90,6 +91,48 @@ async function fetchPage(offset: number): Promise<StagepickApiResponse> {
   });
   if (!res.ok) throw new Error(`StagePick API HTTP ${res.status}`);
   return res.json() as Promise<StagepickApiResponse>;
+}
+
+async function fetchDetailHtml(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      Referer: "https://www.stagepick.co.kr/",
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`StagePick detail HTTP ${res.status}`);
+  return res.text();
+}
+
+async function fetchArtistProfiles(
+  artistDetails: Array<{ name: string; detailUrl: string | null }>,
+): Promise<
+  Array<{
+    name: string;
+    sourceUrl?: string | null;
+    avatarUrl?: string | null;
+    occupation?: string | null;
+    birthDate?: string | null;
+    related?: string | null;
+    metadata?: Record<string, unknown>;
+  }>
+> {
+  const profiles = [];
+  for (const artist of artistDetails) {
+    if (!artist.detailUrl) {
+      profiles.push({ name: artist.name, sourceUrl: null });
+      continue;
+    }
+    try {
+      const html = await fetchDetailHtml(artist.detailUrl);
+      profiles.push(parseArtistDetailPage(html, artist.detailUrl));
+    } catch {
+      profiles.push({ name: artist.name, sourceUrl: artist.detailUrl });
+    }
+  }
+  return profiles;
 }
 
 export async function runStagepickScraper(
@@ -135,7 +178,21 @@ export async function runStagepickScraper(
 
   for (const perf of performances) {
     const sourceUrl = `${DETAIL_BASE}/${perf.id}`;
-    const { start: startDate, end: endDate } = parseStagepickDate(perf.formatted_date);
+    let detail: ReturnType<typeof parseDetailPage> | null = null;
+    let rawHtml: string | null = null;
+
+    try {
+      rawHtml = await fetchDetailHtml(sourceUrl);
+      detail = parseDetailPage(rawHtml, sourceUrl);
+      stats.pagesCrawled++;
+    } catch (e) {
+      await logCrawlError(jobId, SOURCE_NAME, sourceUrl, e);
+      stats.errorCount++;
+      errors.push({ url: sourceUrl, step: "crawl", message: String(e) });
+    }
+
+    const dateRange = detail?.dateRange ?? perf.formatted_date;
+    const { start: startDate, end: endDate } = parseStagepickDate(dateRange);
 
     // Parse ticket open date (ISO datetime → date string)
     let ticketOpenDate: string | null = null;
@@ -146,23 +203,28 @@ export async function runStagepickScraper(
       }
     }
 
+    const artistProfiles = detail?.artistDetails
+      ? await fetchArtistProfiles(detail.artistDetails)
+      : [];
+
     const rawInput = {
       sourceUrl,
       sourceName: SOURCE_NAME,
-      title: perf.title ?? "",
-      posterUrl: perf.image_url ?? null,
-      venueName: perf.venue ?? null,
-      venueAddress: null,
+      title: perf.title || detail?.title || "",
+      posterUrl: detail?.posterUrl ?? perf.image_url ?? null,
+      venueName: detail?.venueName ?? perf.venue ?? null,
+      venueAddress: detail?.venueAddress ?? null,
       startDate,
       endDate,
-      ticketOpenDate,
-      ticketProvider: "스테이지픽" as const,
-      ticketUrl: sourceUrl,
-      artists: [],
-      genre: null,
-      description: null,
+      ticketOpenDate: detail?.ticketOpenDate ?? ticketOpenDate,
+      ticketProvider: detail?.ticketProvider ?? "스테이지픽",
+      ticketUrl: detail?.ticketUrl ?? sourceUrl,
+      artists: detail?.artists ?? [],
+      artistProfiles,
+      genre: detail?.genre ?? null,
+      description: detail?.description ?? null,
       status: "upcoming" as const,
-      rawHtml: null,
+      rawHtml,
     };
 
     let rawPayloadId: string | null = null;
@@ -178,7 +240,7 @@ export async function runStagepickScraper(
           jobId,
           sourceName: SOURCE_NAME,
           sourceUrl,
-          rawHtml: null,
+          rawHtml,
           parsedJson: rawInput as Record<string, unknown>,
         });
       }

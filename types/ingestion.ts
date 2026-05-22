@@ -13,6 +13,19 @@ export const RawScrapedEventSchema = z.object({
   ticketProvider: z.string().nullable().optional(),
   ticketUrl: z.string().nullable().optional(),
   artists: z.array(z.string()).default([]),
+  artistProfiles: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        sourceUrl: z.string().url().nullable().optional(),
+        avatarUrl: z.string().url().nullable().optional(),
+        occupation: z.string().nullable().optional(),
+        birthDate: z.string().nullable().optional(),
+        related: z.string().nullable().optional(),
+        metadata: z.record(z.unknown()).optional(),
+      }),
+    )
+    .default([]),
   genre: z.string().nullable().optional(),
   description: z.string().nullable().optional(),
   status: z.enum(["upcoming", "on_sale", "ended"]).default("upcoming"),
@@ -35,6 +48,15 @@ export interface NormalizedEvent {
   sourceUrls: string[];
   sourceName: string;
   artists: string[];
+  artistProfiles: Array<{
+    name: string;
+    sourceUrl?: string | null;
+    avatarUrl?: string | null;
+    occupation?: string | null;
+    birthDate?: string | null;
+    related?: string | null;
+    metadata?: Record<string, unknown>;
+  }>;
   genre: string | null;
   description: string | null;
   status: "upcoming" | "on_sale" | "ended";
