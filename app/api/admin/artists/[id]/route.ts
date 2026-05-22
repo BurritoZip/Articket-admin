@@ -61,7 +61,7 @@ export async function PATCH(
     videos?: Array<Partial<MusicVideoRow>>;
   };
 
-  const supabase = createClient();
+  const supabase = createServiceRoleClient();
 
   if (body.artist) {
     const { error } = await supabase

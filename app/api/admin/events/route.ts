@@ -147,7 +147,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const supabase = createClient();
+  const supabase = createServiceRoleClient();
   const { error } = await supabase.from("events").insert({
     title: body.title.trim(),
     artist_id: body.artist_id,

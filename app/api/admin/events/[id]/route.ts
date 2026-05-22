@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import type { EventRow } from "@/types/event";
@@ -43,7 +42,7 @@ export async function PATCH(
   const payload: Partial<EventRow> = { ...body };
   if (typeof payload.title === "string") payload.title = payload.title.trim();
 
-  const supabase = createClient();
+  const supabase = createServiceRoleClient();
 
   const affectsCount = "artist_id" in payload || "status" in payload;
   let oldArtistId: string | null = null;
