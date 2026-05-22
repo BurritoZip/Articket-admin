@@ -1,11 +1,18 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import type { CrawlerJob, CrawlerJobStatus } from "@/types/crawler";
 
-export async function createCrawlerJob(sourceName: string): Promise<CrawlerJob> {
+export async function createCrawlerJob(
+  sourceName: string,
+): Promise<CrawlerJob> {
   const db = createServiceRoleClient();
   const { data, error } = await db
     .from("crawler_jobs")
-    .insert({ source_name: sourceName, status: "running", started_at: new Date().toISOString() })
+    .insert({
+      source: sourceName,
+      source_name: sourceName,
+      status: "running",
+      started_at: new Date().toISOString(),
+    })
     .select()
     .single();
   if (error) throw new Error(`Failed to create crawler job: ${error.message}`);
@@ -79,7 +86,10 @@ export async function saveRawPayload(params: {
   return (data as { id: string }).id;
 }
 
-export async function markRawPayloadProcessed(rawPayloadId: string, eventId: string): Promise<void> {
+export async function markRawPayloadProcessed(
+  rawPayloadId: string,
+  eventId: string,
+): Promise<void> {
   const db = createServiceRoleClient();
   await db
     .from("raw_event_payloads")

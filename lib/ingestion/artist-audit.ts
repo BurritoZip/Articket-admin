@@ -93,7 +93,7 @@ async function queueExternalArtistVerification(params: {
 
   if (existing) return;
 
-  await db.from("ai_processing_queue").insert({
+  const { error } = await db.from("ai_processing_queue").insert({
     task_type: "match_artist",
     status: "pending",
     priority: 3,
@@ -110,6 +110,9 @@ async function queueExternalArtistVerification(params: {
       searchQueries: params.searchQueries,
     },
   });
+  if (error) {
+    console.warn(`[ArtistAudit] AI 큐 등록 실패 (무시): ${error.message}`);
+  }
 }
 
 export async function auditCrawlerJobArtists(
@@ -255,16 +258,17 @@ export async function auditCrawlerJobArtists(
                 ? new Error(
                     `파싱 출연진과 타임테이블 아티스트가 일치하지 않습니다: ${issue.eventTitle}`,
                   )
-            : new Error(
-                `아티스트 연결에 실패했습니다: ${issue.artistCandidates.join(", ")}`,
-              ),
+                : new Error(
+                    `아티스트 연결에 실패했습니다: ${issue.artistCandidates.join(", ")}`,
+                  ),
         rawPayload: {
           eventId: issue.eventId,
           eventTitle: issue.eventTitle,
           artistCandidates: issue.artistCandidates,
           timetableArtists: issue.timetableArtists ?? [],
           reason: issue.reason,
-          searchQueries: issue.searchQueries ?? buildSearchQueries(issue.eventTitle),
+          searchQueries:
+            issue.searchQueries ?? buildSearchQueries(issue.eventTitle),
         },
       }),
     ),
@@ -278,7 +282,8 @@ export async function auditCrawlerJobArtists(
         reason: issue.reason,
         artistCandidates: issue.artistCandidates,
         timetableArtists: issue.timetableArtists,
-        searchQueries: issue.searchQueries ?? buildSearchQueries(issue.eventTitle),
+        searchQueries:
+          issue.searchQueries ?? buildSearchQueries(issue.eventTitle),
       }),
     ),
   );

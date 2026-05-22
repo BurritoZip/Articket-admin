@@ -1,7 +1,10 @@
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
 import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
-import { auditCrawlerJobArtists } from "@/lib/ingestion/artist-audit";
+import {
+  auditCrawlerJobArtists,
+  type ArtistAuditReport,
+} from "@/lib/ingestion/artist-audit";
 import { withErrorHandler } from "@/lib/api-handler";
 import { NextResponse } from "next/server";
 
@@ -48,12 +51,24 @@ export const POST = withErrorHandler(async (request) => {
         );
     }
 
-    const artistAudit = body.dryRun
-      ? { checkedCount: 0, missingCount: 0, issues: [] }
-      : await auditCrawlerJobArtists(job.id);
+    let artistAudit: ArtistAuditReport = {
+      checkedCount: 0,
+      missingCount: 0,
+      issues: [],
+    };
+    if (!body.dryRun) {
+      try {
+        artistAudit = await auditCrawlerJobArtists(job.id);
+      } catch (auditErr) {
+        console.error(
+          "[Crawler] auditCrawlerJobArtists 실패 (무시):",
+          auditErr instanceof Error ? auditErr.message : auditErr,
+        );
+      }
+    }
     const totalErrorCount = result.errorCount + artistAudit.missingCount;
     const status =
-      totalErrorCount > 0 && result.eventsUpserted === 0
+      result.eventsUpserted === 0 && result.eventsFound === 0
         ? "failed"
         : totalErrorCount > 0
           ? "partial"
