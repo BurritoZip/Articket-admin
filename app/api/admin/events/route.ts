@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import type { EventRow, OptionItem } from "@/types/event";
 import {
@@ -172,5 +173,22 @@ export async function POST(request: Request) {
     );
   }
 
+  if (body.artist_id) {
+    await recomputeUpcomingCount(body.artist_id);
+  }
+
   return NextResponse.json({ ok: true });
+}
+
+async function recomputeUpcomingCount(artistId: string) {
+  const supabase = createServiceRoleClient();
+  const { count } = await supabase
+    .from("events")
+    .select("id", { count: "exact", head: true })
+    .eq("artist_id", artistId)
+    .not("status", "in", "(ended,cancelled)");
+  await supabase
+    .from("artists")
+    .update({ upcoming_event_count: count ?? 0 })
+    .eq("id", artistId);
 }

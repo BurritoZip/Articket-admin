@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -67,6 +67,7 @@ type ArtistDetailResponse = {
 };
 
 export function ArtistsPageClient() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = React.useState("");
   const [createOpen, setCreateOpen] = React.useState(false);
   const [editOpen, setEditOpen] = React.useState(false);
@@ -236,6 +237,7 @@ export function ArtistsPageClient() {
       toast.success("아티스트가 추가되었습니다.");
       setCreateOpen(false);
       await refetch();
+      queryClient.invalidateQueries({ queryKey: ["admin-artists-list"] });
     } catch (error) {
       toast.error("생성 실패", {
         description: error instanceof Error ? error.message : "알 수 없는 오류",
@@ -268,6 +270,7 @@ export function ArtistsPageClient() {
       setEditOpen(false);
       setEditingArtist(null);
       await refetch();
+      queryClient.invalidateQueries({ queryKey: ["admin-artists-list"] });
     } catch (error) {
       toast.error("수정 실패", {
         description: error instanceof Error ? error.message : "알 수 없는 오류",

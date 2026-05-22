@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
@@ -50,6 +50,7 @@ import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { VENUE_FIELDS } from "@/lib/completeness";
 
 export function VenuesPageClient() {
+  const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = React.useState(false);
   const [createLoading, setCreateLoading] = React.useState(false);
   const [newVenue, setNewVenue] = React.useState<VenueRow>({
@@ -170,6 +171,7 @@ export function VenuesPageClient() {
     toast.success("공연장이 수정되었습니다.");
     setEditingId(null);
     await refetch();
+    queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
 
   const removeVenue = (id: string) => setDeleteId(id);
@@ -190,6 +192,7 @@ export function VenuesPageClient() {
     toast.success("공연장이 삭제되었습니다.");
     const result = await refetch();
     if (result.data?.rows.length === 0 && page > 1) setPage((p) => p - 1);
+    queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
 
   return (
@@ -453,6 +456,7 @@ export function VenuesPageClient() {
                     phone_number: "",
                   });
                   await refetch();
+                  queryClient.invalidateQueries({ queryKey: ["admin-events"] });
                 } catch (error) {
                   toast.error("추가 실패", {
                     description:

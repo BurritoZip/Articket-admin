@@ -87,7 +87,7 @@ export function TimetableSheet({
       if (!res.ok) return { rows: [] as { id: string; name: string }[] };
       return res.json() as Promise<{ rows: { id: string; name: string }[] }>;
     },
-    staleTime: 60_000,
+    staleTime: 0,
   });
   const artists = React.useMemo(() => artistsData?.rows ?? [], [artistsData]);
 
