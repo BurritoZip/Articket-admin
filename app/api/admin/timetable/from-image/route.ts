@@ -84,7 +84,7 @@ export async function POST(request: Request) {
   const base64 = Buffer.from(arrayBuffer).toString("base64");
 
   const genai = new GoogleGenerativeAI(apiKey);
-  const model = genai.getGenerativeModel({ model: "gemini-2.0-flash" });
+  const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
 
   try {
     const result = await model.generateContent([
