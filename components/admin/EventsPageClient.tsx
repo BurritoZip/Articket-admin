@@ -67,6 +67,10 @@ import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { EVENT_FIELDS } from "@/lib/completeness";
 import { TimetableSheet } from "@/components/admin/TimetableSheet";
 import {
+  SortableTableHead,
+  type SortDir,
+} from "@/components/admin/SortableTableHead";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -162,6 +166,18 @@ export function EventsPageClient() {
   const [noArtistLinkFilter, setNoArtistLinkFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
+  const [sortBy, setSortBy] = React.useState("start_date");
+  const [sortDir, setSortDir] = React.useState<SortDir>("desc");
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortDir(field === "start_date" ? "desc" : "asc");
+    }
+    setPage(1);
+  };
 
   React.useEffect(() => {
     const t = setTimeout(() => {
@@ -185,6 +201,8 @@ export function EventsPageClient() {
       missingFilter,
       duplicatesFilter,
       noArtistLinkFilter,
+      sortBy,
+      sortDir,
     ],
     queryFn: async () => {
       const q = new URLSearchParams();
@@ -192,6 +210,8 @@ export function EventsPageClient() {
       if (statusFilter !== "all") q.set("status", statusFilter);
       q.set("page", String(page));
       q.set("pageSize", String(pageSize));
+      q.set("sortBy", sortBy);
+      q.set("sortDir", sortDir);
       if (missingFilter) q.set("missing", missingFilter);
       if (duplicatesFilter) q.set("duplicates", "true");
       if (noArtistLinkFilter) q.set("no_artist_link", "true");
@@ -747,12 +767,33 @@ export function EventsPageClient() {
                         onChange={toggleAll}
                       />
                     </TableHead>
-                    <TableHead>공연명</TableHead>
+                    <SortableTableHead
+                      field="title"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      공연명
+                    </SortableTableHead>
                     <TableHead>아티스트</TableHead>
                     <TableHead>공연장</TableHead>
-                    <TableHead>시작일</TableHead>
+                    <SortableTableHead
+                      field="start_date"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      시작일
+                    </SortableTableHead>
                     <TableHead>티켓오픈</TableHead>
-                    <TableHead>상태</TableHead>
+                    <SortableTableHead
+                      field="status"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      상태
+                    </SortableTableHead>
                     <TableHead>완성도</TableHead>
                     <TableHead>배너</TableHead>
                     <TableHead>타임테이블</TableHead>

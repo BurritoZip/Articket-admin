@@ -66,6 +66,10 @@ import {
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { ARTIST_FIELDS } from "@/lib/completeness";
 import { ArtistDedupSheet } from "@/components/admin/ArtistDedupSheet";
+import {
+  SortableTableHead,
+  type SortDir,
+} from "@/components/admin/SortableTableHead";
 
 type ArtistDetailResponse = {
   artist: ArtistRow;
@@ -122,6 +126,18 @@ export function ArtistsPageClient() {
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const [dedupOpen, setDedupOpen] = React.useState(false);
   const [enriching, setEnriching] = React.useState(false);
+  const [sortBy, setSortBy] = React.useState("name");
+  const [sortDir, setSortDir] = React.useState<SortDir>("asc");
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortDir("asc");
+    }
+    setPage(1);
+  };
 
   React.useEffect(() => {
     setPage(1);
@@ -135,12 +151,16 @@ export function ArtistsPageClient() {
       pageSize,
       missingFilter,
       duplicatesFilter,
+      sortBy,
+      sortDir,
     ],
     queryFn: async () => {
       const q = new URLSearchParams();
       if (search.trim()) q.set("q", search.trim());
       q.set("page", String(page));
       q.set("pageSize", String(pageSize));
+      q.set("sortBy", sortBy);
+      q.set("sortDir", sortDir);
       if (missingFilter) q.set("missing", missingFilter);
       if (duplicatesFilter) q.set("duplicates", "true");
       const res = await fetch(`/api/admin/artists?${q.toString()}`, {
@@ -532,13 +552,33 @@ export function ArtistsPageClient() {
                       />
                     </TableHead>
                     <TableHead>아바타</TableHead>
-                    <TableHead>이름</TableHead>
+                    <SortableTableHead
+                      field="name"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      이름
+                    </SortableTableHead>
                     <TableHead>소속사</TableHead>
                     <TableHead>직업</TableHead>
-                    <TableHead>팔로워</TableHead>
-                    <TableHead title="event_artists 테이블 기준 연결된 공연 수">
+                    <SortableTableHead
+                      field="followers_count"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      팔로워
+                    </SortableTableHead>
+                    <SortableTableHead
+                      field="upcoming_event_count"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                      className="whitespace-nowrap"
+                    >
                       연결 공연
-                    </TableHead>
+                    </SortableTableHead>
                     <TableHead>완성도</TableHead>
                     <TableHead className="w-[220px]">작업</TableHead>
                   </TableRow>

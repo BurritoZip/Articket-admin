@@ -33,12 +33,22 @@ export async function GET(request: Request) {
     "related",
   ]);
   const NULL_ONLY = new Set(["birth_date"]);
+  const VALID_SORT = new Set([
+    "name",
+    "followers_count",
+    "upcoming_event_count",
+    "created_at",
+  ]);
+  const sortBy = VALID_SORT.has(url.searchParams.get("sortBy") ?? "")
+    ? (url.searchParams.get("sortBy") as string)
+    : "name";
+  const sortDir = url.searchParams.get("sortDir") === "desc" ? false : true;
 
   const supabase = createClient();
   let query = supabase
     .from("artists")
     .select(ARTIST_SELECT, { count: "exact" })
-    .order("name", { ascending: true });
+    .order(sortBy, { ascending: sortDir });
 
   if (q) query = query.ilike("name", `%${q}%`);
 

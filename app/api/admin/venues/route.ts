@@ -21,12 +21,17 @@ export async function GET(request: Request) {
   const to = from + pageSize - 1;
 
   const VALID_MISSING = new Set(["address", "phone_number"]);
+  const VALID_SORT = new Set(["name", "address", "created_at"]);
+  const sortBy = VALID_SORT.has(url.searchParams.get("sortBy") ?? "")
+    ? (url.searchParams.get("sortBy") as string)
+    : "name";
+  const sortDir = url.searchParams.get("sortDir") === "desc" ? false : true;
 
   const supabase = createClient();
   let venueQuery = supabase
     .from("venues")
     .select("id, name, address, phone_number", { count: "exact" })
-    .order("name", { ascending: true });
+    .order(sortBy, { ascending: sortDir });
 
   if (searchQ) {
     venueQuery = venueQuery.ilike("name", `%${searchQ}%`);

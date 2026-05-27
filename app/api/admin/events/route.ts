@@ -45,6 +45,12 @@ export async function GET(request: Request) {
     "ticket_open_date",
   ]);
 
+  const VALID_SORT = new Set(["title", "start_date", "status", "created_at"]);
+  const sortBy = VALID_SORT.has(url.searchParams.get("sortBy") ?? "")
+    ? (url.searchParams.get("sortBy") as string)
+    : "start_date";
+  const sortDir = url.searchParams.get("sortDir") === "asc" ? true : false;
+
   const supabase = createClient();
 
   let eventsQuery = supabase
@@ -53,7 +59,7 @@ export async function GET(request: Request) {
       "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, notice_text, is_banner, has_timetable",
       { count: "exact" },
     )
-    .order("start_date", { ascending: false });
+    .order(sortBy, { ascending: sortDir });
 
   if (search) eventsQuery = eventsQuery.ilike("title", `%${search}%`);
   if (status && VALID_STATUSES.includes(status)) {

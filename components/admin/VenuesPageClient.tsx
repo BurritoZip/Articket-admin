@@ -48,6 +48,11 @@ import {
 } from "@/components/admin/CompletenessFilterBar";
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { VENUE_FIELDS } from "@/lib/completeness";
+import { VenueDedupSheet } from "@/components/admin/VenueDedupSheet";
+import {
+  SortableTableHead,
+  type SortDir,
+} from "@/components/admin/SortableTableHead";
 
 export function VenuesPageClient() {
   const queryClient = useQueryClient();
@@ -81,6 +86,19 @@ export function VenuesPageClient() {
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
     React.useState(false);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
+  const [dedupOpen, setDedupOpen] = React.useState(false);
+  const [sortBy, setSortBy] = React.useState("name");
+  const [sortDir, setSortDir] = React.useState<SortDir>("asc");
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(field);
+      setSortDir("asc");
+    }
+    setPage(1);
+  };
 
   React.useEffect(() => {
     setPage(1);
@@ -94,11 +112,15 @@ export function VenuesPageClient() {
       pageSize,
       missingFilter,
       duplicatesFilter,
+      sortBy,
+      sortDir,
     ],
     queryFn: async () => {
       const q = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
+        sortBy,
+        sortDir,
       });
       if (search.trim()) q.set("q", search.trim());
       if (missingFilter) q.set("missing", missingFilter);
@@ -250,10 +272,19 @@ export function VenuesPageClient() {
         title="공연장 관리"
         description="공연장 기본 정보를 생성/수정/삭제하고 인라인으로 빠르게 편집합니다."
         action={
-          <Button type="button" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-5 w-5" strokeWidth={1.6} aria-hidden />
-            공연장 추가
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDedupOpen(true)}
+            >
+              🏟️ 중복 검토
+            </Button>
+            <Button type="button" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-5 w-5" strokeWidth={1.6} aria-hidden />
+              공연장 추가
+            </Button>
+          </div>
         }
       />
 
@@ -327,8 +358,22 @@ export function VenuesPageClient() {
                         onChange={toggleAll}
                       />
                     </TableHead>
-                    <TableHead>이름</TableHead>
-                    <TableHead>주소</TableHead>
+                    <SortableTableHead
+                      field="name"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      이름
+                    </SortableTableHead>
+                    <SortableTableHead
+                      field="address"
+                      sortBy={sortBy}
+                      sortDir={sortDir}
+                      onSort={handleSort}
+                    >
+                      주소
+                    </SortableTableHead>
                     <TableHead>연락처</TableHead>
                     <TableHead>완성도</TableHead>
                     <TableHead className="w-[140px]">작업</TableHead>
@@ -595,7 +640,8 @@ export function VenuesPageClient() {
               {selectedIds.size}건을 일괄 삭제할까요?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              선택한 공연장 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수 없습니다.
+              선택한 공연장 {selectedIds.size}건이 모두 삭제됩니다. 되돌릴 수
+              없습니다.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -606,6 +652,14 @@ export function VenuesPageClient() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <VenueDedupSheet
+        open={dedupOpen}
+        onClose={() => {
+          setDedupOpen(false);
+          void refetch();
+        }}
+      />
     </div>
   );
 }
