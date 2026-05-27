@@ -8,6 +8,7 @@ import type { FieldDef } from "@/lib/completeness";
 export type CompletenessStats = {
   missingCounts: Record<string, number>;
   duplicateCount: number;
+  enrichmentPending?: number;
 };
 
 type Props = {

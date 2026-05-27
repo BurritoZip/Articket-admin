@@ -57,12 +57,13 @@ export async function GET() {
     .filter((c) => c > 1)
     .reduce((sum, c) => sum + c, 0);
 
-  // 보강 대기 중인 아티스트 수 (미처리=NULL + pending + failed 모두 포함)
+  // 보강이 필요한 아티스트 수 — 주요 필드(avatar, occupation, label, name_en) 중 하나라도 없는 수
+  // (enrichment_status 무관 — 실제로 데이터가 없는 아티스트 기준)
   const enrichmentPending = await supabase
     .from("artists")
     .select("id", { count: "exact", head: true })
     .or(
-      "enrichment_status.is.null,enrichment_status.eq.pending,enrichment_status.eq.failed",
+      "avatar_url.is.null,avatar_url.eq.,occupation.is.null,occupation.eq.,label.is.null,label.eq.,name_en.is.null,name_en.eq.",
     );
 
   // name_en 누락 수

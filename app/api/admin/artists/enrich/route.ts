@@ -114,28 +114,38 @@ export const POST = withErrorHandler(async (request) => {
   // ── 큐 적재 (비동기, ai_processing_queue에 등록) ──────────────
   if (body.mode === "queue") {
     const { filter } = body;
-    const limit = Math.min(filter?.limit ?? 200, 1000);
+    const limit = Math.min(filter?.limit ?? 500, 2000);
 
     const db = createServiceRoleClient();
-    let query = db
-      .from("artists")
-      .select("id,name")
-      .or(
-        "enrichment_status.is.null,enrichment_status.eq.pending,enrichment_status.eq.failed",
-      )
-      .limit(limit);
+    let query = db.from("artists").select("id,name").limit(limit);
 
     if (filter?.missing && filter.missing.length > 0) {
+      // missing 필드 기준으로만 선택 — enrichment_status 무관하게
+      // (enriched/skipped여도 데이터가 여전히 없으면 재시도)
       const conditions = filter.missing
         .map((f) => `${f}.is.null,${f}.eq.`)
         .join(",");
       query = query.or(conditions);
+    } else {
+      // missing 필터 없으면 status 기반으로 fallback
+      query = query.or(
+        "enrichment_status.is.null,enrichment_status.eq.pending,enrichment_status.eq.failed,enrichment_status.eq.skipped",
+      );
     }
 
     const { data: artists } = await query;
     if (!artists || artists.length === 0) {
       return NextResponse.json({ ok: true, queued: 0 });
     }
+
+    const artistIds = artists.map((a) => a.id);
+
+    // 큐에 다시 넣기 전에 enrichment_status를 'pending'으로 리셋
+    // (skipped/enriched→pending으로 바꿔야 워커가 재시도함)
+    await db
+      .from("artists")
+      .update({ enrichment_status: "pending" })
+      .in("id", artistIds);
 
     const tasks = artists.map((a) => ({
       task_type: "clean_data",

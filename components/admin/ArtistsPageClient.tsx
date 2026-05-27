@@ -430,18 +430,37 @@ export function ArtistsPageClient() {
                       },
                     }),
                   });
-                  const json = (await res.json()) as { queued?: number };
+                  const json = (await res.json()) as {
+                    queued?: number;
+                    error?: string;
+                  };
+                  if (!res.ok)
+                    throw new Error(json.error ?? "보강 큐 등록 실패");
                   toast.success(`보강 큐 등록 완료`, {
                     description: `${json.queued ?? 0}명의 아티스트가 보강 대기열에 추가됐습니다.`,
                   });
-                } catch {
-                  toast.error("보강 큐 등록 실패");
+                  queryClient.invalidateQueries({
+                    queryKey: ["admin-artists-stats"],
+                  });
+                } catch (e) {
+                  toast.error("보강 큐 등록 실패", {
+                    description:
+                      e instanceof Error ? e.message : "알 수 없는 오류",
+                  });
                 } finally {
                   setEnriching(false);
                 }
               }}
             >
               {enriching ? "등록 중..." : "✨ 일괄 보강"}
+              {(stats as CompletenessStats | null)?.enrichmentPending ? (
+                <Badge
+                  variant="secondary"
+                  className="ml-1.5 h-4 px-1 text-[10px]"
+                >
+                  {(stats as CompletenessStats).enrichmentPending}
+                </Badge>
+              ) : null}
             </Button>
             <Button
               variant="secondary"
