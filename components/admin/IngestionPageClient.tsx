@@ -67,10 +67,10 @@ export function IngestionPageClient() {
             {t === "workflows"
               ? "워크플로"
               : t === "errors"
-              ? "오류 로그"
-              : t === "raw"
-                ? "원본 페이로드"
-                : "AI 큐"}
+                ? "오류 로그"
+                : t === "raw"
+                  ? "원본 페이로드"
+                  : "AI 큐"}
           </button>
         ))}
       </div>
@@ -393,50 +393,232 @@ function RawPayloadsTab() {
   );
 }
 
+type QueueRow = {
+  id: string;
+  task_type: string;
+  status: string;
+  priority: number;
+  entity_type: string | null;
+  entity_id: string | null;
+  payload: Record<string, unknown> | null;
+  error: string | null;
+  attempts: number;
+  max_attempts: number;
+  created_at: string;
+  processed_at: string | null;
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: "대기",
+  processing: "처리중",
+  done: "완료",
+  failed: "실패",
+  skipped: "건너뜀",
+};
+
+const STATUS_VARIANT: Record<
+  string,
+  "default" | "secondary" | "danger" | "success" | "outline"
+> = {
+  pending: "secondary",
+  processing: "outline",
+  done: "success",
+  failed: "danger",
+  skipped: "outline",
+};
+
+const TASK_LABEL: Record<string, string> = {
+  clean_data: "데이터 보강",
+  normalize_venue: "공연장 정규화",
+  deduplicate_artist: "아티스트 중복 제거",
+  ocr_timetable: "타임테이블 OCR",
+  parse_dates: "날짜 파싱",
+  classify_genre: "장르 분류",
+  summarize_event: "이벤트 요약",
+  detect_duplicates: "중복 탐지",
+  match_artist: "아티스트 매칭",
+};
+
+function getTaskLabel(row: QueueRow): string {
+  const base = TASK_LABEL[row.task_type] ?? row.task_type;
+  const target = row.payload?.target as string | undefined;
+  if (target === "artist_profile_enrichment") return "아티스트 프로필 보강";
+  return base;
+}
+
+function getEntityLabel(row: QueueRow): string {
+  const name =
+    (row.payload?.artistName as string) ??
+    (row.payload?.name as string) ??
+    row.entity_id ??
+    "";
+  const type =
+    row.entity_type === "artist"
+      ? "🎤"
+      : row.entity_type === "venue"
+        ? "🏟️"
+        : row.entity_type === "event"
+          ? "🎪"
+          : "📦";
+  return name ? `${type} ${name}` : type;
+}
+
 function AIQueueTab() {
+  const queryClient = useQueryClient();
+  const [statusFilter, setStatusFilter] = React.useState<string>("all");
+  const [clearing, setClearing] = React.useState<string | null>(null);
+  const [runningWorker, setRunningWorker] = React.useState(false);
+
   const { data, isLoading } = useQuery({
-    queryKey: ["ai-queue"],
+    queryKey: ["ai-queue", statusFilter],
     queryFn: async () => {
-      const res = await fetch("/api/admin/ingestion/queue?limit=50");
+      const q = new URLSearchParams({ limit: "200" });
+      if (statusFilter !== "all") q.set("status", statusFilter);
+      const res = await fetch(`/api/admin/ingestion/queue?${q.toString()}`);
       return safeJson(res, {
-        rows: [] as Array<{
-          id: string;
-          task_type: string;
-          status: string;
-          created_at: string;
-          attempts: number;
-        }>,
+        rows: [] as QueueRow[],
         total: 0,
+        byStatus: {} as Record<string, number>,
       });
     },
+    refetchInterval: 10_000,
   });
 
   const rows = data?.rows ?? [];
+  const byStatus = data?.byStatus ?? {};
+  const totalAll = Object.values(byStatus).reduce((s, c) => s + c, 0);
+
+  const clearByStatus = async (st: string) => {
+    setClearing(st);
+    try {
+      const res = await fetch(
+        `/api/admin/ingestion/queue?status=${st}&confirm=true`,
+        { method: "DELETE" },
+      );
+      const json = (await res.json()) as { deleted?: number; error?: string };
+      if (!res.ok) throw new Error(json.error ?? "삭제 실패");
+      toast.success(`${json.deleted ?? 0}건 삭제 완료`);
+      void queryClient.invalidateQueries({ queryKey: ["ai-queue"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "삭제 실패");
+    } finally {
+      setClearing(null);
+    }
+  };
+
+  const runWorker = async () => {
+    setRunningWorker(true);
+    try {
+      const res = await fetch("/api/admin/artists/enrich?limit=20");
+      const json = (await res.json()) as {
+        processed?: number;
+        succeeded?: number;
+        failed?: number;
+      };
+      toast.success(
+        `워커 실행 완료: ${json.processed ?? 0}건 처리, 성공 ${json.succeeded ?? 0}건`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["ai-queue"] });
+    } catch {
+      toast.error("워커 실행 실패");
+    } finally {
+      setRunningWorker(false);
+    }
+  };
+
+  const STATUS_TABS = [
+    "all",
+    "pending",
+    "processing",
+    "done",
+    "failed",
+    "skipped",
+  ];
 
   return (
     <Card>
       <CardHeader className="border-b border-border pb-4">
-        <CardTitle className="flex items-center gap-2 text-h3">
-          <Layers className="h-4 w-4" />
-          AI 처리 큐 ({data?.total ?? 0})
-        </CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <CardTitle className="flex items-center gap-2 text-h3">
+            <Layers className="h-4 w-4" />
+            AI 처리 큐
+            <Badge variant="secondary" className="ml-1">
+              전체 {totalAll}
+            </Badge>
+          </CardTitle>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="secondary"
+              loading={runningWorker}
+              onClick={() => void runWorker()}
+            >
+              <Play className="mr-1 h-3 w-3" />
+              워커 실행 (20건)
+            </Button>
+            {byStatus["done"] > 0 && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={clearing === "done"}
+                onClick={() => void clearByStatus("done")}
+              >
+                완료 {byStatus["done"]}건 정리
+              </Button>
+            )}
+            {byStatus["failed"] > 0 && (
+              <Button
+                size="sm"
+                variant="danger-weak"
+                disabled={clearing === "failed"}
+                onClick={() => void clearByStatus("failed")}
+              >
+                실패 {byStatus["failed"]}건 삭제
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* 상태 탭 */}
+        <div className="mt-3 flex flex-wrap gap-1">
+          {STATUS_TABS.map((st) => {
+            const cnt = st === "all" ? totalAll : (byStatus[st] ?? 0);
+            return (
+              <button
+                key={st}
+                onClick={() => setStatusFilter(st)}
+                className={`rounded-full px-3 py-1 text-caption font-medium transition-colors ${
+                  statusFilter === st
+                    ? "bg-primary text-white"
+                    : "bg-surface-muted text-text-secondary hover:bg-surface-hover"
+                }`}
+              >
+                {st === "all" ? "전체" : (STATUS_LABEL[st] ?? st)}{" "}
+                {cnt > 0 && <span className="opacity-80">({cnt})</span>}
+              </button>
+            );
+          })}
+        </div>
       </CardHeader>
+
       <CardContent className="p-0">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>작업 유형</TableHead>
+              <TableHead>대상</TableHead>
+              <TableHead>작업</TableHead>
               <TableHead>상태</TableHead>
               <TableHead className="text-right">시도</TableHead>
-              <TableHead>생성</TableHead>
+              <TableHead>등록</TableHead>
+              <TableHead>처리</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading ? (
               <TableRow>
                 <TableCell
-                  colSpan={4}
-                  className="text-center h-20 text-text-secondary"
+                  colSpan={6}
+                  className="h-20 text-center text-text-secondary"
                 >
                   로딩중...
                 </TableCell>
@@ -444,36 +626,58 @@ function AIQueueTab() {
             ) : rows.length === 0 ? (
               <TableRow>
                 <TableCell
-                  colSpan={4}
-                  className="text-center h-20 text-text-secondary"
+                  colSpan={6}
+                  className="h-20 text-center text-text-secondary"
                 >
-                  큐 비어있음
+                  {statusFilter === "all"
+                    ? "큐 비어있음"
+                    : `${STATUS_LABEL[statusFilter] ?? statusFilter} 항목 없음`}
                 </TableCell>
               </TableRow>
             ) : (
               rows.map((r) => (
                 <TableRow key={r.id}>
-                  <TableCell className="font-mono text-caption">
-                    {r.task_type}
+                  <TableCell className="max-w-[180px] truncate text-body-sm font-medium">
+                    {getEntityLabel(r)}
+                  </TableCell>
+                  <TableCell className="text-body-sm text-text-secondary">
+                    {getTaskLabel(r)}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        r.status === "done"
-                          ? "default"
-                          : r.status === "failed"
-                            ? "danger"
-                            : "secondary"
-                      }
-                    >
-                      {r.status}
-                    </Badge>
+                    <div className="flex flex-col gap-1">
+                      <Badge
+                        variant={STATUS_VARIANT[r.status] ?? "outline"}
+                        className="w-fit"
+                      >
+                        {STATUS_LABEL[r.status] ?? r.status}
+                      </Badge>
+                      {r.error && (
+                        <p className="max-w-[200px] truncate text-[10px] text-red-500">
+                          {r.error}
+                        </p>
+                      )}
+                    </div>
                   </TableCell>
-                  <TableCell className="text-right text-caption">
-                    {r.attempts}
+                  <TableCell className="text-right text-caption text-text-tertiary">
+                    {r.attempts}/{r.max_attempts}
                   </TableCell>
-                  <TableCell className="text-caption text-text-tertiary">
-                    {new Date(r.created_at).toLocaleString("ko-KR")}
+                  <TableCell className="text-caption text-text-tertiary whitespace-nowrap">
+                    {new Date(r.created_at).toLocaleString("ko-KR", {
+                      month: "2-digit",
+                      day: "2-digit",
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </TableCell>
+                  <TableCell className="text-caption text-text-tertiary whitespace-nowrap">
+                    {r.processed_at
+                      ? new Date(r.processed_at).toLocaleString("ko-KR", {
+                          month: "2-digit",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : "-"}
                   </TableCell>
                 </TableRow>
               ))
