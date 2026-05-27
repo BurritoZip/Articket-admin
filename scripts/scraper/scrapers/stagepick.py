@@ -112,6 +112,8 @@ class StagepickScraper(BaseScraper):
             "start_date": None,
             "end_date": None,
             "poster_url": None,
+            "organizer": None,
+            "ticket_close_date": None,
         }
         try:
             url = f"{self.BASE_WEB}/performances/detail/{perf_id}"
@@ -155,6 +157,44 @@ class StagepickScraper(BaseScraper):
             og = soup.find("meta", property="og:image")
             if og and og.get("content"):
                 result["poster_url"] = og["content"]
+
+            # 주최/주관사 — '주최', '주관' 레이블 다음 텍스트
+            _ORGANIZER_LABELS = ("주최", "주관", "주관사", "기획사", "주최사")
+            for p_tag in soup.find_all("p"):
+                txt = p_tag.get_text(strip=True)
+                if txt in _ORGANIZER_LABELS:
+                    # 다음 형제 또는 인접 p 태그에서 값 추출
+                    sibling = p_tag.find_next_sibling("p")
+                    if not sibling:
+                        sibling = p_tag.find_next("p")
+                    if sibling:
+                        val = sibling.get_text(strip=True)
+                        if val and val not in _ORGANIZER_LABELS:
+                            existing = result["organizer"]
+                            result["organizer"] = (
+                                f"{existing}, {val}" if existing else val
+                            )
+                    break
+
+            # 티켓팅 종료일 — JSON-LD의 'offers.availabilityEnds' 또는 페이지 내 날짜 파싱
+            ld_tag2 = soup.find("script", type="application/ld+json")
+            if ld_tag2 and ld_tag2.string:
+                try:
+                    ld2 = json.loads(ld_tag2.string)
+                    offers = ld2.get("offers", {})
+                    if isinstance(offers, list):
+                        offers = offers[0] if offers else {}
+                    avail_end = offers.get("availabilityEnds", "")
+                    if avail_end:
+                        from datetime import datetime as _dt2
+                        try:
+                            result["ticket_close_date"] = _dt2.fromisoformat(
+                                avail_end.replace("Z", "+00:00")
+                            )
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
 
         except Exception as e:
             print(f"  [StagePick 상세 오류] {perf_id}: {e}")
@@ -210,6 +250,8 @@ class StagepickScraper(BaseScraper):
                 "artist_name": artist_name,
                 "artist_infos": artist_infos,  # main.py에서 DB 저장 시 사용
                 "ticket_provider": "stagepick",
+                "organizer": detail.get("organizer"),
+                "ticket_close_date": detail.get("ticket_close_date"),
             }
         except Exception as e:
             print(f"  [StagePick 파싱 오류] {e}")

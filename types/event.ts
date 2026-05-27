@@ -15,7 +15,9 @@ export type EventRow = {
   duration: string | null;
   age_restriction: string | null;
   ticket_open_date: string | null;
+  ticket_close_date: string | null;
   ticket_provider: string | null;
+  organizer: string | null;
   notice_text: string | null;
   is_banner: boolean;
   has_timetable: boolean;

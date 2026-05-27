@@ -49,6 +49,9 @@ def run_scraper(site: str):
     elif site == "melon":
         from scrapers.melon import MelonScraper
         return MelonScraper().scrape()
+    elif site == "naver":
+        from scrapers.naver import NaverScraper
+        return NaverScraper().scrape()
     elif site == "stagepick":
         from scrapers.stagepick import StagepickScraper
         return StagepickScraper().scrape()
@@ -105,6 +108,8 @@ def save_events(client, events: list[dict]) -> None:
                 genre=ev.get("genre", "콘서트"),
                 poster_url=poster_url,
                 ticket_provider=ev.get("ticket_provider"),
+                ticket_close_date=ev.get("ticket_close_date"),
+                organizer=ev.get("organizer"),
                 source_name=ev["source_name"],
                 source_url=ev.get("source_url"),
             )
@@ -144,7 +149,7 @@ _EXCLUDE_KEYWORDS = (
 )
 
 # StagePick이 1순위. 이후 보조 사이트는 source_url 보완 역할만 함
-_SUPPLEMENTARY_SITES = ["yes24", "yanolja", "festivallife", "interpark", "melon"]
+_SUPPLEMENTARY_SITES = ["yes24", "yanolja", "festivallife", "interpark", "melon", "naver"]
 
 
 def _filter_events(events: list[dict]) -> list[dict]:
@@ -169,7 +174,7 @@ def _filter_events(events: list[dict]) -> list[dict]:
 
 def main():
     parser = argparse.ArgumentParser(description="Articket 공연 크롤러")
-    parser.add_argument("--site", default="all", choices=["all", "yanolja", "yes24", "festivallife", "interpark", "melon", "stagepick"])
+    parser.add_argument("--site", default="all", choices=["all", "yanolja", "yes24", "festivallife", "interpark", "melon", "naver", "stagepick"])
     parser.add_argument("--dry-run", action="store_true", help="DB 저장 없이 파싱 결과만 출력")
     args = parser.parse_args()
 

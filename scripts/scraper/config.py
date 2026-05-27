@@ -52,3 +52,11 @@ STAGEPICK = {
     "api_base": "https://api.stagepick.co.kr/v1",
     "source_name": "stagepick",
 }
+
+NAVER = {
+    # 네이버 뮤직 공연 탭 (콘서트/페스티벌 카테고리)
+    "list_url": "https://m.search.naver.com/search.naver",
+    "concert_query": "콘서트",
+    "festival_query": "페스티벌",
+    "source_name": "naver",
+}

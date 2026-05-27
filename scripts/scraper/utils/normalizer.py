@@ -4,6 +4,38 @@ import unicodedata
 from datetime import date, datetime
 from typing import Optional, Tuple
 
+# 공연장 동의어 매핑 — 동일 공연장의 다양한 표기를 표준 명칭으로 통일
+# key: 정규화된 별칭(normalize_venue 적용 후), value: 표준 공연장명
+_VENUE_ALIASES: dict[str, str] = {
+    # 올림픽공원
+    "서울올림픽주경기장":         "올림픽공원 주경기장",
+    "잠실올림픽주경기장":         "올림픽공원 주경기장",
+    "잠실주경기장":               "올림픽공원 주경기장",
+    "올림픽주경기장":             "올림픽공원 주경기장",
+    "올림픽공원주경기장":         "올림픽공원 주경기장",
+    "올림픽공원88잔디마당":       "올림픽공원 88잔디마당",
+    "88잔디마당":                 "올림픽공원 88잔디마당",
+    # KSPO DOME (구 올림픽체조경기장)
+    "kspo돔":                     "KSPO DOME",
+    "올림픽체조경기장":           "KSPO DOME",
+    "체조경기장":                 "KSPO DOME",
+    # 고척 스카이돔
+    "고척스카이돔":               "고척 스카이돔",
+    "고척돔":                     "고척 스카이돔",
+    # 잠실실내체육관
+    "잠실실내체육관":             "잠실실내체육관",
+    "잠실체육관":                 "잠실실내체육관",
+    # 코엑스
+    "코엑스아티움":               "코엑스 아티움",
+    "코엑스홀":                   "코엑스 홀",
+    # 인스파이어
+    "인스파이어아레나":           "인스파이어 아레나",
+    # 기타
+    "잠실야구장":                 "잠실 야구장",
+    "수원월드컵경기장":           "수원 월드컵 경기장",
+}
+
+
 _EXHIBITION_KEYWORDS = (
     "전시", "전시회", "전람회", "전람", "전시관", "갤러리",
     "exhibition", "expo", "gallery",
@@ -26,13 +58,20 @@ def is_exhibition(title: str) -> bool:
 
 
 def sanitize_venue(venue_name: str, title: str) -> str:
-    """venue_name이 title과 동일하거나 날짜 패턴이면 빈 문자열 반환"""
+    """venue_name 정제 및 동의어 표준화.
+    - title과 동일하거나 날짜 패턴이면 빈 문자열 반환
+    - _VENUE_ALIASES 매핑으로 표준 공연장명으로 치환
+    """
     if not venue_name:
         return ""
     if normalize_title(venue_name) == normalize_title(title):
         return ""
     if _DATE_PATTERN.match(venue_name.strip()):
         return ""
+    # 동의어 표준화
+    norm_key = normalize_venue(venue_name)
+    if norm_key in _VENUE_ALIASES:
+        return _VENUE_ALIASES[norm_key]
     return venue_name
 
 

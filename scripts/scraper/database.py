@@ -67,7 +67,9 @@ def upsert_event(
     genre: str,
     poster_url: Optional[str] = None,
     ticket_open_date: Optional[datetime] = None,
+    ticket_close_date: Optional[datetime] = None,
     ticket_provider: Optional[str] = None,
+    organizer: Optional[str] = None,
     source_name: str,
     source_url: Optional[str] = None,
 ) -> str:
@@ -129,8 +131,12 @@ def upsert_event(
         payload["poster_url"] = poster_url
     if ticket_open_date:
         payload["ticket_open_date"] = ticket_open_date.isoformat()
+    if ticket_close_date:
+        payload["ticket_close_date"] = ticket_close_date.isoformat()
     if ticket_provider:
         payload["ticket_provider"] = ticket_provider
+    if organizer:
+        payload["organizer"] = organizer
 
     result = client.table("events").insert(payload).execute()
     return result.data[0]["id"]
