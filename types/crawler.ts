@@ -1,5 +1,17 @@
-export type CrawlerJobStatus = "pending" | "running" | "success" | "failed" | "partial";
-export type IngestionStep = "crawl" | "parse" | "normalize" | "match" | "upsert" | "ai";
+export type CrawlerJobStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "failed"
+  | "partial";
+export type IngestionStep =
+  | "crawl"
+  | "parse"
+  | "normalize"
+  | "match"
+  | "upsert"
+  | "ai"
+  | "structure_change";
 export type AITaskType =
   | "normalize_venue"
   | "deduplicate_artist"
@@ -10,8 +22,36 @@ export type AITaskType =
   | "detect_duplicates"
   | "match_artist"
   | "clean_data";
-export type AITaskStatus = "pending" | "processing" | "done" | "failed" | "skipped";
-export type OCRStatus = "pending" | "processing" | "done" | "failed" | "skipped";
+export type AITaskStatus =
+  | "pending"
+  | "processing"
+  | "done"
+  | "failed"
+  | "skipped";
+export type OCRStatus =
+  | "pending"
+  | "processing"
+  | "done"
+  | "failed"
+  | "skipped";
+
+export interface CrawlerSourceSelectors {
+  item?: string; // 목록 아이템 선택자
+  title?: string; // 공연명 선택자
+  venue?: string; // 공연장 선택자
+  date?: string; // 날짜 선택자
+  link?: string; // 상세 링크 선택자
+  image?: string; // 이미지 선택자
+}
+
+export interface CrawlerSourceConfig {
+  rateLimit?: number; // 요청 간격 (ms)
+  listPath?: string; // 목록 페이지 경로
+  selectors?: CrawlerSourceSelectors;
+  consecutiveZeroCount?: number; // 연속 0건 카운터 (구조 변경 감지)
+  lastSuccessCount?: number; // 마지막 성공 시 수집 건수
+  lastStructureChangeAt?: string; // 마지막 구조 변경 감지 시각
+}
 
 export interface CrawlerSource {
   id: string;
@@ -19,7 +59,7 @@ export interface CrawlerSource {
   display_name: string;
   base_url: string;
   enabled: boolean;
-  config: Record<string, unknown>;
+  config: CrawlerSourceConfig;
   created_at: string;
 }
 

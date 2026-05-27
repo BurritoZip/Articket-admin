@@ -11,6 +11,7 @@
 
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
 import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
+import { checkStructureChange } from "@/lib/crawler/structure-check";
 import {
   auditCrawlerJobArtists,
   type ArtistAuditReport,
@@ -76,8 +77,23 @@ export async function GET(request: NextRequest) {
       },
     });
 
+    // 구조 변경 감지
+    const structureCheck = await checkStructureChange({
+      jobId: job.id,
+      sourceName: source,
+      eventsFound: result.eventsFound,
+    }).catch((e) =>
+      console.error(
+        "[Cron] structure check 실패:",
+        e instanceof Error ? e.message : e,
+      ),
+    );
+
     console.log(
       `[Cron] 완료 — 발견: ${result.eventsFound}, 저장: ${result.eventsUpserted}, 오류: ${totalErrorCount}`,
+      structureCheck && "detected" in structureCheck && structureCheck.detected
+        ? `⚠️ 구조 변경 감지 (연속 ${structureCheck.consecutiveZeroCount}회)`
+        : "",
     );
 
     return NextResponse.json({

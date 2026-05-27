@@ -87,6 +87,7 @@ export async function POST(request: Request) {
   const model = genai.getGenerativeModel({ model: "gemini-2.5-flash" });
 
   try {
+    
     const result = await model.generateContent([
       PROMPT(startDate, endDate),
       { inlineData: { data: base64, mimeType } },

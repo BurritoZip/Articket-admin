@@ -11,6 +11,8 @@ import {
   Clock,
   Loader2,
   Database,
+  CalendarClock,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
@@ -31,7 +33,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/Table";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { PageHeader } from "@/components/layout/PageHeader";
+import { CrawlerSourcesTab } from "@/components/admin/CrawlerSourcesTab";
 import type { CrawlerJob, CrawlerSource } from "@/types/crawler";
 
 type ArtistAuditMeta = {
@@ -73,6 +77,31 @@ function formatDuration(start: string | null, end: string | null): string {
   const secs = Math.round((e.getTime() - s.getTime()) / 1000);
   if (secs < 60) return `${secs}s`;
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
+}
+
+/** 다음 정각 실행 시간을 KST로 표시 */
+function NextCronTime() {
+  const [nextRun, setNextRun] = React.useState("");
+
+  React.useEffect(() => {
+    const calc = () => {
+      const now = new Date();
+      const next = new Date(now);
+      next.setHours(now.getHours() + 1, 0, 0, 0);
+      setNextRun(
+        next.toLocaleTimeString("ko-KR", {
+          hour: "2-digit",
+          minute: "2-digit",
+          timeZone: "Asia/Seoul",
+        }) + " KST",
+      );
+    };
+    calc();
+    const id = setInterval(calc, 60_000);
+    return () => clearInterval(id);
+  }, []);
+
+  return <span className="font-medium text-text-primary">{nextRun}</span>;
 }
 
 export function CrawlerPageClient() {
@@ -148,170 +177,215 @@ export function CrawlerPageClient() {
         description="이벤트 자동 수집 파이프라인을 실행하고 모니터링합니다."
       />
 
-      {/* 실행 패널 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-h3">크롤러 실행</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-end gap-4">
-          <div className="space-y-1">
-            <p className="text-label text-text-secondary">소스</p>
-            <Select value={selectedSource} onValueChange={setSelectedSource}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {sources.length > 0 ? (
-                  sources.map((s) => (
-                    <SelectItem key={s.name} value={s.name}>
-                      {s.display_name}
-                    </SelectItem>
-                  ))
-                ) : (
-                  <SelectItem value="stagepick">StagePick</SelectItem>
-                )}
-              </SelectContent>
-            </Select>
-          </div>
+      <Tabs defaultValue="history" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="history">실행 이력</TabsTrigger>
+          <TabsTrigger value="sources">소스 관리</TabsTrigger>
+        </TabsList>
 
-          <div className="space-y-1">
-            <p className="text-label text-text-secondary">최대 수집</p>
-            <Select value={maxItems} onValueChange={setMaxItems}>
-              <SelectTrigger className="w-28">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {["10", "25", "50", "100"].map((v) => (
-                  <SelectItem key={v} value={v}>
-                    {v}건
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+        {/* ── 탭 1: 실행 이력 ── */}
+        <TabsContent value="history" className="space-y-6">
+          {/* Cron 스케줄 카드 */}
+          <Card className="border-border/60 bg-surface">
+            <CardContent className="flex items-center gap-4 py-4">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-surface-muted">
+                <CalendarClock className="h-4 w-4 text-text-secondary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-label font-semibold text-text-primary">
+                  자동 크롤링 스케줄
+                </p>
+                <p className="text-caption text-text-tertiary">
+                  매시간 정각 (Vercel Cron) · 다음 실행:{" "}
+                  <NextCronTime />
+                </p>
+              </div>
+              <Button variant="outline" size="sm" className="shrink-0 gap-1.5" asChild>
+                <a
+                  href="https://vercel.com/dashboard"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  설정 보기
+                </a>
+              </Button>
+            </CardContent>
+          </Card>
 
-          <div className="flex items-center gap-2 pb-0.5">
-            <input
-              type="checkbox"
-              id="dry-run"
-              checked={dryRun}
-              onChange={(e) => setDryRun(e.target.checked)}
-              className="h-4 w-4"
-            />
-            <label
-              htmlFor="dry-run"
-              className="text-body-sm text-text-secondary cursor-pointer"
-            >
-              Dry Run (저장 안 함)
-            </label>
-          </div>
+          {/* 실행 패널 */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-h3">크롤러 실행</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-end gap-4">
+              <div className="space-y-1">
+                <p className="text-label text-text-secondary">소스</p>
+                <Select value={selectedSource} onValueChange={setSelectedSource}>
+                  <SelectTrigger className="w-40">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {sources.length > 0 ? (
+                      sources.map((s) => (
+                        <SelectItem key={s.name} value={s.name}>
+                          {s.display_name}
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <SelectItem value="stagepick">StagePick</SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <Button
-            loading={running}
-            onClick={() => void handleRun()}
-            className="gap-2"
-          >
-            <Play className="h-4 w-4" />
-            {running ? "실행중..." : "실행"}
-          </Button>
+              <div className="space-y-1">
+                <p className="text-label text-text-secondary">최대 수집</p>
+                <Select value={maxItems} onValueChange={setMaxItems}>
+                  <SelectTrigger className="w-28">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["10", "25", "50", "100"].map((v) => (
+                      <SelectItem key={v} value={v}>
+                        {v}건
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              void queryClient.invalidateQueries({ queryKey: ["crawler-jobs"] })
-            }
-          >
-            <RefreshCw className="h-4 w-4" />
-          </Button>
-        </CardContent>
-      </Card>
+              <div className="flex items-center gap-2 pb-0.5">
+                <input
+                  type="checkbox"
+                  id="dry-run"
+                  checked={dryRun}
+                  onChange={(e) => setDryRun(e.target.checked)}
+                  className="h-4 w-4"
+                />
+                <label
+                  htmlFor="dry-run"
+                  className="cursor-pointer text-body-sm text-text-secondary"
+                >
+                  Dry Run (저장 안 함)
+                </label>
+              </div>
 
-      {/* 실행 이력 */}
-      <Card>
-        <CardHeader className="border-b border-border pb-4">
-          <CardTitle className="text-h3">실행 이력</CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>소스</TableHead>
-                <TableHead>상태</TableHead>
-                <TableHead className="text-right">발견</TableHead>
-                <TableHead className="text-right">저장</TableHead>
-                <TableHead className="text-right">스킵</TableHead>
-                <TableHead className="text-right">아티스트 누락</TableHead>
-                <TableHead className="text-right">오류</TableHead>
-                <TableHead>소요시간</TableHead>
-                <TableHead>시작</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {isLoading ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={9}
-                    className="h-24 text-center text-text-secondary"
-                  >
-                    로딩중...
-                  </TableCell>
-                </TableRow>
-              ) : jobs.length === 0 ? (
-                <TableRow>
-                  <TableCell
-                    colSpan={9}
-                    className="h-24 text-center text-text-secondary"
-                  >
-                    <Database className="mx-auto mb-2 h-6 w-6 text-text-tertiary" />
-                    실행 이력 없음
-                  </TableCell>
-                </TableRow>
-              ) : (
-                jobs.map((job) => {
-                  const artistAudit = getArtistAudit(job);
-                  const missingCount = artistAudit.missingCount ?? 0;
-                  return (
-                    <TableRow key={job.id}>
-                      <TableCell className="font-mono text-body-sm">
-                        {job.source_name}
-                      </TableCell>
-                      <TableCell>
-                        <StatusBadge status={job.status} />
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {job.events_found}
-                      </TableCell>
-                      <TableCell className="text-right font-medium text-green-600">
-                        {job.events_upserted}
-                      </TableCell>
-                      <TableCell className="text-right text-text-tertiary">
-                        {job.events_skipped}
-                      </TableCell>
+              <Button
+                loading={running}
+                onClick={() => void handleRun()}
+                className="gap-2"
+              >
+                <Play className="h-4 w-4" />
+                {running ? "실행중..." : "실행"}
+              </Button>
+
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  void queryClient.invalidateQueries({
+                    queryKey: ["crawler-jobs"],
+                  })
+                }
+              >
+                <RefreshCw className="h-4 w-4" />
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* 실행 이력 테이블 */}
+          <Card>
+            <CardHeader className="border-b border-border pb-4">
+              <CardTitle className="text-h3">실행 이력</CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>소스</TableHead>
+                    <TableHead>상태</TableHead>
+                    <TableHead className="text-right">발견</TableHead>
+                    <TableHead className="text-right">저장</TableHead>
+                    <TableHead className="text-right">스킵</TableHead>
+                    <TableHead className="text-right">아티스트 누락</TableHead>
+                    <TableHead className="text-right">오류</TableHead>
+                    <TableHead>소요시간</TableHead>
+                    <TableHead>시작</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isLoading ? (
+                    <TableRow>
                       <TableCell
-                        className={`text-right ${missingCount > 0 ? "text-amber-600" : "text-text-tertiary"}`}
+                        colSpan={9}
+                        className="h-24 text-center text-text-secondary"
                       >
-                        {missingCount}
-                      </TableCell>
-                      <TableCell className="text-right text-red-500">
-                        {job.error_count}
-                      </TableCell>
-                      <TableCell className="text-body-sm text-text-secondary">
-                        {formatDuration(job.started_at, job.finished_at)}
-                      </TableCell>
-                      <TableCell className="text-caption text-text-tertiary">
-                        {job.created_at
-                          ? new Date(job.created_at).toLocaleString("ko-KR")
-                          : "-"}
+                        로딩중...
                       </TableCell>
                     </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                  ) : jobs.length === 0 ? (
+                    <TableRow>
+                      <TableCell
+                        colSpan={9}
+                        className="h-24 text-center text-text-secondary"
+                      >
+                        <Database className="mx-auto mb-2 h-6 w-6 text-text-tertiary" />
+                        실행 이력 없음
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    jobs.map((job) => {
+                      const artistAudit = getArtistAudit(job);
+                      const missingCount = artistAudit.missingCount ?? 0;
+                      return (
+                        <TableRow key={job.id}>
+                          <TableCell className="font-mono text-body-sm">
+                            {job.source_name}
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge status={job.status} />
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {job.events_found}
+                          </TableCell>
+                          <TableCell className="text-right font-medium text-green-600">
+                            {job.events_upserted}
+                          </TableCell>
+                          <TableCell className="text-right text-text-tertiary">
+                            {job.events_skipped}
+                          </TableCell>
+                          <TableCell
+                            className={`text-right ${missingCount > 0 ? "text-amber-600" : "text-text-tertiary"}`}
+                          >
+                            {missingCount}
+                          </TableCell>
+                          <TableCell className="text-right text-red-500">
+                            {job.error_count}
+                          </TableCell>
+                          <TableCell className="text-body-sm text-text-secondary">
+                            {formatDuration(job.started_at, job.finished_at)}
+                          </TableCell>
+                          <TableCell className="text-caption text-text-tertiary">
+                            {job.created_at
+                              ? new Date(job.created_at).toLocaleString("ko-KR")
+                              : "-"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── 탭 2: 소스 관리 ── */}
+        <TabsContent value="sources">
+          <CrawlerSourcesTab />
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
