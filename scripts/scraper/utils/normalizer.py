@@ -50,6 +50,27 @@ _EXHIBITION_KEYWORDS = (
 
 _DATE_PATTERN = re.compile(r"^\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}")
 
+# 공연장 이름에 들어오면 안 되는 패턴들
+_PRICE_RE = re.compile(r"\d{1,3}(?:,\d{3})*\s*원|₩\s*\d[\d,]*|\d+\s*만\s*원")
+_TICKET_GRADE_RE = re.compile(r"\b([RSABVIP]석|VIP|스탠딩|STANDING|FLOOR)\b", re.IGNORECASE)
+_TICKET_OPEN_RE = re.compile(r"티켓\s*(오픈|예매)|예매\s*오픈|오픈\s*예정")
+_URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+# 주소다운 키워드 (주소 필드 검증용)
+_ADDRESS_KW_RE = re.compile(r"시$|구$|동$|로$|길$|번지|특별시|광역시|도\s|읍|면")
+
+
+def _is_bad_venue_name(s: str) -> bool:
+    """공연장 이름으로 부적합한 값인지 판별"""
+    if not s:
+        return False
+    return bool(
+        _PRICE_RE.search(s)
+        or _TICKET_GRADE_RE.search(s)
+        or _TICKET_OPEN_RE.search(s)
+        or _URL_RE.search(s)
+    )
+
 
 def is_exhibition(title: str) -> bool:
     """전시/갤러리 등 공연이 아닌 콘텐츠 여부 판별"""
@@ -59,20 +80,51 @@ def is_exhibition(title: str) -> bool:
 
 def sanitize_venue(venue_name: str, title: str) -> str:
     """venue_name 정제 및 동의어 표준화.
-    - title과 동일하거나 날짜 패턴이면 빈 문자열 반환
-    - _VENUE_ALIASES 매핑으로 표준 공연장명으로 치환
+
+    다음 경우 빈 문자열 반환 (DB에 저장하지 않음):
+    - title과 동일
+    - 날짜 패턴으로 시작
+    - 가격/티켓등급/티켓오픈/URL이 포함됨
+    - 너무 짧음 (1자)
+
+    이후 _VENUE_ALIASES 매핑으로 표준 공연장명 치환.
     """
     if not venue_name:
         return ""
-    if normalize_title(venue_name) == normalize_title(title):
+    s = venue_name.strip()
+    if len(s) <= 1:
         return ""
-    if _DATE_PATTERN.match(venue_name.strip()):
+    if normalize_title(s) == normalize_title(title):
+        return ""
+    if _DATE_PATTERN.match(s):
+        return ""
+    if _is_bad_venue_name(s):
         return ""
     # 동의어 표준화
-    norm_key = normalize_venue(venue_name)
+    norm_key = normalize_venue(s)
     if norm_key in _VENUE_ALIASES:
         return _VENUE_ALIASES[norm_key]
-    return venue_name
+    return s
+
+
+def sanitize_address(address: str, venue_name: str) -> str:
+    """address 필드 정제.
+
+    다음 경우 빈 문자열 반환:
+    - 공연장 이름과 동일 (주소 아님)
+    - 가격/URL 포함
+    - 주소 키워드가 없으면서 공연장 이름처럼 보임 (홀/관/돔/경기장 등으로 끝남)
+    """
+    if not address:
+        return ""
+    s = address.strip()
+    if not s:
+        return ""
+    if normalize_venue(s) == normalize_venue(venue_name):
+        return ""
+    if _PRICE_RE.search(s) or _URL_RE.search(s):
+        return ""
+    return s
 
 
 # 제목 정규화 (dedup 키 생성용)

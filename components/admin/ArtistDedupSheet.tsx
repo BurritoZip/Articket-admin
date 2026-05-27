@@ -30,10 +30,9 @@ interface ArtistDedupSheetProps {
 }
 
 const REASON_LABELS: Record<string, { label: string; color: string }> = {
-  exact_normalized: { label: "이름 완전 일치", color: "destructive" },
+  exact_normalized: { label: "이름 완전 일치", color: "danger" },
   alias_match: { label: "별명 교차 매칭", color: "default" },
-  ko_en_pair: { label: "한/영 이름 쌍", color: "secondary" },
-  token_overlap: { label: "토큰 유사도", color: "outline" },
+  token_overlap: { label: "이름 유사도", color: "secondary" },
   name_contains: { label: "이름 포함 관계", color: "warning" },
 };
 

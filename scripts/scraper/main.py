@@ -65,15 +65,16 @@ def save_events(client, events: list[dict]) -> None:
 
     for i, ev in enumerate(events, 1):
         try:
-            # 1. 공연장 UPSERT — venue_name 이상값(title과 동일·날짜 패턴) 정제 후 저장
+            # 1. 공연장 UPSERT — 가격/티켓등급/날짜 패턴 정제 후 저장
             venue_id = None
-            from utils.normalizer import sanitize_venue
+            from utils.normalizer import sanitize_venue, sanitize_address
             clean_venue = sanitize_venue(ev.get("venue_name", ""), ev["title"])
             if clean_venue:
+                clean_address = sanitize_address(ev.get("venue_address", ""), clean_venue)
                 venue_id = upsert_venue(
                     client,
                     name=clean_venue,
-                    address=ev.get("venue_address", ""),
+                    address=clean_address,
                 )
 
             # 2. 아티스트 UPSERT

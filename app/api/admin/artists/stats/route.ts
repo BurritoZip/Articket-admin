@@ -57,11 +57,13 @@ export async function GET() {
     .filter((c) => c > 1)
     .reduce((sum, c) => sum + c, 0);
 
-  // 보강 대기 중인 아티스트 수
+  // 보강 대기 중인 아티스트 수 (미처리=NULL + pending + failed 모두 포함)
   const enrichmentPending = await supabase
     .from("artists")
     .select("id", { count: "exact", head: true })
-    .in("enrichment_status", ["pending", "failed"]);
+    .or(
+      "enrichment_status.is.null,enrichment_status.eq.pending,enrichment_status.eq.failed",
+    );
 
   // name_en 누락 수
   const nameEnMissing = await supabase

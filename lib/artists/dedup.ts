@@ -3,9 +3,12 @@
  *
  * 4가지 stage로 중복 그룹을 탐지한다:
  *   A. normalized_name 완전 일치
- *   B. artist_aliases ↔ name/name_en 교차 매칭
- *   C. 같은 이벤트에 등장하는 한/영 이름 쌍
- *   D. 토큰 자카드 유사도 ≥ 0.85 (동일 언어 그룹)
+ *   B. artist_aliases / name_en ↔ 다른 아티스트 name 교차 매칭 (전역)
+ *   C. 토큰 자카드 유사도 ≥ minSim (동일 언어 그룹, 전역)
+ *   D. 한 이름이 다른 이름을 부분 포함 (예: "CHOI YU REE 최유리" ↔ "최유리")
+ *
+ * ※ 이전 "같은 이벤트에 등장하는 한/영 쌍" 방식은 제거됨.
+ *    페스티벌에서 무관한 아티스트가 모두 후보로 올라오는 FP 문제가 있었음.
  *
  * 모든 머지는 관리자가 수동으로 confirm — 자동 머지 없음.
  */
@@ -15,17 +18,15 @@ import {
   normalizeKey,
   isKoreanOnly,
   isLatinOnly,
-  isNonKorean,
   tokenize,
   jaccardSimilarity,
 } from "./normalize";
 
 export type DedupReason =
   | "exact_normalized" // A: normalized_name 동일
-  | "alias_match" // B: alias ↔ name/name_en 교차
-  | "ko_en_pair" // C: 같은 이벤트에 한글명+영문명 함께 등장
-  | "token_overlap" // D: 토큰 자카드 ≥ 0.85
-  | "name_contains"; // E: 한 이름이 다른 이름을 부분 포함 (예: "CHOI YU REE 최유리" ↔ "최유리")
+  | "alias_match" // B: alias / name_en ↔ name 교차
+  | "token_overlap" // C: 토큰 자카드 ≥ minSim
+  | "name_contains"; // D: 이름 포함 관계 (예: "CHOI YU REE 최유리" ↔ "최유리")
 
 export interface DedupMember {
   id: string;
@@ -211,55 +212,13 @@ export async function findDuplicateGroups(opts?: {
     }
   }
 
-  // ── Stage C: 같은 이벤트에 한글명 + 영문명 아티스트 동시 등장 ────
-  const { data: eventArtistPairs } = await db
-    .from("event_artists")
-    .select("event_id,artist_id")
-    .in("artist_id", artistIds);
-
-  if (eventArtistPairs && eventArtistPairs.length > 0) {
-    // event_id → artist_id[] 맵
-    const eventMap = new Map<string, string[]>();
-    for (const { event_id, artist_id } of eventArtistPairs) {
-      const arr = eventMap.get(event_id) ?? [];
-      arr.push(artist_id);
-      eventMap.set(event_id, arr);
-    }
-
-    const artistById = new Map<string, ArtistBasic>(
-      (allArtists as ArtistBasic[]).map((a) => [a.id, a]),
-    );
-
-    const pairsC = new Set<string>();
-    for (const [, ids] of Array.from(eventMap)) {
-      const artists = ids
-        .map((id: string) => artistById.get(id))
-        .filter(Boolean) as ArtistBasic[];
-      const koreans = artists.filter((a) => isKoreanOnly(a.name));
-      // isNonKorean: 영문 전용("IU") 뿐 아니라 숫자+영문("10CM","2NE1")도 포함
-      const latins = artists.filter((a) => isNonKorean(a.name));
-
-      for (const ko of koreans) {
-        for (const en of latins) {
-          // 한/영 쌍 후보 (예: "아이유"↔"IU", "십센치"↔"10CM", "방탄소년단"↔"BTS")
-          const pairKey = [ko.id, en.id].sort().join("|");
-          if (!pairsC.has(pairKey) && !groups.has(pairKey)) {
-            pairsC.add(pairKey);
-            groups.set(
-              pairKey,
-              buildCandidate([memberOf(ko), memberOf(en)], "ko_en_pair", 0.7),
-            );
-          }
-        }
-      }
-    }
-  }
-
-  // ── Stage D: 동일 언어 그룹 내 토큰 자카드 유사도 ≥ minSim ───────
-  const artistsForD = allArtists as ArtistBasic[];
+  // ── Stage C: 토큰 자카드 유사도 ≥ minSim (전역, 동일 언어 그룹) ───────
+  // 이전 "같은 이벤트 등장" 방식은 페스티벌 FP가 너무 많아 제거됨.
+  // 대신 전체 아티스트 풀에서 언어별로 이름 유사도를 비교한다.
+  const artistsForC = allArtists as ArtistBasic[];
   // 성능 상 한글끼리, 영문끼리만 비교
-  const koArtists = artistsForD.filter((a) => isKoreanOnly(a.name));
-  const enArtists = artistsForD.filter((a) => isLatinOnly(a.name));
+  const koArtists = artistsForC.filter((a) => isKoreanOnly(a.name));
+  const enArtists = artistsForC.filter((a) => isLatinOnly(a.name));
 
   const checkGroup = (group: ArtistBasic[]) => {
     for (let i = 0; i < group.length - 1; i++) {
@@ -301,7 +260,7 @@ export async function findDuplicateGroups(opts?: {
   for (const [, group] of Array.from(groupByLength(enArtists)))
     checkGroup(group);
 
-  // ── Stage E: 부분 문자열 포함 탐지 ─────────────────────────────────
+  // ── Stage D: 부분 문자열 포함 탐지 ─────────────────────────────────
   // "CHOI YU REE 최유리" ↔ "최유리" 같은 케이스: 짧은 이름이 긴 이름 안에 포함
   // 최소 길이 2자 이상, 포함 비율 ≥ 0.4 (짧은 이름 / 긴 이름)
   const allForE = allArtists as ArtistBasic[];
@@ -338,7 +297,13 @@ export async function findDuplicateGroups(opts?: {
 
   // ── 결과 조합 및 limit 적용 ──────────────────────────────────────
   const result = Array.from(groups.values())
-    .filter((g) => g.similarity >= minSim || g.reason !== "token_overlap")
+    .filter(
+      (g) =>
+        g.similarity >= minSim ||
+        g.reason === "exact_normalized" ||
+        g.reason === "alias_match" ||
+        g.reason === "name_contains",
+    )
     .sort((a, b) => {
       // 신뢰도 높은 순, 그 다음 members의 linked_event_count 합산 순
       if (b.similarity !== a.similarity) return b.similarity - a.similarity;
