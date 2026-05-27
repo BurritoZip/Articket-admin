@@ -246,7 +246,7 @@ export async function processArtistEnrichmentQueue(maxItems = 20): Promise<{
 
       await db
         .from("ai_processing_queue")
-        .update({ status: "completed" })
+        .update({ status: "done", processed_at: new Date().toISOString() })
         .eq("id", task.id);
       succeeded++;
     } catch (e) {
@@ -254,7 +254,8 @@ export async function processArtistEnrichmentQueue(maxItems = 20): Promise<{
         .from("ai_processing_queue")
         .update({
           status: "failed",
-          error_message: e instanceof Error ? e.message : String(e),
+          error: e instanceof Error ? e.message : String(e),
+          processed_at: new Date().toISOString(),
         })
         .eq("id", task.id);
       failed++;
