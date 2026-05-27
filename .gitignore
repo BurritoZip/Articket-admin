@@ -45,3 +45,14 @@ pnpm-debug.log*
 .idea/
 *.swp
 *.swo
+
+# Python scraper
+scripts/scraper/.venv/
+scripts/scraper/__pycache__/
+scripts/scraper/scrapers/__pycache__/
+scripts/scraper/utils/__pycache__/
+*.pyc
+*.pyo
+
+# Supabase CLI temp
+supabase/.temp/
