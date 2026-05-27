@@ -1,5 +1,9 @@
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import { enrichArtist, processArtistEnrichmentQueue, type EnrichSource } from "@/lib/artists/enrich";
+import {
+  enrichArtist,
+  processArtistEnrichmentQueue,
+  type EnrichSource,
+} from "@/lib/artists/enrich";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { withErrorHandler } from "@/lib/api-handler";
 import { NextResponse } from "next/server";
@@ -57,10 +61,7 @@ export const POST = withErrorHandler(async (request) => {
     const limit = Math.min(filter?.limit ?? 20, 100);
 
     const db = createServiceRoleClient();
-    let query = db
-      .from("artists")
-      .select("id,name")
-      .limit(limit);
+    let query = db.from("artists").select("id,name").limit(limit);
 
     // missing 필드 필터
     if (filter?.missing && filter.missing.length > 0) {
@@ -84,15 +85,30 @@ export const POST = withErrorHandler(async (request) => {
     for (const artist of artists) {
       try {
         const delta = await enrichArtist(artist.id, { sources, force });
-        results.push({ artistId: artist.id, name: artist.name, ok: true, delta });
+        results.push({
+          artistId: artist.id,
+          name: artist.name,
+          ok: true,
+          delta,
+        });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        results.push({ artistId: artist.id, name: artist.name, ok: false, error: msg });
+        results.push({
+          artistId: artist.id,
+          name: artist.name,
+          ok: false,
+          error: msg,
+        });
       }
     }
 
     const succeeded = results.filter((r) => r.ok).length;
-    return NextResponse.json({ ok: true, processed: artists.length, succeeded, results });
+    return NextResponse.json({
+      ok: true,
+      processed: artists.length,
+      succeeded,
+      results,
+    });
   }
 
   // ── 큐 적재 (비동기, ai_processing_queue에 등록) ──────────────
@@ -104,7 +120,9 @@ export const POST = withErrorHandler(async (request) => {
     let query = db
       .from("artists")
       .select("id,name")
-      .in("enrichment_status", ["pending", "failed"])
+      .or(
+        "enrichment_status.is.null,enrichment_status.eq.pending,enrichment_status.eq.failed",
+      )
       .limit(limit);
 
     if (filter?.missing && filter.missing.length > 0) {
@@ -152,7 +170,10 @@ export const GET = withErrorHandler(async (request) => {
   if (!guard.ok) return guard.response;
 
   const url = new URL(request.url);
-  const maxItems = Math.min(parseInt(url.searchParams.get("limit") ?? "20"), 50);
+  const maxItems = Math.min(
+    parseInt(url.searchParams.get("limit") ?? "20"),
+    50,
+  );
 
   const result = await processArtistEnrichmentQueue(maxItems);
   return NextResponse.json({ ok: true, ...result });

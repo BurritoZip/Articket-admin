@@ -15,6 +15,7 @@ import {
   normalizeKey,
   isKoreanOnly,
   isLatinOnly,
+  isNonKorean,
   tokenize,
   jaccardSimilarity,
 } from "./normalize";
@@ -23,7 +24,8 @@ export type DedupReason =
   | "exact_normalized" // A: normalized_name 동일
   | "alias_match" // B: alias ↔ name/name_en 교차
   | "ko_en_pair" // C: 같은 이벤트에 한글명+영문명 함께 등장
-  | "token_overlap"; // D: 토큰 자카드 ≥ 0.85
+  | "token_overlap" // D: 토큰 자카드 ≥ 0.85
+  | "name_contains"; // E: 한 이름이 다른 이름을 부분 포함 (예: "CHOI YU REE 최유리" ↔ "최유리")
 
 export interface DedupMember {
   id: string;
@@ -234,11 +236,12 @@ export async function findDuplicateGroups(opts?: {
         .map((id: string) => artistById.get(id))
         .filter(Boolean) as ArtistBasic[];
       const koreans = artists.filter((a) => isKoreanOnly(a.name));
-      const latins = artists.filter((a) => isLatinOnly(a.name));
+      // isNonKorean: 영문 전용("IU") 뿐 아니라 숫자+영문("10CM","2NE1")도 포함
+      const latins = artists.filter((a) => isNonKorean(a.name));
 
       for (const ko of koreans) {
         for (const en of latins) {
-          // 토큰 수가 비슷하면 한/영 쌍 후보 (예: "아이유"↔"IU", "방탄소년단"↔"BTS")
+          // 한/영 쌍 후보 (예: "아이유"↔"IU", "십센치"↔"10CM", "방탄소년단"↔"BTS")
           const pairKey = [ko.id, en.id].sort().join("|");
           if (!pairsC.has(pairKey) && !groups.has(pairKey)) {
             pairsC.add(pairKey);
@@ -297,6 +300,41 @@ export async function findDuplicateGroups(opts?: {
     checkGroup(group);
   for (const [, group] of Array.from(groupByLength(enArtists)))
     checkGroup(group);
+
+  // ── Stage E: 부분 문자열 포함 탐지 ─────────────────────────────────
+  // "CHOI YU REE 최유리" ↔ "최유리" 같은 케이스: 짧은 이름이 긴 이름 안에 포함
+  // 최소 길이 2자 이상, 포함 비율 ≥ 0.4 (짧은 이름 / 긴 이름)
+  const allForE = allArtists as ArtistBasic[];
+  for (let i = 0; i < allForE.length - 1; i++) {
+    for (let j = i + 1; j < allForE.length; j++) {
+      const a = allForE[i];
+      const b = allForE[j];
+      const pairKey = [a.id, b.id].sort().join("|");
+      if (groups.has(pairKey)) continue;
+
+      const keyA = normalizeKey(a.name);
+      const keyB = normalizeKey(b.name);
+      if (keyA.length < 2 || keyB.length < 2) continue;
+
+      const [shorter, longer] =
+        keyA.length <= keyB.length ? [keyA, keyB] : [keyB, keyA];
+
+      // 짧은 키가 긴 키 안에 포함되고, 길이 비율이 0.4 이상
+      if (longer.includes(shorter) && shorter.length / longer.length >= 0.4) {
+        const sim = shorter.length / longer.length;
+        const [shortArtist, longArtist] =
+          keyA.length <= keyB.length ? [a, b] : [b, a];
+        groups.set(
+          pairKey,
+          buildCandidate(
+            [memberOf(longArtist), memberOf(shortArtist)],
+            "name_contains",
+            sim,
+          ),
+        );
+      }
+    }
+  }
 
   // ── 결과 조합 및 limit 적용 ──────────────────────────────────────
   const result = Array.from(groups.values())

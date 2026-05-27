@@ -49,9 +49,21 @@ export function isKoreanOnly(s: string): boolean {
   return isKorean(s) && !isLatin(s);
 }
 
-/** 문자열이 라틴 전용인지 (한글 없음) */
+/**
+ * 문자열이 라틴 전용인지 (한글 없음)
+ * 숫자+영문 혼합("10CM", "2NE1")도 라틴으로 간주
+ */
 export function isLatinOnly(s: string): boolean {
   return isLatin(s) && !isKorean(s);
+}
+
+/**
+ * 문자열이 비한글(영문·숫자 전용)인지
+ * isLatinOnly와 달리 순수 숫자("2PM"처럼 숫자 포함)도 포함.
+ * Stage C에서 한글명 ↔ 비한글명 쌍 탐지에 사용.
+ */
+export function isNonKorean(s: string): boolean {
+  return !isKorean(s);
 }
 
 /**

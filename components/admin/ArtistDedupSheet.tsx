@@ -34,6 +34,7 @@ const REASON_LABELS: Record<string, { label: string; color: string }> = {
   alias_match: { label: "별명 교차 매칭", color: "default" },
   ko_en_pair: { label: "한/영 이름 쌍", color: "secondary" },
   token_overlap: { label: "토큰 유사도", color: "outline" },
+  name_contains: { label: "이름 포함 관계", color: "warning" },
 };
 
 function MemberCard({
