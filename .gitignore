@@ -46,6 +46,9 @@ pnpm-debug.log*
 *.swp
 *.swo
 
+# Local cron secrets
+scripts/cron/.cron.env
+
 # Python scraper
 scripts/scraper/.venv/
 scripts/scraper/__pycache__/
