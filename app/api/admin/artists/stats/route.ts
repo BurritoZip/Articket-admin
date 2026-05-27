@@ -57,6 +57,18 @@ export async function GET() {
     .filter((c) => c > 1)
     .reduce((sum, c) => sum + c, 0);
 
+  // 보강 대기 중인 아티스트 수
+  const enrichmentPending = await supabase
+    .from("artists")
+    .select("id", { count: "exact", head: true })
+    .in("enrichment_status", ["pending", "failed"]);
+
+  // name_en 누락 수
+  const nameEnMissing = await supabase
+    .from("artists")
+    .select("id", { count: "exact", head: true })
+    .or("name_en.is.null,name_en.eq.");
+
   return NextResponse.json({
     missingCounts: {
       avatar_url: avatar.count ?? 0,
@@ -66,7 +78,9 @@ export async function GET() {
       birth_date: birthDate.count ?? 0,
       birth_place: birthPlace.count ?? 0,
       related: related.count ?? 0,
+      name_en: nameEnMissing.count ?? 0,
     },
     duplicateCount,
+    enrichmentPending: enrichmentPending.count ?? 0,
   });
 }

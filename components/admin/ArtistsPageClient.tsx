@@ -65,6 +65,7 @@ import {
 } from "@/components/admin/CompletenessFilterBar";
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { ARTIST_FIELDS } from "@/lib/completeness";
+import { ArtistDedupSheet } from "@/components/admin/ArtistDedupSheet";
 
 type ArtistDetailResponse = {
   artist: ArtistRow;
@@ -119,6 +120,8 @@ export function ArtistsPageClient() {
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
     React.useState(false);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
+  const [dedupOpen, setDedupOpen] = React.useState(false);
+  const [enriching, setEnriching] = React.useState(false);
 
   React.useEffect(() => {
     setPage(1);
@@ -384,7 +387,61 @@ export function ArtistsPageClient() {
         title="아티스트 관리"
         description="아티스트 기본 정보와 앨범/뮤직비디오를 함께 관리합니다."
         action={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={enriching}
+              onClick={async () => {
+                setEnriching(true);
+                try {
+                  const res = await fetch("/api/admin/artists/enrich", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      mode: "queue",
+                      filter: {
+                        missing: [
+                          "avatar_url",
+                          "occupation",
+                          "label",
+                          "name_en",
+                        ],
+                      },
+                    }),
+                  });
+                  const json = (await res.json()) as { queued?: number };
+                  toast.success(`보강 큐 등록 완료`, {
+                    description: `${json.queued ?? 0}명의 아티스트가 보강 대기열에 추가됐습니다.`,
+                  });
+                } catch {
+                  toast.error("보강 큐 등록 실패");
+                } finally {
+                  setEnriching(false);
+                }
+              }}
+            >
+              {enriching ? "등록 중..." : "✨ 일괄 보강"}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setDedupOpen(true)}
+            >
+              🔀 중복 검토
+              {(
+                stats as
+                  | (CompletenessStats & { duplicateCount?: number })
+                  | null
+              )?.duplicateCount ? (
+                <Badge variant="danger" className="ml-1.5 h-4 px-1 text-[10px]">
+                  {
+                    (stats as CompletenessStats & { duplicateCount: number })
+                      .duplicateCount
+                  }
+                </Badge>
+              ) : null}
+            </Button>
             <Button
               variant="secondary"
               onClick={() => {
@@ -817,6 +874,48 @@ export function ArtistsPageClient() {
                   닫기
                 </Button>
                 <Button
+                  variant="secondary"
+                  disabled={enriching}
+                  onClick={async () => {
+                    if (!detailArtist) return;
+                    setEnriching(true);
+                    try {
+                      const res = await fetch("/api/admin/artists/enrich", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          mode: "single",
+                          artistId: detailArtist.id,
+                        }),
+                      });
+                      const json = (await res.json()) as {
+                        delta?: { addedFields: string[]; skipped: boolean };
+                      };
+                      if (json.delta?.skipped) {
+                        toast.info("보강할 데이터가 없습니다", {
+                          description: "모든 필드가 이미 채워져 있습니다.",
+                        });
+                      } else if ((json.delta?.addedFields?.length ?? 0) > 0) {
+                        toast.success("보강 완료", {
+                          description: `${json.delta!.addedFields.join(", ")} 필드가 채워졌습니다.`,
+                        });
+                        void refetch();
+                      } else {
+                        toast.warning("보강 결과 없음", {
+                          description:
+                            "외부 소스에서 데이터를 찾지 못했습니다.",
+                        });
+                      }
+                    } catch {
+                      toast.error("보강 실패");
+                    } finally {
+                      setEnriching(false);
+                    }
+                  }}
+                >
+                  {enriching ? "보강 중..." : "✨ 외부 소스 보강"}
+                </Button>
+                <Button
                   onClick={() => {
                     setDetailOpen(false);
                     setEditingArtist(detailArtist);
@@ -913,6 +1012,9 @@ export function ArtistsPageClient() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* 중복 검토 Sheet */}
+      <ArtistDedupSheet open={dedupOpen} onClose={() => setDedupOpen(false)} />
     </div>
   );
 }
