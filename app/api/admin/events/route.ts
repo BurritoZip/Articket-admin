@@ -21,6 +21,7 @@ export async function GET(request: Request) {
   const status = url.searchParams.get("status")?.trim();
   const missingField = url.searchParams.get("missing")?.trim();
   const duplicatesOnly = url.searchParams.get("duplicates") === "true";
+  const noArtistLink = url.searchParams.get("no_artist_link") === "true";
   const { page, pageSize } = parseAdminPagination(url.searchParams);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -66,6 +67,19 @@ export async function GET(request: Request) {
       eventsQuery = eventsQuery.or(
         `${missingField}.is.null,${missingField}.eq.`,
       );
+    }
+  }
+
+  // event_artists 미연결 이벤트 필터
+  if (noArtistLink) {
+    const { data: linkedRows } = await supabase
+      .from("event_artists")
+      .select("event_id");
+    const linkedIds = Array.from(
+      new Set((linkedRows ?? []).map((r) => r.event_id)),
+    );
+    if (linkedIds.length > 0) {
+      eventsQuery = eventsQuery.not("id", "in", `(${linkedIds.join(",")})`);
     }
   }
 

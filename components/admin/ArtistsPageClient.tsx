@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Music, Pencil, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { Avatar, AvatarFallback } from "@/components/ui/Avatar";
@@ -35,7 +35,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/Table";
-import type { AlbumRow, ArtistRow, MusicVideoRow } from "@/types/artist";
+import type {
+  AlbumRow,
+  ArtistRow,
+  MusicVideoRow,
+  SnsLinks,
+} from "@/types/artist";
+import { Badge } from "@/components/ui/Badge";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -78,14 +84,18 @@ export function ArtistsPageClient() {
   const [fromUrlInput, setFromUrlInput] = React.useState("");
   const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
-  const [form, setForm] = React.useState<Partial<ArtistRow>>({
+  const emptyArtistForm: Partial<ArtistRow> = {
     name: "",
     occupation: "",
     avatar_url: "",
     birth_date: "",
     birth_place: "",
     related: "",
-  });
+    label: "",
+    country: "",
+    sns_links: {},
+  };
+  const [form, setForm] = React.useState<Partial<ArtistRow>>(emptyArtistForm);
 
   const [editingArtist, setEditingArtist] = React.useState<ArtistRow | null>(
     null,
@@ -168,14 +178,7 @@ export function ArtistsPageClient() {
   const totalPages = data?.totalPages ?? 1;
 
   const openCreate = () => {
-    setForm({
-      name: "",
-      occupation: "",
-      avatar_url: "",
-      birth_date: "",
-      birth_place: "",
-      related: "",
-    });
+    setForm({ ...emptyArtistForm });
     setCreateOpen(true);
   };
 
@@ -473,9 +476,12 @@ export function ArtistsPageClient() {
                     </TableHead>
                     <TableHead>아바타</TableHead>
                     <TableHead>이름</TableHead>
+                    <TableHead>소속사</TableHead>
                     <TableHead>직업</TableHead>
                     <TableHead>팔로워</TableHead>
-                    <TableHead>예정 공연</TableHead>
+                    <TableHead title="event_artists 테이블 기준 연결된 공연 수">
+                      연결 공연
+                    </TableHead>
                     <TableHead>완성도</TableHead>
                     <TableHead className="w-[220px]">작업</TableHead>
                   </TableRow>
@@ -507,9 +513,19 @@ export function ArtistsPageClient() {
                         </Avatar>
                       </TableCell>
                       <TableCell className="font-medium">{row.name}</TableCell>
+                      <TableCell>{row.label ?? "-"}</TableCell>
                       <TableCell>{row.occupation ?? "-"}</TableCell>
                       <TableCell>{row.followers_count ?? 0}</TableCell>
-                      <TableCell>{row.upcoming_event_count ?? 0}</TableCell>
+                      <TableCell>
+                        {(row.linked_event_count ?? 0) > 0 ? (
+                          <Badge variant="success">
+                            <Music className="mr-1 h-3 w-3" />
+                            {row.linked_event_count}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline">0</Badge>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <MissingFieldChips
                           row={row as Record<string, unknown>}
@@ -645,12 +661,20 @@ export function ArtistsPageClient() {
                     value={detailArtist.occupation ?? "-"}
                   />
                   <DetailItem
+                    label="소속사"
+                    value={detailArtist.label ?? "-"}
+                  />
+                  <DetailItem
+                    label="국가"
+                    value={detailArtist.country ?? "-"}
+                  />
+                  <DetailItem
                     label="팔로워 수"
                     value={String(detailArtist.followers_count ?? 0)}
                   />
                   <DetailItem
-                    label="예정 공연 수"
-                    value={String(detailArtist.upcoming_event_count ?? 0)}
+                    label="연결 공연 수"
+                    value={String(detailArtist.linked_event_count ?? 0)}
                   />
                   <DetailItem
                     label="생년월일"
@@ -665,6 +689,62 @@ export function ArtistsPageClient() {
                     value={detailArtist.related ?? "-"}
                   />
                 </div>
+                {/* SNS 링크 */}
+                {detailArtist.sns_links &&
+                  Object.values(detailArtist.sns_links).some(Boolean) && (
+                    <div>
+                      <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                        SNS / 스트리밍 링크
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {detailArtist.sns_links.spotify && (
+                          <a
+                            href={detailArtist.sns_links.spotify}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Badge variant="secondary">Spotify</Badge>
+                          </a>
+                        )}
+                        {detailArtist.sns_links.apple_music && (
+                          <a
+                            href={detailArtist.sns_links.apple_music}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Badge variant="secondary">Apple Music</Badge>
+                          </a>
+                        )}
+                        {detailArtist.sns_links.youtube && (
+                          <a
+                            href={detailArtist.sns_links.youtube}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Badge variant="secondary">YouTube</Badge>
+                          </a>
+                        )}
+                        {detailArtist.sns_links.instagram && (
+                          <a
+                            href={detailArtist.sns_links.instagram}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Badge variant="secondary">Instagram</Badge>
+                          </a>
+                        )}
+                        {detailArtist.sns_links.twitter && (
+                          <a
+                            href={detailArtist.sns_links.twitter}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <Badge variant="secondary">X (Twitter)</Badge>
+                          </a>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 {detailArtist.avatar_url && (
                   <div>
                     <p className="mb-2 text-caption font-semibold text-text-tertiary">
@@ -878,6 +958,28 @@ function ArtistForm({
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="space-y-2">
+          <Label htmlFor="artist-label">소속사</Label>
+          <Input
+            id="artist-label"
+            placeholder="예) SM Entertainment"
+            value={form.label ?? ""}
+            onChange={(e) => setForm((s) => ({ ...s, label: e.target.value }))}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="artist-country">국가</Label>
+          <Input
+            id="artist-country"
+            placeholder="예) KR, US, JP"
+            value={form.country ?? ""}
+            onChange={(e) =>
+              setForm((s) => ({ ...s, country: e.target.value }))
+            }
+          />
+        </div>
+      </div>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div className="space-y-2">
           <Label htmlFor="artist-birth-date">생년월일</Label>
           <Input
             id="artist-birth-date"
@@ -899,6 +1001,59 @@ function ArtistForm({
           />
         </div>
       </div>
+
+      {/* SNS / 스트리밍 링크 */}
+      <div className="space-y-3 rounded-lg border border-border p-4">
+        <p className="text-body-sm font-semibold text-text-primary">
+          SNS / 스트리밍 링크
+        </p>
+        {(
+          [
+            {
+              key: "spotify",
+              label: "Spotify",
+              placeholder: "https://open.spotify.com/artist/...",
+            },
+            {
+              key: "apple_music",
+              label: "Apple Music",
+              placeholder: "https://music.apple.com/...",
+            },
+            {
+              key: "youtube",
+              label: "YouTube",
+              placeholder: "https://www.youtube.com/@...",
+            },
+            {
+              key: "instagram",
+              label: "Instagram",
+              placeholder: "https://www.instagram.com/...",
+            },
+            {
+              key: "twitter",
+              label: "X (Twitter)",
+              placeholder: "https://x.com/...",
+            },
+          ] as { key: keyof SnsLinks; label: string; placeholder: string }[]
+        ).map(({ key, label, placeholder }) => (
+          <div key={key} className="flex items-center gap-2">
+            <Label className="w-24 shrink-0 text-caption text-text-secondary">
+              {label}
+            </Label>
+            <Input
+              placeholder={placeholder}
+              value={form.sns_links?.[key] ?? ""}
+              onChange={(e) =>
+                setForm((s) => ({
+                  ...s,
+                  sns_links: { ...(s.sns_links ?? {}), [key]: e.target.value },
+                }))
+              }
+            />
+          </div>
+        ))}
+      </div>
+
       <div className="space-y-2">
         <Label>아바타 이미지</Label>
         <ImageUploader

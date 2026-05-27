@@ -16,7 +16,7 @@ export async function GET(
     supabase
       .from("artists")
       .select(
-        "id, name, avatar_url, followers_count, upcoming_event_count, occupation, birth_date, birth_place, related",
+        "id, name, avatar_url, followers_count, upcoming_event_count, occupation, birth_date, birth_place, related, label, country, sns_links",
       )
       .eq("id", params.id)
       .maybeSingle(),

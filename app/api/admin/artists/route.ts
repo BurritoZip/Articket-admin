@@ -8,6 +8,9 @@ import {
   parseAdminPagination,
 } from "@/lib/admin-pagination";
 
+const ARTIST_SELECT =
+  "id, name, avatar_url, followers_count, upcoming_event_count, occupation, birth_date, birth_place, related, label, country, sns_links";
+
 export async function GET(request: Request) {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
@@ -23,6 +26,8 @@ export async function GET(request: Request) {
   const VALID_MISSING = new Set([
     "avatar_url",
     "occupation",
+    "label",
+    "country",
     "birth_date",
     "birth_place",
     "related",
@@ -32,10 +37,7 @@ export async function GET(request: Request) {
   const supabase = createClient();
   let query = supabase
     .from("artists")
-    .select(
-      "id, name, avatar_url, followers_count, upcoming_event_count, occupation, birth_date, birth_place, related",
-      { count: "exact" },
-    )
+    .select(ARTIST_SELECT, { count: "exact" })
     .order("name", { ascending: true });
 
   if (q) query = query.ilike("name", `%${q}%`);
@@ -84,21 +86,36 @@ export async function GET(request: Request) {
   const total = res.count ?? 0;
   const artistIds = (res.data ?? []).map((a) => (a as { id: string }).id);
 
+  // 팔로워 수 + event_artists 기반 연결 공연 수 병렬 조회
   let followMap: Record<string, number> = {};
+  let linkedEventCountMap: Record<string, number> = {};
+
   if (artistIds.length > 0) {
-    const { data: follows } = await supabase
-      .from("user_artist_followings")
-      .select("artist_id")
-      .in("artist_id", artistIds);
-    for (const row of follows ?? []) {
+    const [followsRes, eventArtistsRes] = await Promise.all([
+      supabase
+        .from("user_artist_followings")
+        .select("artist_id")
+        .in("artist_id", artistIds),
+      supabase
+        .from("event_artists")
+        .select("artist_id")
+        .in("artist_id", artistIds),
+    ]);
+
+    for (const row of followsRes.data ?? []) {
       const id = (row as { artist_id: string }).artist_id;
       followMap[id] = (followMap[id] ?? 0) + 1;
+    }
+    for (const row of eventArtistsRes.data ?? []) {
+      const id = (row as { artist_id: string }).artist_id;
+      linkedEventCountMap[id] = (linkedEventCountMap[id] ?? 0) + 1;
     }
   }
 
   const rows = (res.data ?? []).map((artist) => ({
     ...artist,
     followers_count: followMap[(artist as { id: string }).id] ?? 0,
+    linked_event_count: linkedEventCountMap[(artist as { id: string }).id] ?? 0,
   }));
 
   return NextResponse.json({
@@ -126,6 +143,9 @@ export async function POST(request: Request) {
     birth_date: body.birth_date ?? null,
     birth_place: body.birth_place ?? null,
     related: body.related ?? null,
+    label: body.label ?? null,
+    country: body.country ?? null,
+    sns_links: body.sns_links ?? {},
   });
 
   if (error) {

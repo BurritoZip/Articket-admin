@@ -159,6 +159,7 @@ export function EventsPageClient() {
   const [venueIds, setVenueIds] = React.useState<string[]>([]);
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
+  const [noArtistLinkFilter, setNoArtistLinkFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
 
@@ -172,7 +173,7 @@ export function EventsPageClient() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [statusFilter, missingFilter, duplicatesFilter]);
+  }, [statusFilter, missingFilter, duplicatesFilter, noArtistLinkFilter]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: [
@@ -183,6 +184,7 @@ export function EventsPageClient() {
       pageSize,
       missingFilter,
       duplicatesFilter,
+      noArtistLinkFilter,
     ],
     queryFn: async () => {
       const q = new URLSearchParams();
@@ -192,6 +194,7 @@ export function EventsPageClient() {
       q.set("pageSize", String(pageSize));
       if (missingFilter) q.set("missing", missingFilter);
       if (duplicatesFilter) q.set("duplicates", "true");
+      if (noArtistLinkFilter) q.set("no_artist_link", "true");
 
       const res = await fetch(`/api/admin/events?${q.toString()}`, {
         cache: "no-store",
@@ -662,6 +665,25 @@ export function EventsPageClient() {
             onMissingFilter={setMissingFilter}
             onDuplicatesFilter={setDuplicatesFilter}
           />
+          {/* 아티스트 미연결 빠른 필터 */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setNoArtistLinkFilter((prev) => !prev);
+                setMissingFilter(null);
+                setDuplicatesFilter(false);
+              }}
+              className={[
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-caption font-medium transition-colors",
+                noArtistLinkFilter
+                  ? "border-danger bg-danger-weak text-danger"
+                  : "border-border bg-surface text-text-secondary hover:border-danger/60 hover:text-danger",
+              ].join(" ")}
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              아티스트 미연결
+            </button>
+          </div>
 
           {selectedIds.size > 0 && (
             <div className="flex items-center gap-2 rounded-md border border-brand/40 bg-brand/5 px-3 py-2 text-body-sm">
@@ -754,12 +776,12 @@ export function EventsPageClient() {
                       </TableCell>
                       <TableCell className="font-medium">{row.title}</TableCell>
                       <TableCell>
-                        {(() => {
-                          const ea = eventArtistsMap.get(row.id);
-                          if (ea && ea.length > 0)
-                            return ea.map((a) => a.artist_name).join(", ");
-                          return artistMap.get(row.artist_id) ?? "-";
-                        })()}
+                        <ArtistLinkBadges
+                          eventId={row.id}
+                          artistId={row.artist_id}
+                          eventArtistsMap={eventArtistsMap}
+                          artistMap={artistMap}
+                        />
                       </TableCell>
                       <TableCell>
                         {(() => {
@@ -1453,4 +1475,48 @@ function EventFormFields({
       </div>
     </div>
   );
+}
+
+/** 이벤트 행의 아티스트 연결 상태를 배지로 표시 */
+function ArtistLinkBadges({
+  eventId,
+  artistId,
+  eventArtistsMap,
+  artistMap,
+}: {
+  eventId: string;
+  artistId: string | null;
+  eventArtistsMap: Map<string, { artist_id: string; artist_name: string }[]>;
+  artistMap: Map<string, string>;
+}) {
+  const ea = eventArtistsMap.get(eventId);
+
+  // ✅ event_artists 테이블에 연결됨 — 초록 배지
+  if (ea && ea.length > 0) {
+    const display = ea.slice(0, 2);
+    const extra = ea.length - 2;
+    return (
+      <div className="flex flex-wrap gap-1">
+        {display.map((a) => (
+          <Badge key={a.artist_id} variant="success">
+            {a.artist_name}
+          </Badge>
+        ))}
+        {extra > 0 && <Badge variant="outline">+{extra}명</Badge>}
+      </div>
+    );
+  }
+
+  // ⚠ 레거시 artist_id 필드만 연결 — 노란 배지
+  const legacyName = artistId ? artistMap.get(artistId) : null;
+  if (legacyName) {
+    return (
+      <Badge variant="warning" title="event_artists 미연결 (레거시 artist_id)">
+        {legacyName}
+      </Badge>
+    );
+  }
+
+  // ❌ 미연결 — 빨간 배지
+  return <Badge variant="danger">미연결</Badge>;
 }
