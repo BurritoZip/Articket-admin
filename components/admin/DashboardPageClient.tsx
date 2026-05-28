@@ -9,12 +9,16 @@ import {
   CheckCircle2,
   Clock,
   Database,
+  Loader2,
   MapPin,
+  Minus,
   Music,
+  Play,
   RefreshCw,
   Sparkles,
   Ticket,
   Users,
+  XCircle,
   Zap,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +27,8 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatKst } from "@/lib/format-kst";
+
+// ── 타입 ─────────────────────────────────────────────────────────────
 
 interface DashboardStats {
   events: {
@@ -43,12 +49,7 @@ interface DashboardStats {
     d_day: number;
   }>;
   unlinked_events: number;
-  enrichment: {
-    enriched: number;
-    pending: number;
-    skipped: number;
-    failed: number;
-  };
+  enrichment: { enriched: number; pending: number; skipped: number; failed: number };
   queue: { pending: number; processing: number; done: number; failed: number };
   recent_jobs: Array<{
     id: string;
@@ -61,46 +62,59 @@ interface DashboardStats {
   quality_fixes_7d: { nulled: number; queued: number; deleted: number };
 }
 
-// 파이프라인 단계 정의
-const PIPELINE_STEPS = [
-  {
-    key: "crawl",
-    label: "크롤링",
-    icon: Database,
-    desc: "yes24/melon/interpark 등",
-  },
-  {
-    key: "sweep",
-    label: "상태 업데이트",
-    icon: RefreshCw,
-    desc: "종료/진행중 자동 전환",
-  },
-  { key: "fix", label: "품질 수정", icon: Zap, desc: "이상 필드 null 처리" },
-  {
-    key: "delete",
-    label: "불량 삭제",
-    icon: AlertTriangle,
-    desc: "Gemini 판단 삭제",
-  },
-  {
-    key: "enrich",
-    label: "보강",
-    icon: Sparkles,
-    desc: "아티스트 정보 채우기",
-  },
-  {
-    key: "merge",
-    label: "중복 병합",
-    icon: CheckCircle2,
-    desc: "완전일치 자동 병합",
-  },
+type StepStatus = "idle" | "running" | "done" | "failed";
+
+interface PipelineStep {
+  step_name: string;
+  status: StepStatus;
+  started_at: string | null;
+  finished_at: string | null;
+  result: Record<string, unknown> | null;
+  error: string | null;
+}
+
+// ── 파이프라인 단계 메타 ───────────────────────────────────────────────
+
+const STEPS = [
+  { key: "crawl",  label: "크롤링",      icon: Database,      desc: "yes24/melon/interpark" },
+  { key: "sweep",  label: "상태 업데이트", icon: RefreshCw,     desc: "종료/진행 자동 전환" },
+  { key: "fix",    label: "품질 수정",    icon: Zap,           desc: "이상 필드 null 처리" },
+  { key: "delete", label: "불량 삭제",    icon: AlertTriangle, desc: "Gemini 판단 삭제" },
+  { key: "enrich", label: "보강",         icon: Sparkles,      desc: "아티스트 정보 채우기" },
+  { key: "merge",  label: "중복 병합",    icon: CheckCircle2,  desc: "완전일치 자동 병합" },
 ] as const;
+
+// ── 헬퍼 ──────────────────────────────────────────────────────────────
+
+function stepResultSummary(s: PipelineStep): string {
+  if (!s.result) return "";
+  const r = s.result;
+  if (s.step_name === "sweep") return `${r.updated ?? 0}건`;
+  if (s.step_name === "fix") return `수정 ${r.fixed ?? 0} / 큐 ${r.queued ?? 0}`;
+  if (s.step_name === "delete") return `${r.deleted ?? 0}건`;
+  if (s.step_name === "enrich")
+    return `완료 ${r.succeeded ?? 0} / 실패 ${r.failed ?? 0}`;
+  if (s.step_name === "merge")
+    return `아티스트 ${r.artists ?? 0} / 공연장 ${r.venues ?? 0}`;
+  return "";
+}
+
+function elapsed(s: PipelineStep): string {
+  if (!s.started_at || !s.finished_at) return "";
+  const ms =
+    new Date(s.finished_at).getTime() - new Date(s.started_at).getTime();
+  return ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60_000)}m`;
+}
+
+// ── 메인 컴포넌트 ────────────────────────────────────────────────────
 
 export function DashboardPageClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
   const [fixingEnded, setFixingEnded] = React.useState(false);
+  const [runningPipeline, setRunningPipeline] = React.useState(false);
 
+  // stats
   const { data, isLoading } = useQuery<DashboardStats>({
     queryKey: ["admin-dashboard-stats"],
     queryFn: async () => {
@@ -111,24 +125,72 @@ export function DashboardPageClient() {
     staleTime: 30_000,
   });
 
+  // 파이프라인 상태 폴링
+  const { data: pipelineData, refetch: refetchPipeline } = useQuery<{
+    steps: PipelineStep[];
+  }>({
+    queryKey: ["pipeline-status"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/pipeline/status");
+      if (!res.ok) throw new Error("pipeline status fetch failed");
+      return res.json() as Promise<{ steps: PipelineStep[] }>;
+    },
+    refetchInterval: runningPipeline ? 1500 : false,
+    staleTime: 0,
+  });
+
+  const steps = pipelineData?.steps ?? [];
+  const isAnyRunning = steps.some((s) => s.status === "running");
+
+  // 실행 중 감지 → runningPipeline 동기화
+  React.useEffect(() => {
+    if (isAnyRunning && !runningPipeline) setRunningPipeline(true);
+    if (!isAnyRunning && runningPipeline) {
+      setRunningPipeline(false);
+      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+    }
+  }, [isAnyRunning, runningPipeline, queryClient]);
+
+  const handleRunPipeline = async () => {
+    setRunningPipeline(true);
+    void refetchPipeline();
+    try {
+      const res = await fetch("/api/admin/pipeline/run", { method: "POST" });
+      if (!res.ok) throw new Error("파이프라인 실행 실패");
+      toast.success("파이프라인 완료");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "실패");
+    } finally {
+      setRunningPipeline(false);
+      void refetchPipeline();
+      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+    }
+  };
+
   const handleFixEnded = async () => {
     setFixingEnded(true);
     try {
-      const res = await fetch("/api/admin/events/sweep-statuses", {
-        method: "POST",
-      });
-      const json = (await res.json()) as { ok?: boolean; updated?: number };
-      if (!res.ok) throw new Error("처리 실패");
+      const res = await fetch("/api/admin/events/sweep-statuses", { method: "POST" });
+      const json = (await res.json()) as { updated?: number };
       toast.success(`${json.updated ?? 0}건 상태 업데이트`);
-      void queryClient.invalidateQueries({
-        queryKey: ["admin-dashboard-stats"],
-      });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "실패");
+      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+    } catch {
+      toast.error("실패");
     } finally {
       setFixingEnded(false);
     }
   };
+
+  const enrichTotal =
+    data
+      ? data.enrichment.enriched +
+        data.enrichment.pending +
+        data.enrichment.skipped +
+        data.enrichment.failed
+      : 1;
+  const enrichPct = data
+    ? Math.round((data.enrichment.enriched / enrichTotal) * 100)
+    : 0;
 
   const kpiCards = [
     {
@@ -169,22 +231,6 @@ export function DashboardPageClient() {
       data.unlinked_events > 0 ||
       data.ticket_opens_soon.length > 0);
 
-  const enrichTotal = data
-    ? data.enrichment.enriched +
-      data.enrichment.pending +
-      data.enrichment.skipped +
-      data.enrichment.failed
-    : 1;
-  const enrichPct = data
-    ? Math.round((data.enrichment.enriched / enrichTotal) * 100)
-    : 0;
-  const queueTotal = data
-    ? data.queue.pending +
-      data.queue.processing +
-      data.queue.done +
-      data.queue.failed
-    : 0;
-
   return (
     <div className="space-y-6">
       {/* KPI 카드 */}
@@ -208,9 +254,7 @@ export function DashboardPageClient() {
                 <>
                   <p className="text-3xl font-bold">{card.total ?? 0}</p>
                   {card.sub && (
-                    <p className="mt-1 text-body-sm text-text-tertiary">
-                      {card.sub}
-                    </p>
+                    <p className="mt-1 text-body-sm text-text-tertiary">{card.sub}</p>
                   )}
                 </>
               )}
@@ -219,56 +263,142 @@ export function DashboardPageClient() {
         ))}
       </div>
 
-      {/* 파이프라인 워크플로우 */}
+      {/* 파이프라인 실시간 시각화 */}
       <Card>
-        <CardHeader className="pb-3">
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base">데이터 파이프라인</CardTitle>
+          <Button
+            size="sm"
+            onClick={() => void handleRunPipeline()}
+            disabled={runningPipeline}
+          >
+            {runningPipeline ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Play className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            {runningPipeline ? "실행 중..." : "지금 실행"}
+          </Button>
         </CardHeader>
         <CardContent>
           <div className="flex items-start gap-0 overflow-x-auto pb-2">
-            {PIPELINE_STEPS.map((step, i) => (
-              <React.Fragment key={step.key}>
-                <div className="flex min-w-[100px] flex-col items-center gap-1.5 px-2">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-secondary">
-                    <step.icon className="h-4 w-4 text-text-secondary" />
+            {STEPS.map((meta, i) => {
+              const step = steps.find((s) => s.step_name === meta.key);
+              const status: StepStatus = step?.status ?? "idle";
+              return (
+                <React.Fragment key={meta.key}>
+                  <div className="flex min-w-[108px] flex-col items-center gap-1.5 px-1">
+                    {/* 아이콘 + 상태 링 */}
+                    <div
+                      className={`relative flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${
+                        status === "running"
+                          ? "border-brand bg-brand/10 animate-pulse"
+                          : status === "done"
+                            ? "border-green-500 bg-green-50"
+                            : status === "failed"
+                              ? "border-red-500 bg-red-50"
+                              : "border-border bg-surface-secondary"
+                      }`}
+                    >
+                      {status === "running" ? (
+                        <Loader2 className="h-4 w-4 animate-spin text-brand" />
+                      ) : status === "done" ? (
+                        <meta.icon className="h-4 w-4 text-green-600" />
+                      ) : status === "failed" ? (
+                        <XCircle className="h-4 w-4 text-red-500" />
+                      ) : (
+                        <meta.icon className="h-4 w-4 text-text-tertiary" />
+                      )}
+                    </div>
+
+                    {/* 레이블 */}
+                    <span className="text-center text-body-xs font-medium leading-tight">
+                      {meta.label}
+                    </span>
+
+                    {/* 상태 배지 */}
+                    <span
+                      className={`text-body-xs font-semibold ${
+                        status === "running"
+                          ? "text-brand"
+                          : status === "done"
+                            ? "text-green-600"
+                            : status === "failed"
+                              ? "text-red-500"
+                              : "text-text-tertiary"
+                      }`}
+                    >
+                      {status === "idle" ? (
+                        <Minus className="inline h-3 w-3" />
+                      ) : status === "running" ? (
+                        "실행 중"
+                      ) : status === "done" ? (
+                        "완료"
+                      ) : (
+                        "실패"
+                      )}
+                    </span>
+
+                    {/* 결과 요약 */}
+                    {step && status === "done" && (
+                      <span className="text-center text-body-xs text-text-tertiary leading-tight">
+                        {stepResultSummary(step)}
+                      </span>
+                    )}
+
+                    {/* 소요 시간 */}
+                    {step && status === "done" && elapsed(step) && (
+                      <span className="text-body-xs text-text-tertiary">
+                        {elapsed(step)}
+                      </span>
+                    )}
+
+                    {/* 에러 */}
+                    {step?.error && (
+                      <span
+                        className="max-w-[100px] truncate text-center text-body-xs text-red-400"
+                        title={step.error}
+                      >
+                        {step.error.slice(0, 30)}
+                      </span>
+                    )}
                   </div>
-                  <span className="text-center text-body-xs font-medium">
-                    {step.label}
-                  </span>
-                  <span className="text-center text-body-xs text-text-tertiary leading-tight">
-                    {step.desc}
-                  </span>
-                  {step.key === "enrich" && data && (
-                    <span className="text-body-xs font-semibold text-brand">
-                      {enrichPct}%
-                    </span>
+
+                  {/* 연결선 */}
+                  {i < STEPS.length - 1 && (
+                    <div
+                      className={`mt-5 h-0.5 flex-1 min-w-[12px] transition-colors ${
+                        steps.find((s) => s.step_name === STEPS[i + 1].key)
+                          ?.status === "done" ||
+                        steps.find((s) => s.step_name === STEPS[i + 1].key)
+                          ?.status === "running"
+                          ? "bg-brand/40"
+                          : "bg-border"
+                      }`}
+                    />
                   )}
-                  {step.key === "fix" && data && (
-                    <span className="text-body-xs font-semibold text-green-600">
-                      7일{" "}
-                      {data.quality_fixes_7d.nulled +
-                        data.quality_fixes_7d.deleted}
-                      건
-                    </span>
-                  )}
-                  {step.key === "delete" && data && (
-                    <span className="text-body-xs font-semibold text-red-500">
-                      7일 {data.quality_fixes_7d.deleted}건
-                    </span>
-                  )}
-                </div>
-                {i < PIPELINE_STEPS.length - 1 && (
-                  <div className="mt-4 h-px flex-1 min-w-[16px] bg-border" />
+                </React.Fragment>
+              );
+            })}
+          </div>
+
+          {/* 마지막 실행 시각 */}
+          {steps.length > 0 &&
+            steps.some((s) => s.finished_at) &&
+            !isAnyRunning && (
+              <p className="mt-3 border-t border-border pt-3 text-body-xs text-text-tertiary">
+                마지막 실행:{" "}
+                {formatKst(
+                  steps
+                    .filter((s) => s.finished_at)
+                    .sort(
+                      (a, b) =>
+                        new Date(b.finished_at!).getTime() -
+                        new Date(a.finished_at!).getTime(),
+                    )[0]?.finished_at ?? "",
                 )}
-              </React.Fragment>
-            ))}
-          </div>
-          <div className="mt-3 border-t border-border pt-3">
-            <p className="text-body-xs text-text-tertiary">
-              스케줄: Python 크론 오전6시·오후6시 자동 실행 → 크롤링 후 전 단계
-              순차 처리
-            </p>
-          </div>
+              </p>
+            )}
         </CardContent>
       </Card>
 
@@ -286,39 +416,22 @@ export function DashboardPageClient() {
               <Skeleton className="h-20 w-full" />
             ) : data ? (
               <>
-                <div className="flex items-center justify-between text-body-sm">
-                  <span className="text-text-secondary">대기 중</span>
-                  <span
-                    className={`font-semibold ${data.queue.pending > 0 ? "text-yellow-500" : "text-text-primary"}`}
-                  >
-                    {data.queue.pending}건
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-body-sm">
-                  <span className="text-text-secondary">처리 중</span>
-                  <span className="font-semibold">
-                    {data.queue.processing}건
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-body-sm">
-                  <span className="text-text-secondary">완료</span>
-                  <span className="font-semibold text-green-600">
-                    {data.queue.done}건
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-body-sm">
-                  <span className="text-text-secondary">실패</span>
-                  <span
-                    className={`font-semibold ${data.queue.failed > 0 ? "text-red-500" : "text-text-primary"}`}
-                  >
-                    {data.queue.failed}건
-                  </span>
-                </div>
+                {[
+                  { label: "대기 중", val: data.queue.pending, color: data.queue.pending > 0 ? "text-yellow-500" : "" },
+                  { label: "처리 중", val: data.queue.processing, color: "" },
+                  { label: "완료", val: data.queue.done, color: "text-green-600" },
+                  { label: "실패", val: data.queue.failed, color: data.queue.failed > 0 ? "text-red-500" : "" },
+                ].map(({ label, val, color }) => (
+                  <div key={label} className="flex items-center justify-between text-body-sm">
+                    <span className="text-text-secondary">{label}</span>
+                    <span className={`font-semibold ${color}`}>{val}건</span>
+                  </div>
+                ))}
                 {data.queue.pending > 0 && (
                   <Button
                     size="sm"
                     className="mt-2 w-full"
-                    onClick={() => router.push("/admin/ingestion?tab=quality")}
+                    onClick={() => router.push("/admin/ingestion")}
                   >
                     큐 전체 처리하기
                   </Button>
@@ -340,7 +453,6 @@ export function DashboardPageClient() {
               <Skeleton className="h-20 w-full" />
             ) : data ? (
               <>
-                {/* 보강율 바 */}
                 <div className="space-y-1">
                   <div className="flex justify-between text-body-xs text-text-secondary">
                     <span>보강 완료</span>
@@ -354,34 +466,17 @@ export function DashboardPageClient() {
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div className="rounded-md bg-surface-secondary p-2 text-center">
-                    <p className="text-body-xs text-text-secondary">완료</p>
-                    <p className="font-semibold text-green-600">
-                      {data.enrichment.enriched}
-                    </p>
-                  </div>
-                  <div className="rounded-md bg-surface-secondary p-2 text-center">
-                    <p className="text-body-xs text-text-secondary">미보강</p>
-                    <p
-                      className={`font-semibold ${data.enrichment.pending > 0 ? "text-yellow-500" : ""}`}
-                    >
-                      {data.enrichment.pending}
-                    </p>
-                  </div>
-                  <div className="rounded-md bg-surface-secondary p-2 text-center">
-                    <p className="text-body-xs text-text-secondary">건너뜀</p>
-                    <p className="font-semibold text-text-secondary">
-                      {data.enrichment.skipped}
-                    </p>
-                  </div>
-                  <div className="rounded-md bg-surface-secondary p-2 text-center">
-                    <p className="text-body-xs text-text-secondary">실패</p>
-                    <p
-                      className={`font-semibold ${data.enrichment.failed > 0 ? "text-red-500" : ""}`}
-                    >
-                      {data.enrichment.failed}
-                    </p>
-                  </div>
+                  {[
+                    { label: "완료", val: data.enrichment.enriched, color: "text-green-600" },
+                    { label: "미보강", val: data.enrichment.pending, color: data.enrichment.pending > 0 ? "text-yellow-500" : "" },
+                    { label: "건너뜀", val: data.enrichment.skipped, color: "" },
+                    { label: "실패", val: data.enrichment.failed, color: data.enrichment.failed > 0 ? "text-red-500" : "" },
+                  ].map(({ label, val, color }) => (
+                    <div key={label} className="rounded-md bg-surface-secondary p-2 text-center">
+                      <p className="text-body-xs text-text-secondary">{label}</p>
+                      <p className={`font-semibold ${color}`}>{val}</p>
+                    </div>
+                  ))}
                 </div>
               </>
             ) : null}
@@ -419,9 +514,7 @@ export function DashboardPageClient() {
                   <span className="font-medium">{job.source}</span>
                 </div>
                 <div className="flex items-center gap-3 text-text-secondary">
-                  <span>
-                    발견 {job.eventsFound} · 저장 {job.eventsUpserted}
-                  </span>
+                  <span>발견 {job.eventsFound} · 저장 {job.eventsUpserted}</span>
                   <span className="text-body-xs">
                     {job.finishedAt ? formatKst(job.finishedAt) : "—"}
                   </span>
@@ -438,7 +531,7 @@ export function DashboardPageClient() {
           <CardHeader>
             <Skeleton className="h-5 w-32" />
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent>
             <Skeleton className="h-8 w-full" />
           </CardContent>
         </Card>
@@ -458,7 +551,7 @@ export function DashboardPageClient() {
                     종료 처리 필요 — {data.events.needs_end_update}건
                   </span>
                   <span className="text-text-tertiary">
-                    end_date가 지났지만 status가 ended가 아닌 공연
+                    end_date가 지났지만 ended가 아닌 공연
                   </span>
                 </span>
                 <div className="flex gap-2">
@@ -469,11 +562,7 @@ export function DashboardPageClient() {
                   >
                     목록 보기
                   </Button>
-                  <Button
-                    size="sm"
-                    loading={fixingEnded}
-                    onClick={() => void handleFixEnded()}
-                  >
+                  <Button size="sm" loading={fixingEnded} onClick={() => void handleFixEnded()}>
                     <CheckCircle2 className="mr-1 h-3 w-3" />
                     일괄 업데이트
                   </Button>

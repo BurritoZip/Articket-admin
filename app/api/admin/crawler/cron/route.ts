@@ -22,7 +22,25 @@ import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
+import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
 import { NextResponse, type NextRequest } from "next/server";
+
+async function track<T>(
+  step: Parameters<typeof stepStart>[0],
+  fn: () => Promise<T>,
+): Promise<T | null> {
+  await stepStart(step).catch(() => null);
+  try {
+    const r = await fn();
+    await stepDone(step, r as Record<string, unknown>).catch(() => null);
+    return r;
+  } catch (e) {
+    await stepFailed(step, e instanceof Error ? e.message : String(e)).catch(
+      () => null,
+    );
+    return null;
+  }
+}
 
 export const maxDuration = 300;
 
@@ -59,66 +77,27 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    let autoFix = { fixed: 0, queued: 0 };
-    try {
-      const fixResult = await runDataQualityAutoFix({ scope: "recent_1_days" });
-      autoFix = { fixed: fixResult.fixed, queued: fixResult.queued };
-      console.log(
-        `[Cron] AutoFix — 수정: ${fixResult.fixed}, 큐: ${fixResult.queued}`,
-      );
-    } catch (fixErr) {
-      console.error(
-        "[Cron] AutoFix 실패 (무시):",
-        fixErr instanceof Error ? fixErr.message : fixErr,
-      );
-    }
+    const fixR = await track("fix", () =>
+      runDataQualityAutoFix({ scope: "recent_1_days" }),
+    );
+    const autoFix = { fixed: fixR?.fixed ?? 0, queued: fixR?.queued ?? 0 };
 
-    let autoDelete = { deleted: 0 };
-    try {
-      const delResult = await runDataQualityAutoDelete({});
-      autoDelete = { deleted: delResult.deleted };
-      console.log(`[Cron] AutoDelete — 삭제: ${delResult.deleted}`);
-    } catch (delErr) {
-      console.error(
-        "[Cron] AutoDelete 실패 (무시):",
-        delErr instanceof Error ? delErr.message : delErr,
-      );
-    }
+    const delR = await track("delete", () => runDataQualityAutoDelete({}));
+    const autoDelete = { deleted: delR?.deleted ?? 0 };
 
-    let enrichQueue = { succeeded: 0, failed: 0 };
-    try {
-      enrichQueue = await processArtistEnrichmentQueue(20);
-      console.log(
-        `[Cron] EnrichQueue — 성공: ${enrichQueue.succeeded}, 실패: ${enrichQueue.failed}`,
-      );
-    } catch (enrichErr) {
-      console.error(
-        "[Cron] EnrichQueue 실패 (무시):",
-        enrichErr instanceof Error ? enrichErr.message : enrichErr,
-      );
-    }
+    const enrichR = await track("enrich", () =>
+      processArtistEnrichmentQueue(20),
+    );
+    const enrichQueue = {
+      succeeded: enrichR?.succeeded ?? 0,
+      failed: enrichR?.failed ?? 0,
+    };
 
-    let statusSweep = { updated: 0 };
-    try {
-      statusSweep = await sweepEventStatuses();
-      console.log(`[Cron] StatusSweep — 업데이트: ${statusSweep.updated}`);
-    } catch (sweepErr) {
-      console.error(
-        "[Cron] StatusSweep 실패 (무시):",
-        sweepErr instanceof Error ? sweepErr.message : sweepErr,
-      );
-    }
+    const sweepR = await track("sweep", () => sweepEventStatuses());
+    const statusSweep = { updated: sweepR?.updated ?? 0 };
 
-    let artistMerge = { merged: 0 };
-    try {
-      artistMerge = await autoMergeExactArtists();
-      console.log(`[Cron] ArtistAutoMerge — 병합: ${artistMerge.merged}`);
-    } catch (mergeErr) {
-      console.error(
-        "[Cron] ArtistAutoMerge 실패 (무시):",
-        mergeErr instanceof Error ? mergeErr.message : mergeErr,
-      );
-    }
+    const artistMergeR = await track("merge", () => autoMergeExactArtists());
+    const artistMerge = { merged: artistMergeR?.merged ?? 0 };
 
     let venueMerge = { merged: 0 };
     try {
