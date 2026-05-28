@@ -26,7 +26,10 @@ function isNamePureGarbage(name: string): boolean {
 }
 
 function isNamePureUrl(name: string): boolean {
-  return URL_RE.test(name) && name.replace(URL_RE, "").replace(/\S+/g, "").trim().length === 0;
+  return (
+    URL_RE.test(name) &&
+    name.replace(URL_RE, "").replace(/\S+/g, "").trim().length === 0
+  );
 }
 
 async function geminiDeleteDecision(
@@ -34,7 +37,9 @@ async function geminiDeleteDecision(
   entityType: string,
 ): Promise<Set<string>> {
   if (items.length === 0) return new Set();
-  const lines = items.map((it, i) => `${i}|id=${it.id}|값="${it.label}"`).join("\n");
+  const lines = items
+    .map((it, i) => `${i}|id=${it.id}|값="${it.label}"`)
+    .join("\n");
   const prompt = `다음 ${entityType} 데이터 목록을 검토해주세요.
 각 항목이 DB에서 삭제해야 할 쓰레기 데이터인지 판단하세요.
 삭제 기준: 이름/제목이 의미 없는 숫자, 가격, 날짜, URL, 기호만으로 구성됨.
@@ -69,7 +74,13 @@ export async function runDataQualityAutoDelete(opts: {
     reason: string,
     method: DeleteLog["method"],
   ) {
-    logs.push({ entityType: type, entityId: id, entityTitle: title, reason, method });
+    logs.push({
+      entityType: type,
+      entityId: id,
+      entityTitle: title,
+      reason,
+      method,
+    });
     if (!dryRun) {
       await db.from(table).delete().eq("id", id);
       await db.from("data_quality_fix_logs").insert({
@@ -85,14 +96,28 @@ export async function runDataQualityAutoDelete(opts: {
   }
 
   // ── Venues ────────────────────────────────────────────────────────
-  const { data: venues } = await db.from("venues").select("id,name").limit(2000);
+  const { data: venues } = await db
+    .from("venues")
+    .select("id,name")
+    .limit(2000);
   const venueGeminiCandidates: Array<{ id: string; label: string }> = [];
 
   for (const v of venues ?? []) {
     const { id, name } = v as { id: string; name: string };
     if (isNamePureGarbage(name)) {
-      await deleteEntity("venues", "venue", id, name, "venue_name_pure_garbage", "rule");
-    } else if (PRICE_RE.test(name) || TICKET_GRADE_RE.test(name) || DATE_RE.test(name)) {
+      await deleteEntity(
+        "venues",
+        "venue",
+        id,
+        name,
+        "venue_name_pure_garbage",
+        "rule",
+      );
+    } else if (
+      PRICE_RE.test(name) ||
+      TICKET_GRADE_RE.test(name) ||
+      DATE_RE.test(name)
+    ) {
       venueGeminiCandidates.push({ id, label: name });
     }
   }
@@ -103,18 +128,35 @@ export async function runDataQualityAutoDelete(opts: {
   );
   for (const c of venueGeminiCandidates.slice(0, 50)) {
     if (venueGeminiDelete.has(c.id)) {
-      await deleteEntity("venues", "venue", c.id, c.label, "gemini_venue_garbage", "gemini");
+      await deleteEntity(
+        "venues",
+        "venue",
+        c.id,
+        c.label,
+        "gemini_venue_garbage",
+        "gemini",
+      );
     }
   }
 
   // ── Artists ───────────────────────────────────────────────────────
-  const { data: artists } = await db.from("artists").select("id,name").limit(10000);
+  const { data: artists } = await db
+    .from("artists")
+    .select("id,name")
+    .limit(10000);
   const artistGeminiCandidates: Array<{ id: string; label: string }> = [];
 
   for (const a of artists ?? []) {
     const { id, name } = a as { id: string; name: string };
     if (isNamePureUrl(name)) {
-      await deleteEntity("artists", "artist", id, name, "artist_name_pure_url", "rule");
+      await deleteEntity(
+        "artists",
+        "artist",
+        id,
+        name,
+        "artist_name_pure_url",
+        "rule",
+      );
     } else if (URL_RE.test(name)) {
       artistGeminiCandidates.push({ id, label: name });
     }
@@ -126,26 +168,48 @@ export async function runDataQualityAutoDelete(opts: {
   );
   for (const c of artistGeminiCandidates.slice(0, 50)) {
     if (artistGeminiDelete.has(c.id)) {
-      await deleteEntity("artists", "artist", c.id, c.label, "gemini_artist_garbage", "gemini");
+      await deleteEntity(
+        "artists",
+        "artist",
+        c.id,
+        c.label,
+        "gemini_artist_garbage",
+        "gemini",
+      );
     }
   }
 
   // ── Events ────────────────────────────────────────────────────────
+  const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
   const { data: events } = await db
     .from("events")
-    .select("id,title,venue_id,artist_id")
+    .select("id,title,venue_id,artist_id,created_at")
     .limit(10000);
   const eventGeminiCandidates: Array<{ id: string; label: string }> = [];
 
   for (const e of events ?? []) {
-    const { id, title, venue_id, artist_id } = e as {
+    const { id, title, venue_id, artist_id, created_at } = e as {
       id: string;
       title: string;
       venue_id: string | null;
       artist_id: string | null;
+      created_at: string;
     };
-    if (title.trim().length <= 2 && !venue_id && !artist_id) {
-      await deleteEntity("events", "event", id, title, "event_orphan_stub", "rule");
+    const isOrphan = !venue_id && !artist_id;
+    const isOld = created_at < sevenDaysAgo;
+
+    if (title.trim().length <= 2 && isOrphan) {
+      await deleteEntity(
+        "events",
+        "event",
+        id,
+        title,
+        "event_orphan_stub",
+        "rule",
+      );
+    } else if (isOrphan && isOld) {
+      // 7일 지난 고아 이벤트 → Gemini 판단
+      eventGeminiCandidates.push({ id, label: title });
     } else if (title.trim().length <= 2 || URL_RE.test(title)) {
       eventGeminiCandidates.push({ id, label: title });
     }
@@ -157,7 +221,14 @@ export async function runDataQualityAutoDelete(opts: {
   );
   for (const c of eventGeminiCandidates.slice(0, 50)) {
     if (eventGeminiDelete.has(c.id)) {
-      await deleteEntity("events", "event", c.id, c.label, "gemini_event_garbage", "gemini");
+      await deleteEntity(
+        "events",
+        "event",
+        c.id,
+        c.label,
+        "gemini_event_garbage",
+        "gemini",
+      );
     }
   }
 

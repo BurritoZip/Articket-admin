@@ -19,6 +19,9 @@ import {
 import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
 import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
+import { sweepEventStatuses } from "@/lib/db/status-sweeper";
+import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
+import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const maxDuration = 300;
@@ -95,6 +98,39 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    let statusSweep = { updated: 0 };
+    try {
+      statusSweep = await sweepEventStatuses();
+      console.log(`[Cron] StatusSweep — 업데이트: ${statusSweep.updated}`);
+    } catch (sweepErr) {
+      console.error(
+        "[Cron] StatusSweep 실패 (무시):",
+        sweepErr instanceof Error ? sweepErr.message : sweepErr,
+      );
+    }
+
+    let artistMerge = { merged: 0 };
+    try {
+      artistMerge = await autoMergeExactArtists();
+      console.log(`[Cron] ArtistAutoMerge — 병합: ${artistMerge.merged}`);
+    } catch (mergeErr) {
+      console.error(
+        "[Cron] ArtistAutoMerge 실패 (무시):",
+        mergeErr instanceof Error ? mergeErr.message : mergeErr,
+      );
+    }
+
+    let venueMerge = { merged: 0 };
+    try {
+      venueMerge = await autoMergeExactVenues();
+      console.log(`[Cron] VenueAutoMerge — 병합: ${venueMerge.merged}`);
+    } catch (vMergeErr) {
+      console.error(
+        "[Cron] VenueAutoMerge 실패 (무시):",
+        vMergeErr instanceof Error ? vMergeErr.message : vMergeErr,
+      );
+    }
+
     const totalErrorCount = result.errorCount + artistAudit.missingCount;
     const status =
       result.eventsUpserted === 0 && result.eventsFound === 0
@@ -119,6 +155,9 @@ export async function GET(request: NextRequest) {
         autoFix,
         autoDelete,
         enrichQueue,
+        statusSweep,
+        artistMerge,
+        venueMerge,
       },
     });
 

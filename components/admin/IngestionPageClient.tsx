@@ -707,6 +707,8 @@ type QualityLog = {
 function DataQualityTab() {
   const [fixing, setFixing] = React.useState(false);
   const [deleting, setDeleting] = React.useState(false);
+  const [sweeping, setSweeping] = React.useState(false);
+  const [merging, setMerging] = React.useState(false);
   const [fixResult, setFixResult] = React.useState<{
     fixed: number;
     queued: number;
@@ -714,6 +716,14 @@ function DataQualityTab() {
   const [deleteResult, setDeleteResult] = React.useState<{
     deleted: number;
     details: QualityLog[];
+  } | null>(null);
+  const [sweepResult, setSweepResult] = React.useState<{
+    updated: number;
+    breakdown: Record<string, number>;
+  } | null>(null);
+  const [mergeResult, setMergeResult] = React.useState<{
+    artists: number;
+    venues: number;
   } | null>(null);
 
   const runFix = async () => {
@@ -759,6 +769,53 @@ function DataQualityTab() {
     }
   };
 
+  const runSweep = async () => {
+    setSweeping(true);
+    const id = toast.loading("이벤트 상태 업데이트 중...");
+    try {
+      const res = await fetch("/api/admin/events/sweep-statuses", {
+        method: "POST",
+      });
+      const json = await res.json();
+      setSweepResult({
+        updated: json.updated ?? 0,
+        breakdown: json.breakdown ?? {},
+      });
+      toast.success(`${json.updated}건 상태 업데이트`, { id });
+    } catch {
+      toast.error("상태 업데이트 실패", { id });
+    } finally {
+      setSweeping(false);
+    }
+  };
+
+  const runMerge = async () => {
+    setMerging(true);
+    const id = toast.loading("중복 자동 병합 중...");
+    try {
+      const [artistRes, venueRes] = await Promise.all([
+        fetch("/api/admin/artists/auto-merge", { method: "POST" }).then((r) =>
+          r.json(),
+        ),
+        fetch("/api/admin/venues/auto-merge", { method: "POST" }).then((r) =>
+          r.json(),
+        ),
+      ]);
+      setMergeResult({
+        artists: artistRes.merged ?? 0,
+        venues: venueRes.merged ?? 0,
+      });
+      toast.success(
+        `아티스트 ${artistRes.merged ?? 0}건, 공연장 ${venueRes.merged ?? 0}건 병합`,
+        { id },
+      );
+    } catch {
+      toast.error("자동 병합 실패", { id });
+    } finally {
+      setMerging(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -766,12 +823,18 @@ function DataQualityTab() {
           <CardTitle>데이터 품질 자동 관리</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-3">
+          <div className="flex flex-wrap gap-3">
             <Button onClick={runFix} disabled={fixing}>
               {fixing ? "수정 중..." : "이상 필드 자동 수정"}
             </Button>
             <Button variant="danger" onClick={runDelete} disabled={deleting}>
               {deleting ? "Gemini 분석 중..." : "불량 데이터 삭제 (Gemini)"}
+            </Button>
+            <Button variant="secondary" onClick={runSweep} disabled={sweeping}>
+              {sweeping ? "업데이트 중..." : "공연 상태 업데이트"}
+            </Button>
+            <Button variant="secondary" onClick={runMerge} disabled={merging}>
+              {merging ? "병합 중..." : "중복 자동 병합"}
             </Button>
           </div>
 
@@ -832,6 +895,32 @@ function DataQualityTab() {
                   </TableBody>
                 </Table>
               )}
+            </div>
+          )}
+          {sweepResult && (
+            <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
+              <span className="font-medium">상태 업데이트:</span>{" "}
+              <span className="font-semibold text-green-600">
+                {sweepResult.updated}건
+              </span>
+              {" — "}
+              {Object.entries(sweepResult.breakdown)
+                .filter(([, v]) => v > 0)
+                .map(([k, v]) => `${k} ${v}`)
+                .join(", ")}
+            </div>
+          )}
+
+          {mergeResult && (
+            <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
+              <span className="font-medium">자동 병합:</span> 아티스트{" "}
+              <span className="font-semibold text-green-600">
+                {mergeResult.artists}건
+              </span>
+              , 공연장{" "}
+              <span className="font-semibold text-green-600">
+                {mergeResult.venues}건
+              </span>
             </div>
           )}
         </CardContent>
