@@ -48,8 +48,10 @@ pnpm-debug.log*
 
 # Local cron secrets
 scripts/cron/.cron.env
+scripts/cron/.cron-python.env
 
 # Python scraper
+scripts/scraper/.env
 scripts/scraper/.venv/
 scripts/scraper/__pycache__/
 scripts/scraper/scrapers/__pycache__/

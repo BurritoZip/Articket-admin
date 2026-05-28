@@ -81,6 +81,12 @@ def save_events(client, events: list[dict]) -> None:
             # artist_infos(StagePick 상세 페이지 아티스트 목록)가 있으면 모두 저장
             artist_id = None
             artist_infos = ev.get("artist_infos") or []
+            if isinstance(artist_infos, str):
+                import ast
+                try:
+                    artist_infos = ast.literal_eval(artist_infos)
+                except Exception:
+                    artist_infos = []
             if artist_infos:
                 for info in artist_infos:
                     aid = upsert_artist(client, info["name"], avatar_url=info.get("image_url"))
@@ -149,7 +155,7 @@ _EXCLUDE_KEYWORDS = (
     "세미나", "강연", "특강", "포럼",
 )
 
-# StagePick이 1순위. 이후 보조 사이트는 source_url 보완 역할만 함
+# StagePick은 TypeScript Vercel 크론에서 별도 처리. Python은 보조 사이트만 담당.
 _SUPPLEMENTARY_SITES = ["yes24", "yanolja", "festivallife", "interpark", "melon", "naver"]
 
 
@@ -180,8 +186,8 @@ def main():
     args = parser.parse_args()
 
     if args.dry_run:
-        # dry-run은 기존 방식대로 단순 수집 후 출력
-        sites = ["stagepick"] + _SUPPLEMENTARY_SITES if args.site == "all" else [args.site]
+        # dry-run은 기존 방식대로 단순 수집 후 출력 (all이면 보조 사이트만)
+        sites = _SUPPLEMENTARY_SITES if args.site == "all" else [args.site]
         all_events = []
         for site in sites:
             print(f"\n{'='*50}\n크롤링: {site}\n{'='*50}")
@@ -199,9 +205,9 @@ def main():
 
     client = get_supabase_client()
 
-    # ── Phase 1: StagePick 우선 수집 + 저장 ──────────────────────────────────
-    if args.site in ("all", "stagepick"):
-        print(f"\n{'='*50}\n[1단계] StagePick 수집 (주 데이터 소스)\n{'='*50}")
+    # ── StagePick 단독 실행 (수동/테스트용) ───────────────────────────────────
+    if args.site == "stagepick":
+        print(f"\n{'='*50}\n[StagePick] 수동 실행\n{'='*50}")
         _save_stagepick_artists(client)
         try:
             sp_events = run_scraper("stagepick")
@@ -210,13 +216,11 @@ def main():
             save_events(client, sp_events)
         except Exception as e:
             print(f"[오류] StagePick 크롤링 실패: {e}")
+        print("\n완료!")
+        return
 
-        if args.site == "stagepick":
-            print("\n완료!")
-            return
-
-    # ── Phase 2: 보조 사이트 수집 + 저장 (source_url 보완) ───────────────────
-    print(f"\n{'='*50}\n[2단계] 보조 사이트 수집 (source_url 보완)\n{'='*50}")
+    # ── 보조 사이트 수집 + 저장 (all 또는 개별 사이트) ───────────────────────
+    print(f"\n{'='*50}\n보조 사이트 수집 (yes24/melon/interpark 등)\n{'='*50}")
     supp_events: list[dict] = []
     for site in _SUPPLEMENTARY_SITES if args.site == "all" else [args.site]:
         print(f"\n--- {site} ---")
@@ -231,10 +235,9 @@ def main():
 
     print("\n완료!")
     import subprocess
-    total = (len(sp_events) if args.site == "all" else 0) + len(supp_events)
     subprocess.run([
         "terminal-notifier",
-        "-message", f"{total}개 이벤트 저장 완료!",
+        "-message", f"{len(supp_events)}개 이벤트 저장 완료!",
         "-title", "Articket 크롤러",
         "-sound", "Glass",
     ], check=False)

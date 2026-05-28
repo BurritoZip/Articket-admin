@@ -17,6 +17,8 @@ import {
   type ArtistAuditReport,
 } from "@/lib/ingestion/artist-audit";
 import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
+import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
+import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const maxDuration = 300;
@@ -59,12 +61,37 @@ export async function GET(request: NextRequest) {
       const fixResult = await runDataQualityAutoFix({ scope: "recent_1_days" });
       autoFix = { fixed: fixResult.fixed, queued: fixResult.queued };
       console.log(
-        `[Cron] DataQuality AutoFix — 수정: ${fixResult.fixed}, 큐 등록: ${fixResult.queued}`,
+        `[Cron] AutoFix — 수정: ${fixResult.fixed}, 큐: ${fixResult.queued}`,
       );
     } catch (fixErr) {
       console.error(
-        "[Cron] runDataQualityAutoFix 실패 (무시):",
+        "[Cron] AutoFix 실패 (무시):",
         fixErr instanceof Error ? fixErr.message : fixErr,
+      );
+    }
+
+    let autoDelete = { deleted: 0 };
+    try {
+      const delResult = await runDataQualityAutoDelete({});
+      autoDelete = { deleted: delResult.deleted };
+      console.log(`[Cron] AutoDelete — 삭제: ${delResult.deleted}`);
+    } catch (delErr) {
+      console.error(
+        "[Cron] AutoDelete 실패 (무시):",
+        delErr instanceof Error ? delErr.message : delErr,
+      );
+    }
+
+    let enrichQueue = { succeeded: 0, failed: 0 };
+    try {
+      enrichQueue = await processArtistEnrichmentQueue(20);
+      console.log(
+        `[Cron] EnrichQueue — 성공: ${enrichQueue.succeeded}, 실패: ${enrichQueue.failed}`,
+      );
+    } catch (enrichErr) {
+      console.error(
+        "[Cron] EnrichQueue 실패 (무시):",
+        enrichErr instanceof Error ? enrichErr.message : enrichErr,
       );
     }
 
@@ -90,6 +117,8 @@ export async function GET(request: NextRequest) {
           missingCount: artistAudit.missingCount,
         },
         autoFix,
+        autoDelete,
+        enrichQueue,
       },
     });
 

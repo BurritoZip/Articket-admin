@@ -21,7 +21,7 @@ import { Label } from "@/components/ui/Label";
 import { PageHeader } from "@/components/layout/PageHeader";
 import type { IngestionError, RawEventPayload } from "@/types/crawler";
 
-type Tab = "workflows" | "errors" | "raw" | "queue";
+type Tab = "workflows" | "errors" | "raw" | "queue" | "quality";
 
 type ArtistBackfillResult = {
   scannedCount: number;
@@ -54,31 +54,36 @@ export function IngestionPageClient() {
       />
 
       <div className="flex gap-1 border-b border-border">
-        {(["workflows", "errors", "raw", "queue"] as Tab[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`px-4 py-2 text-body-sm font-medium transition-colors ${
-              tab === t
-                ? "border-b-2 border-primary text-primary"
-                : "text-text-secondary hover:text-text-primary"
-            }`}
-          >
-            {t === "workflows"
-              ? "워크플로"
-              : t === "errors"
-                ? "오류 로그"
-                : t === "raw"
-                  ? "원본 페이로드"
-                  : "AI 큐"}
-          </button>
-        ))}
+        {(["workflows", "errors", "raw", "queue", "quality"] as Tab[]).map(
+          (t) => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={`px-4 py-2 text-body-sm font-medium transition-colors ${
+                tab === t
+                  ? "border-b-2 border-primary text-primary"
+                  : "text-text-secondary hover:text-text-primary"
+              }`}
+            >
+              {t === "workflows"
+                ? "워크플로"
+                : t === "errors"
+                  ? "오류 로그"
+                  : t === "raw"
+                    ? "원본 페이로드"
+                    : t === "queue"
+                      ? "AI 큐"
+                      : "데이터 품질"}
+            </button>
+          ),
+        )}
       </div>
 
       {tab === "workflows" && <WorkflowsTab />}
       {tab === "errors" && <ErrorsTab />}
       {tab === "raw" && <RawPayloadsTab />}
       {tab === "queue" && <AIQueueTab />}
+      {tab === "quality" && <DataQualityTab />}
     </div>
   );
 }
@@ -686,5 +691,151 @@ function AIQueueTab() {
         </Table>
       </CardContent>
     </Card>
+  );
+}
+
+// ── 데이터 품질 탭 ──────────────────────────────────────────────────
+
+type QualityLog = {
+  entityType: string;
+  entityId: string;
+  entityTitle: string;
+  reason: string;
+  method: string;
+};
+
+function DataQualityTab() {
+  const [fixing, setFixing] = React.useState(false);
+  const [deleting, setDeleting] = React.useState(false);
+  const [fixResult, setFixResult] = React.useState<{
+    fixed: number;
+    queued: number;
+  } | null>(null);
+  const [deleteResult, setDeleteResult] = React.useState<{
+    deleted: number;
+    details: QualityLog[];
+  } | null>(null);
+
+  const runFix = async () => {
+    setFixing(true);
+    const id = toast.loading("이상 필드 자동 수정 중...");
+    try {
+      const res = await fetch("/api/admin/data-quality/auto-fix", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope: "all" }),
+      });
+      const json = await res.json();
+      setFixResult({ fixed: json.fixed ?? 0, queued: json.queued ?? 0 });
+      toast.success(`필드 수정 ${json.fixed}건, AI 큐 ${json.queued}건`, {
+        id,
+      });
+    } catch {
+      toast.error("자동 수정 실패", { id });
+    } finally {
+      setFixing(false);
+    }
+  };
+
+  const runDelete = async () => {
+    setDeleting(true);
+    const id = toast.loading("Gemini 분석 + 불량 데이터 삭제 중...");
+    try {
+      const res = await fetch("/api/admin/data-quality/auto-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const json = await res.json();
+      setDeleteResult({
+        deleted: json.deleted ?? 0,
+        details: json.details ?? [],
+      });
+      toast.success(`${json.deleted}건 삭제 완료`, { id });
+    } catch {
+      toast.error("삭제 실패", { id });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>데이터 품질 자동 관리</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-3">
+            <Button onClick={runFix} disabled={fixing}>
+              {fixing ? "수정 중..." : "이상 필드 자동 수정"}
+            </Button>
+            <Button variant="danger" onClick={runDelete} disabled={deleting}>
+              {deleting ? "Gemini 분석 중..." : "불량 데이터 삭제 (Gemini)"}
+            </Button>
+          </div>
+
+          {fixResult && (
+            <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
+              <span className="font-medium">수정 결과:</span> 필드 수정{" "}
+              <span className="font-semibold text-green-600">
+                {fixResult.fixed}건
+              </span>
+              , AI 큐 등록{" "}
+              <span className="font-semibold text-blue-600">
+                {fixResult.queued}건
+              </span>
+            </div>
+          )}
+
+          {deleteResult && (
+            <div className="space-y-2">
+              <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
+                <span className="font-medium">삭제 결과:</span>{" "}
+                <span className="font-semibold text-red-600">
+                  {deleteResult.deleted}건 삭제
+                </span>
+              </div>
+              {deleteResult.details.length > 0 && (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>유형</TableHead>
+                      <TableHead>값</TableHead>
+                      <TableHead>사유</TableHead>
+                      <TableHead>방법</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {deleteResult.details.map((d, i) => (
+                      <TableRow key={i}>
+                        <TableCell>
+                          <Badge variant="secondary">{d.entityType}</Badge>
+                        </TableCell>
+                        <TableCell className="max-w-xs truncate text-body-sm">
+                          {d.entityTitle}
+                        </TableCell>
+                        <TableCell className="text-body-xs text-text-secondary">
+                          {d.reason}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            variant={
+                              d.method === "gemini" ? "default" : "outline"
+                            }
+                          >
+                            {d.method}
+                          </Badge>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
