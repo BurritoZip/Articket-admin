@@ -10,29 +10,16 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { geminiText } from "@/lib/gemini";
+import {
+  PRICE_RE,
+  TICKET_GRADE_RE,
+  DATE_RE,
+  URL_RE,
+  ADDRESS_KEYWORDS_RE,
+  VENUE_LIKE_RE,
+} from "@/lib/data-quality/patterns";
 
 export const maxDuration = 60;
-
-// ── 패턴 정의 ──────────────────────────────────────────────────────
-
-/** 금액 패턴: "110,000원", "50000원", "₩50,000", "5만원" */
-const PRICE_RE = /(?:\d{1,3}(?:,\d{3})*원|₩\s*\d[\d,]*|\d+만\s*원)/;
-
-/** 티켓 등급: R석, S석, A석, VIP, 스탠딩 등 */
-const TICKET_GRADE_RE = /\b([RSABVIP]석|VIP|스탠딩|STANDING|FLOOR)\b/i;
-
-/** 날짜 패턴 */
-const DATE_RE = /\d{4}[.\-/]\d{1,2}[.\-/]\d{1,2}|\d{4}년\s*\d{1,2}월/;
-
-/** URL 패턴 */
-const URL_RE = /https?:\/\/|www\./i;
-
-/** 한국 주소 키워드 (address 컬럼이 실제 주소인지 검사) */
-const ADDRESS_KEYWORDS_RE = /시|구|동|로|길|번지|특별시|광역시|도\s|읍|면/;
-
-/** 공연장 이름처럼 보이는 키워드 (address 컬럼에 이게 들어있으면 이상) */
-const VENUE_LIKE_RE =
-  /홀$|관$|돔$|구장$|경기장$|아레나$|센터$|HALL$|DOME$|ARENA$/i;
 
 // ── 체커 함수들 ────────────────────────────────────────────────────
 

@@ -16,6 +16,7 @@ import {
   auditCrawlerJobArtists,
   type ArtistAuditReport,
 } from "@/lib/ingestion/artist-audit";
+import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { NextResponse, type NextRequest } from "next/server";
 
 export const maxDuration = 300;
@@ -53,6 +54,20 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    let autoFix = { fixed: 0, queued: 0 };
+    try {
+      const fixResult = await runDataQualityAutoFix({ scope: "recent_1_days" });
+      autoFix = { fixed: fixResult.fixed, queued: fixResult.queued };
+      console.log(
+        `[Cron] DataQuality AutoFix — 수정: ${fixResult.fixed}, 큐 등록: ${fixResult.queued}`,
+      );
+    } catch (fixErr) {
+      console.error(
+        "[Cron] runDataQualityAutoFix 실패 (무시):",
+        fixErr instanceof Error ? fixErr.message : fixErr,
+      );
+    }
+
     const totalErrorCount = result.errorCount + artistAudit.missingCount;
     const status =
       result.eventsUpserted === 0 && result.eventsFound === 0
@@ -74,6 +89,7 @@ export async function GET(request: NextRequest) {
           checkedCount: artistAudit.checkedCount,
           missingCount: artistAudit.missingCount,
         },
+        autoFix,
       },
     });
 
