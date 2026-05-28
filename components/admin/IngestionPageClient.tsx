@@ -709,6 +709,13 @@ function DataQualityTab() {
   const [deleting, setDeleting] = React.useState(false);
   const [sweeping, setSweeping] = React.useState(false);
   const [merging, setMerging] = React.useState(false);
+  const [draining, setDraining] = React.useState(false);
+  const [drainResult, setDrainResult] = React.useState<{
+    rounds: number;
+    processed: number;
+    succeeded: number;
+    failed: number;
+  } | null>(null);
   const [fixResult, setFixResult] = React.useState<{
     fixed: number;
     queued: number;
@@ -816,6 +823,30 @@ function DataQualityTab() {
     }
   };
 
+  const runDrain = async () => {
+    setDraining(true);
+    const id = toast.loading("AI 큐 전체 처리 중... (최대 5분)");
+    try {
+      const res = await fetch("/api/admin/ingestion/queue/drain", {
+        method: "POST",
+      });
+      const json = await res.json();
+      setDrainResult({
+        rounds: json.rounds ?? 0,
+        processed: json.processed ?? 0,
+        succeeded: json.succeeded ?? 0,
+        failed: json.failed ?? 0,
+      });
+      toast.success(`${json.processed}건 처리 완료 (${json.rounds}라운드)`, {
+        id,
+      });
+    } catch {
+      toast.error("큐 처리 실패", { id });
+    } finally {
+      setDraining(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <Card>
@@ -835,6 +866,9 @@ function DataQualityTab() {
             </Button>
             <Button variant="secondary" onClick={runMerge} disabled={merging}>
               {merging ? "병합 중..." : "중복 자동 병합"}
+            </Button>
+            <Button onClick={runDrain} disabled={draining}>
+              {draining ? "처리 중... (최대 5분)" : "AI 큐 전체 처리"}
             </Button>
           </div>
 
@@ -920,6 +954,21 @@ function DataQualityTab() {
               , 공연장{" "}
               <span className="font-semibold text-green-600">
                 {mergeResult.venues}건
+              </span>
+            </div>
+          )}
+
+          {drainResult && (
+            <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
+              <span className="font-medium">AI 큐 처리:</span>{" "}
+              <span className="font-semibold text-green-600">
+                {drainResult.processed}건
+              </span>{" "}
+              처리 ({drainResult.rounds}라운드) — 성공{" "}
+              <span className="font-semibold">{drainResult.succeeded}</span>,{" "}
+              실패{" "}
+              <span className="font-semibold text-red-500">
+                {drainResult.failed}
               </span>
             </div>
           )}
