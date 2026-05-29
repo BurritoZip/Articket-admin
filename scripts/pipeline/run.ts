@@ -17,6 +17,8 @@ import {
 } from "../../lib/ingestion/event-enrich";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
+import { runArtistBackfill } from "../../lib/ingestion/artist-backfill";
+import { processVenueAddressEnrichment } from "../../lib/venues/enrich";
 import { runStagepickScraper } from "../../lib/scrapers/stagepick/scraper";
 import {
   createCrawlerJob,
@@ -141,6 +143,8 @@ async function main() {
 
   // enrich
   await run("enrich", async () => {
+    await runArtistBackfill({ limit: 500, dryRun: false });
+    await processVenueAddressEnrichment(30);
     const [{ queued: artistQueued }, { queued: eventQueued }] =
       await Promise.all([queueArtistEnrichment(), queueEventEnrichment()]);
     const { count: totalPending } = await db

@@ -13,6 +13,8 @@ import {
 } from "@/lib/ingestion/event-enrich";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
+import { runArtistBackfill } from "@/lib/ingestion/artist-backfill";
+import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
 import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
 import { auditCrawlerJobArtists } from "@/lib/ingestion/artist-audit";
@@ -143,11 +145,17 @@ export async function POST() {
   // delete
   await run("delete", () => runDataQualityAutoDelete({}));
 
-  // enrich — queue events + drain all (artist + event), max 4.5min
+  // enrich — backfill + queue + drain, max 4.5min
   await run("enrich", async () => {
-    // 미보강 아티스트 + 이벤트 자동 큐 등록
+    // 1. 아티스트 없는 이벤트 backfill (raw_payload 기반)
+    await runArtistBackfill({ limit: 500, dryRun: false });
+
+    // 2. 미보강 아티스트 + 이벤트(아티스트/장르/연령) 큐 등록
     const [{ queued: artistQueued }, { queued: eventQueued }] =
       await Promise.all([queueArtistEnrichment(), queueEventEnrichment()]);
+
+    // 3. 주소 없는 공연장 Gemini 보강 (배치 30개)
+    await processVenueAddressEnrichment(30);
 
     const { count: totalPending } = await db
       .from("ai_processing_queue")
