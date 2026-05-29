@@ -702,6 +702,21 @@ type QualityLog = {
   entityTitle: string;
   reason: string;
   method: string;
+  geminiReasoning?: string;
+};
+
+type GeminiError = { entityType: string; prompt: string; error: string };
+
+type FixLogEntry = {
+  id: string;
+  entity_type: string;
+  field_name: string;
+  issue_type: string;
+  old_value: string | null;
+  fix_method: string;
+  fixed_at: string;
+  gemini_reasoning: string | null;
+  error_msg: string | null;
 };
 
 function DataQualityTab() {
@@ -710,6 +725,8 @@ function DataQualityTab() {
   const [sweeping, setSweeping] = React.useState(false);
   const [merging, setMerging] = React.useState(false);
   const [draining, setDraining] = React.useState(false);
+  const [loadingLogs, setLoadingLogs] = React.useState(false);
+  const [inlineError, setInlineError] = React.useState<string | null>(null);
   const [drainResult, setDrainResult] = React.useState<{
     rounds: number;
     processed: number;
@@ -723,6 +740,7 @@ function DataQualityTab() {
   const [deleteResult, setDeleteResult] = React.useState<{
     deleted: number;
     details: QualityLog[];
+    geminiErrors: GeminiError[];
   } | null>(null);
   const [sweepResult, setSweepResult] = React.useState<{
     updated: number;
@@ -732,9 +750,11 @@ function DataQualityTab() {
     artists: number;
     venues: number;
   } | null>(null);
+  const [fixLogs, setFixLogs] = React.useState<FixLogEntry[] | null>(null);
 
   const runFix = async () => {
     setFixing(true);
+    setInlineError(null);
     const id = toast.loading("이상 필드 자동 수정 중...");
     try {
       const res = await fetch("/api/admin/data-quality/auto-fix", {
@@ -743,12 +763,15 @@ function DataQualityTab() {
         body: JSON.stringify({ scope: "all" }),
       });
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       setFixResult({ fixed: json.fixed ?? 0, queued: json.queued ?? 0 });
       toast.success(`필드 수정 ${json.fixed}건, AI 큐 ${json.queued}건`, {
         id,
       });
-    } catch {
-      toast.error("자동 수정 실패", { id });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInlineError(`자동 수정 실패: ${msg}`);
+      toast.dismiss(id);
     } finally {
       setFixing(false);
     }
@@ -756,6 +779,7 @@ function DataQualityTab() {
 
   const runDelete = async () => {
     setDeleting(true);
+    setInlineError(null);
     const id = toast.loading("Gemini 분석 + 불량 데이터 삭제 중...");
     try {
       const res = await fetch("/api/admin/data-quality/auto-delete", {
@@ -764,13 +788,17 @@ function DataQualityTab() {
         body: JSON.stringify({}),
       });
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? `HTTP ${res.status}`);
       setDeleteResult({
         deleted: json.deleted ?? 0,
         details: json.details ?? [],
+        geminiErrors: json.geminiErrors ?? [],
       });
       toast.success(`${json.deleted}건 삭제 완료`, { id });
-    } catch {
-      toast.error("삭제 실패", { id });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInlineError(`삭제 실패: ${msg}`);
+      toast.dismiss(id);
     } finally {
       setDeleting(false);
     }
@@ -840,10 +868,27 @@ function DataQualityTab() {
       toast.success(`${json.processed}건 처리 완료 (${json.rounds}라운드)`, {
         id,
       });
-    } catch {
-      toast.error("큐 처리 실패", { id });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setInlineError(`큐 처리 실패: ${msg}`);
+      toast.dismiss(id);
     } finally {
       setDraining(false);
+    }
+  };
+
+  const loadLogs = async () => {
+    setLoadingLogs(true);
+    try {
+      const res = await fetch("/api/admin/data-quality/logs?limit=100");
+      const json = await res.json();
+      setFixLogs(json.logs ?? []);
+    } catch (e) {
+      setInlineError(
+        `이력 조회 실패: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setLoadingLogs(false);
     }
   };
 
@@ -872,6 +917,19 @@ function DataQualityTab() {
             </Button>
           </div>
 
+          {/* 인라인 에러 */}
+          {inlineError && (
+            <div className="rounded-md border border-red-300 bg-red-50 p-3 text-body-sm text-red-700">
+              <span className="font-semibold">오류:</span> {inlineError}
+              <button
+                className="ml-2 text-red-400 hover:text-red-600"
+                onClick={() => setInlineError(null)}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {fixResult && (
             <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
               <span className="font-medium">수정 결과:</span> 필드 수정{" "}
@@ -893,14 +951,42 @@ function DataQualityTab() {
                   {deleteResult.deleted}건 삭제
                 </span>
               </div>
+
+              {/* Gemini API 에러 */}
+              {deleteResult.geminiErrors.length > 0 && (
+                <div className="space-y-1">
+                  {deleteResult.geminiErrors.map((e, i) => (
+                    <div
+                      key={i}
+                      className="rounded-md border border-red-200 bg-red-50 p-2 text-body-xs"
+                    >
+                      <span className="font-semibold text-red-700">
+                        Gemini 오류 ({e.entityType}):
+                      </span>{" "}
+                      <span className="text-red-600">{e.error}</span>
+                      {e.prompt && (
+                        <details className="mt-1">
+                          <summary className="cursor-pointer text-text-tertiary">
+                            전송한 프롬프트 보기
+                          </summary>
+                          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap text-text-secondary">
+                            {e.prompt}
+                          </pre>
+                        </details>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {deleteResult.details.length > 0 && (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>유형</TableHead>
                       <TableHead>값</TableHead>
-                      <TableHead>사유</TableHead>
-                      <TableHead>방법</TableHead>
+                      <TableHead>판단 방식</TableHead>
+                      <TableHead>Gemini 이유</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -909,11 +995,11 @@ function DataQualityTab() {
                         <TableCell>
                           <Badge variant="secondary">{d.entityType}</Badge>
                         </TableCell>
-                        <TableCell className="max-w-xs truncate text-body-sm">
+                        <TableCell
+                          className="max-w-[160px] truncate text-body-sm"
+                          title={d.entityTitle}
+                        >
                           {d.entityTitle}
-                        </TableCell>
-                        <TableCell className="text-body-xs text-text-secondary">
-                          {d.reason}
                         </TableCell>
                         <TableCell>
                           <Badge
@@ -921,8 +1007,14 @@ function DataQualityTab() {
                               d.method === "gemini" ? "default" : "outline"
                             }
                           >
-                            {d.method}
+                            {d.method === "gemini" ? "🤖 Gemini" : "📏 규칙"}
                           </Badge>
+                          <span className="ml-1 text-body-xs text-text-tertiary">
+                            {d.reason}
+                          </span>
+                        </TableCell>
+                        <TableCell className="max-w-[200px] text-body-xs text-text-secondary">
+                          {d.geminiReasoning ?? "—"}
                         </TableCell>
                       </TableRow>
                     ))}
@@ -931,6 +1023,7 @@ function DataQualityTab() {
               )}
             </div>
           )}
+
           {sweepResult && (
             <div className="rounded-md bg-surface-secondary p-3 text-body-sm">
               <span className="font-medium">상태 업데이트:</span>{" "}
@@ -965,14 +1058,103 @@ function DataQualityTab() {
                 {drainResult.processed}건
               </span>{" "}
               처리 ({drainResult.rounds}라운드) — 성공{" "}
-              <span className="font-semibold">{drainResult.succeeded}</span>,{" "}
+              <span className="font-semibold">{drainResult.succeeded}</span>,
               실패{" "}
-              <span className="font-semibold text-red-500">
+              <span
+                className={`font-semibold ${drainResult.failed > 0 ? "text-red-500" : ""}`}
+              >
                 {drainResult.failed}
               </span>
             </div>
           )}
         </CardContent>
+      </Card>
+
+      {/* 수정 이력 */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
+          <CardTitle className="text-sm">수정·삭제 이력</CardTitle>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={loadLogs}
+            disabled={loadingLogs}
+          >
+            {loadingLogs ? "로딩 중..." : "최근 100건 조회"}
+          </Button>
+        </CardHeader>
+        {fixLogs && (
+          <CardContent>
+            {fixLogs.length === 0 ? (
+              <p className="text-body-sm text-text-secondary">이력 없음</p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>시각</TableHead>
+                    <TableHead>유형</TableHead>
+                    <TableHead>필드</TableHead>
+                    <TableHead>기존값</TableHead>
+                    <TableHead>처리</TableHead>
+                    <TableHead>판단 / 에러</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {fixLogs.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell className="whitespace-nowrap text-body-xs text-text-tertiary">
+                        {new Date(log.fixed_at).toLocaleString("ko-KR", {
+                          month: "2-digit",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary">{log.entity_type}</Badge>
+                      </TableCell>
+                      <TableCell className="text-body-xs">
+                        {log.field_name}
+                      </TableCell>
+                      <TableCell
+                        className="max-w-[140px] truncate text-body-xs"
+                        title={log.old_value ?? ""}
+                      >
+                        {log.old_value ?? "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant={
+                            log.fix_method === "deleted"
+                              ? "danger"
+                              : log.fix_method === "queued_ai"
+                                ? "default"
+                                : "outline"
+                          }
+                        >
+                          {log.fix_method}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="max-w-[220px] text-body-xs">
+                        {log.error_msg ? (
+                          <span className="text-red-500">{log.error_msg}</span>
+                        ) : log.gemini_reasoning ? (
+                          <span className="text-text-secondary">
+                            {log.gemini_reasoning}
+                          </span>
+                        ) : (
+                          <span className="text-text-tertiary">
+                            {log.issue_type}
+                          </span>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        )}
       </Card>
     </div>
   );

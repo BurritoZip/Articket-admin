@@ -49,7 +49,12 @@ interface DashboardStats {
     d_day: number;
   }>;
   unlinked_events: number;
-  enrichment: { enriched: number; pending: number; skipped: number; failed: number };
+  enrichment: {
+    enriched: number;
+    pending: number;
+    skipped: number;
+    failed: number;
+  };
   queue: { pending: number; processing: number; done: number; failed: number };
   recent_jobs: Array<{
     id: string;
@@ -76,12 +81,37 @@ interface PipelineStep {
 // ── 파이프라인 단계 메타 ───────────────────────────────────────────────
 
 const STEPS = [
-  { key: "crawl",  label: "크롤링",      icon: Database,      desc: "yes24/melon/interpark" },
-  { key: "sweep",  label: "상태 업데이트", icon: RefreshCw,     desc: "종료/진행 자동 전환" },
-  { key: "fix",    label: "품질 수정",    icon: Zap,           desc: "이상 필드 null 처리" },
-  { key: "delete", label: "불량 삭제",    icon: AlertTriangle, desc: "Gemini 판단 삭제" },
-  { key: "enrich", label: "보강",         icon: Sparkles,      desc: "아티스트 정보 채우기" },
-  { key: "merge",  label: "중복 병합",    icon: CheckCircle2,  desc: "완전일치 자동 병합" },
+  {
+    key: "crawl",
+    label: "크롤링",
+    icon: Database,
+    desc: "yes24/melon/interpark",
+  },
+  {
+    key: "sweep",
+    label: "상태 업데이트",
+    icon: RefreshCw,
+    desc: "종료/진행 자동 전환",
+  },
+  { key: "fix", label: "품질 수정", icon: Zap, desc: "이상 필드 null 처리" },
+  {
+    key: "delete",
+    label: "불량 삭제",
+    icon: AlertTriangle,
+    desc: "Gemini 판단 삭제",
+  },
+  {
+    key: "enrich",
+    label: "보강",
+    icon: Sparkles,
+    desc: "아티스트 정보 채우기",
+  },
+  {
+    key: "merge",
+    label: "중복 병합",
+    icon: CheckCircle2,
+    desc: "완전일치 자동 병합",
+  },
 ] as const;
 
 // ── 헬퍼 ──────────────────────────────────────────────────────────────
@@ -90,7 +120,8 @@ function stepResultSummary(s: PipelineStep): string {
   if (!s.result) return "";
   const r = s.result;
   if (s.step_name === "sweep") return `${r.updated ?? 0}건`;
-  if (s.step_name === "fix") return `수정 ${r.fixed ?? 0} / 큐 ${r.queued ?? 0}`;
+  if (s.step_name === "fix")
+    return `수정 ${r.fixed ?? 0} / 큐 ${r.queued ?? 0}`;
   if (s.step_name === "delete") return `${r.deleted ?? 0}건`;
   if (s.step_name === "enrich")
     return `완료 ${r.succeeded ?? 0} / 실패 ${r.failed ?? 0}`;
@@ -103,7 +134,9 @@ function elapsed(s: PipelineStep): string {
   if (!s.started_at || !s.finished_at) return "";
   const ms =
     new Date(s.finished_at).getTime() - new Date(s.started_at).getTime();
-  return ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.round(ms / 60_000)}m`;
+  return ms < 60_000
+    ? `${Math.round(ms / 1000)}s`
+    : `${Math.round(ms / 60_000)}m`;
 }
 
 // ── 메인 컴포넌트 ────────────────────────────────────────────────────
@@ -113,6 +146,9 @@ export function DashboardPageClient() {
   const queryClient = useQueryClient();
   const [fixingEnded, setFixingEnded] = React.useState(false);
   const [runningPipeline, setRunningPipeline] = React.useState(false);
+  const [selectedStep, setSelectedStep] = React.useState<PipelineStep | null>(
+    null,
+  );
 
   // stats
   const { data, isLoading } = useQuery<DashboardStats>({
@@ -147,7 +183,9 @@ export function DashboardPageClient() {
     if (isAnyRunning && !runningPipeline) setRunningPipeline(true);
     if (!isAnyRunning && runningPipeline) {
       setRunningPipeline(false);
-      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["admin-dashboard-stats"],
+      });
     }
   }, [isAnyRunning, runningPipeline, queryClient]);
 
@@ -163,17 +201,23 @@ export function DashboardPageClient() {
     } finally {
       setRunningPipeline(false);
       void refetchPipeline();
-      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["admin-dashboard-stats"],
+      });
     }
   };
 
   const handleFixEnded = async () => {
     setFixingEnded(true);
     try {
-      const res = await fetch("/api/admin/events/sweep-statuses", { method: "POST" });
+      const res = await fetch("/api/admin/events/sweep-statuses", {
+        method: "POST",
+      });
       const json = (await res.json()) as { updated?: number };
       toast.success(`${json.updated ?? 0}건 상태 업데이트`);
-      void queryClient.invalidateQueries({ queryKey: ["admin-dashboard-stats"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["admin-dashboard-stats"],
+      });
     } catch {
       toast.error("실패");
     } finally {
@@ -181,13 +225,12 @@ export function DashboardPageClient() {
     }
   };
 
-  const enrichTotal =
-    data
-      ? data.enrichment.enriched +
-        data.enrichment.pending +
-        data.enrichment.skipped +
-        data.enrichment.failed
-      : 1;
+  const enrichTotal = data
+    ? data.enrichment.enriched +
+      data.enrichment.pending +
+      data.enrichment.skipped +
+      data.enrichment.failed
+    : 1;
   const enrichPct = data
     ? Math.round((data.enrichment.enriched / enrichTotal) * 100)
     : 0;
@@ -254,7 +297,9 @@ export function DashboardPageClient() {
                 <>
                   <p className="text-3xl font-bold">{card.total ?? 0}</p>
                   {card.sub && (
-                    <p className="mt-1 text-body-sm text-text-tertiary">{card.sub}</p>
+                    <p className="mt-1 text-body-sm text-text-tertiary">
+                      {card.sub}
+                    </p>
                   )}
                 </>
               )}
@@ -287,7 +332,18 @@ export function DashboardPageClient() {
               const status: StepStatus = step?.status ?? "idle";
               return (
                 <React.Fragment key={meta.key}>
-                  <div className="flex min-w-[108px] flex-col items-center gap-1.5 px-1">
+                  <div
+                    className={`flex min-w-[108px] flex-col items-center gap-1.5 px-1 ${
+                      step && status !== "idle" ? "cursor-pointer" : ""
+                    } ${selectedStep?.step_name === meta.key ? "opacity-100" : ""}`}
+                    onClick={() => {
+                      if (step && status !== "idle") {
+                        setSelectedStep(
+                          selectedStep?.step_name === meta.key ? null : step,
+                        );
+                      }
+                    }}
+                  >
                     {/* 아이콘 + 상태 링 */}
                     <div
                       className={`relative flex h-10 w-10 items-center justify-center rounded-full border-2 transition-all ${
@@ -298,7 +354,7 @@ export function DashboardPageClient() {
                             : status === "failed"
                               ? "border-red-500 bg-red-50"
                               : "border-border bg-surface-secondary"
-                      }`}
+                      } ${selectedStep?.step_name === meta.key ? "ring-2 ring-brand/40" : ""}`}
                     >
                       {status === "running" ? (
                         <Loader2 className="h-4 w-4 animate-spin text-brand" />
@@ -397,8 +453,57 @@ export function DashboardPageClient() {
                         new Date(a.finished_at!).getTime(),
                     )[0]?.finished_at ?? "",
                 )}
+                {" · "}
+                <span className="text-text-tertiary">
+                  단계 클릭 시 상세 결과
+                </span>
               </p>
             )}
+
+          {/* 선택된 단계 상세 */}
+          {selectedStep && (
+            <div className="mt-3 rounded-md border border-border bg-surface-secondary p-3 text-body-sm">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-medium">
+                  {STEPS.find((s) => s.key === selectedStep.step_name)?.label ??
+                    selectedStep.step_name}{" "}
+                  상세
+                </span>
+                <button
+                  className="text-text-tertiary hover:text-text-primary"
+                  onClick={() => setSelectedStep(null)}
+                >
+                  ✕
+                </button>
+              </div>
+
+              {selectedStep.error && (
+                <div className="mb-2 rounded bg-red-50 p-2 text-body-xs text-red-600">
+                  <span className="font-semibold">오류:</span>{" "}
+                  {selectedStep.error}
+                </div>
+              )}
+
+              {selectedStep.started_at && (
+                <div className="mb-1 text-body-xs text-text-tertiary">
+                  시작: {formatKst(selectedStep.started_at)}
+                  {selectedStep.finished_at && (
+                    <>
+                      {" "}
+                      · 완료: {formatKst(selectedStep.finished_at)} ·{" "}
+                      {elapsed(selectedStep)}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {selectedStep.result && (
+                <pre className="mt-2 max-h-40 overflow-auto rounded bg-surface-primary p-2 text-body-xs text-text-secondary">
+                  {JSON.stringify(selectedStep.result, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -417,12 +522,27 @@ export function DashboardPageClient() {
             ) : data ? (
               <>
                 {[
-                  { label: "대기 중", val: data.queue.pending, color: data.queue.pending > 0 ? "text-yellow-500" : "" },
+                  {
+                    label: "대기 중",
+                    val: data.queue.pending,
+                    color: data.queue.pending > 0 ? "text-yellow-500" : "",
+                  },
                   { label: "처리 중", val: data.queue.processing, color: "" },
-                  { label: "완료", val: data.queue.done, color: "text-green-600" },
-                  { label: "실패", val: data.queue.failed, color: data.queue.failed > 0 ? "text-red-500" : "" },
+                  {
+                    label: "완료",
+                    val: data.queue.done,
+                    color: "text-green-600",
+                  },
+                  {
+                    label: "실패",
+                    val: data.queue.failed,
+                    color: data.queue.failed > 0 ? "text-red-500" : "",
+                  },
                 ].map(({ label, val, color }) => (
-                  <div key={label} className="flex items-center justify-between text-body-sm">
+                  <div
+                    key={label}
+                    className="flex items-center justify-between text-body-sm"
+                  >
                     <span className="text-text-secondary">{label}</span>
                     <span className={`font-semibold ${color}`}>{val}건</span>
                   </div>
@@ -467,13 +587,35 @@ export function DashboardPageClient() {
                 </div>
                 <div className="grid grid-cols-2 gap-2 pt-1">
                   {[
-                    { label: "완료", val: data.enrichment.enriched, color: "text-green-600" },
-                    { label: "미보강", val: data.enrichment.pending, color: data.enrichment.pending > 0 ? "text-yellow-500" : "" },
-                    { label: "건너뜀", val: data.enrichment.skipped, color: "" },
-                    { label: "실패", val: data.enrichment.failed, color: data.enrichment.failed > 0 ? "text-red-500" : "" },
+                    {
+                      label: "완료",
+                      val: data.enrichment.enriched,
+                      color: "text-green-600",
+                    },
+                    {
+                      label: "미보강",
+                      val: data.enrichment.pending,
+                      color:
+                        data.enrichment.pending > 0 ? "text-yellow-500" : "",
+                    },
+                    {
+                      label: "건너뜀",
+                      val: data.enrichment.skipped,
+                      color: "",
+                    },
+                    {
+                      label: "실패",
+                      val: data.enrichment.failed,
+                      color: data.enrichment.failed > 0 ? "text-red-500" : "",
+                    },
                   ].map(({ label, val, color }) => (
-                    <div key={label} className="rounded-md bg-surface-secondary p-2 text-center">
-                      <p className="text-body-xs text-text-secondary">{label}</p>
+                    <div
+                      key={label}
+                      className="rounded-md bg-surface-secondary p-2 text-center"
+                    >
+                      <p className="text-body-xs text-text-secondary">
+                        {label}
+                      </p>
                       <p className={`font-semibold ${color}`}>{val}</p>
                     </div>
                   ))}
@@ -514,7 +656,9 @@ export function DashboardPageClient() {
                   <span className="font-medium">{job.source}</span>
                 </div>
                 <div className="flex items-center gap-3 text-text-secondary">
-                  <span>발견 {job.eventsFound} · 저장 {job.eventsUpserted}</span>
+                  <span>
+                    발견 {job.eventsFound} · 저장 {job.eventsUpserted}
+                  </span>
                   <span className="text-body-xs">
                     {job.finishedAt ? formatKst(job.finishedAt) : "—"}
                   </span>
@@ -562,7 +706,11 @@ export function DashboardPageClient() {
                   >
                     목록 보기
                   </Button>
-                  <Button size="sm" loading={fixingEnded} onClick={() => void handleFixEnded()}>
+                  <Button
+                    size="sm"
+                    loading={fixingEnded}
+                    onClick={() => void handleFixEnded()}
+                  >
                     <CheckCircle2 className="mr-1 h-3 w-3" />
                     일괄 업데이트
                   </Button>
