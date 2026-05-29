@@ -43,14 +43,15 @@ else
 fi
 
 # ── 전체 파이프라인 실행 (stagepick 크롤 + sweep + fix + delete + enrich + merge) ──
-if [[ -n "${VERCEL_URL:-}" ]]; then
-  echo "[$TIMESTAMP] 파이프라인 실행 시작..." | tee -a "$LOG_FILE"
-  PIPELINE_RESPONSE=$(curl -s --max-time 310 \
-    -X POST \
-    -H "Content-Type: application/json" \
-    ${CRON_SECRET:+-H "Authorization: Bearer $CRON_SECRET"} \
-    "$VERCEL_URL/api/admin/pipeline/run" 2>&1) || true
-  echo "[$TIMESTAMP] 파이프라인 결과: $PIPELINE_RESPONSE" | tee -a "$LOG_FILE"
+REPO_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+echo "[$TIMESTAMP] 파이프라인 실행 시작..." | tee -a "$LOG_FILE"
+cd "$REPO_DIR"
+NEXT_PUBLIC_SUPABASE_URL="$SUPABASE_URL" \
+SUPABASE_SERVICE_ROLE_KEY="$SUPABASE_SERVICE_KEY" \
+npx tsx scripts/pipeline/run.ts 2>&1 | tee -a "$LOG_FILE"
+PIPELINE_EXIT=${PIPESTATUS[0]}
+if [[ $PIPELINE_EXIT -eq 0 ]]; then
+  echo "[$TIMESTAMP] 파이프라인 완료" | tee -a "$LOG_FILE"
 else
-  echo "[$TIMESTAMP] VERCEL_URL 미설정 — 파이프라인 건너뜀" | tee -a "$LOG_FILE"
+  echo "[$TIMESTAMP] 파이프라인 실패 (exit $PIPELINE_EXIT)" | tee -a "$LOG_FILE"
 fi

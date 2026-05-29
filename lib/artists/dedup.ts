@@ -13,7 +13,7 @@
  * 모든 머지는 관리자가 수동으로 confirm — 자동 머지 없음.
  */
 
-import { createClient } from "@/lib/supabase/server";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import {
   normalizeKey,
   isKoreanOnly,
@@ -123,7 +123,7 @@ export async function findDuplicateGroups(opts?: {
 }): Promise<DedupCandidate[]> {
   const limit = Math.min(opts?.limit ?? 100, 500);
   const minSim = opts?.minSimilarity ?? 0.85;
-  const db = createClient();
+  const db = createServiceRoleClient();
 
   // 전체 아티스트 fetch (배치 처리)
   const { data: rawArtists, error } = await db
