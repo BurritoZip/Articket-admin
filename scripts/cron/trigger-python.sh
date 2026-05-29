@@ -42,18 +42,15 @@ else
   exit $EXIT_CODE
 fi
 
-# ── AI 큐 드레인 (큐가 빌 때까지 처리) ──────────────────────────────
+# ── 전체 파이프라인 실행 (stagepick 크롤 + sweep + fix + delete + enrich + merge) ──
 if [[ -n "${VERCEL_URL:-}" ]]; then
-  echo "[$TIMESTAMP] AI 큐 드레인 시작..." | tee -a "$LOG_FILE"
-  AUTH_HEADER=""
-  if [[ -n "${CRON_SECRET:-}" ]]; then
-    AUTH_HEADER="-H \"Authorization: Bearer $CRON_SECRET\""
-  fi
-  DRAIN_RESPONSE=$(curl -s --max-time 310 \
+  echo "[$TIMESTAMP] 파이프라인 실행 시작..." | tee -a "$LOG_FILE"
+  PIPELINE_RESPONSE=$(curl -s --max-time 310 \
     -X POST \
+    -H "Content-Type: application/json" \
     ${CRON_SECRET:+-H "Authorization: Bearer $CRON_SECRET"} \
-    "$VERCEL_URL/api/admin/ingestion/queue/drain" 2>&1) || true
-  echo "[$TIMESTAMP] AI 큐 드레인 결과: $DRAIN_RESPONSE" | tee -a "$LOG_FILE"
+    "$VERCEL_URL/api/admin/pipeline/run" 2>&1) || true
+  echo "[$TIMESTAMP] 파이프라인 결과: $PIPELINE_RESPONSE" | tee -a "$LOG_FILE"
 else
-  echo "[$TIMESTAMP] VERCEL_URL 미설정 — AI 큐 드레인 건너뜀" | tee -a "$LOG_FILE"
+  echo "[$TIMESTAMP] VERCEL_URL 미설정 — 파이프라인 건너뜀" | tee -a "$LOG_FILE"
 fi

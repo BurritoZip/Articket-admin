@@ -1,12 +1,8 @@
 /**
- * Vercel Cron 엔드포인트 — 매시간 StagePick 크롤링 자동 실행
+ * StagePick 크롤링 + 파이프라인 실행 엔드포인트
  *
- * vercel.json crons 설정:
- *   { "path": "/api/admin/crawler/cron", "schedule": "0 * * * *" }
- *
- * 인증: Vercel이 자동으로 CRON_SECRET을 Authorization 헤더에 포함해 호출.
- *   환경변수 CRON_SECRET 설정 필요.
- *   https://vercel.com/docs/cron-jobs/manage-cron-jobs#securing-cron-jobs
+ * 로컬 launchd(trigger-python.sh)에서 curl로 호출.
+ * CRON_SECRET 환경변수 설정 시 Authorization: Bearer <secret> 헤더 필요.
  */
 
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
@@ -19,6 +15,10 @@ import {
 import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
 import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
+import {
+  processEventEnrichmentQueue,
+  queueEventEnrichment,
+} from "@/lib/ingestion/event-enrich";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
@@ -56,6 +56,9 @@ export async function GET(request: NextRequest) {
   const source = "stagepick";
   const job = await createCrawlerJob(source);
 
+  // crawl 스텝 pipeline_step_status 추적 시작
+  await stepStart("crawl").catch(() => null);
+
   try {
     const result = await runStagepickScraper(job.id, {
       maxItems: 100,
@@ -77,6 +80,27 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    const totalErrorCount = result.errorCount + artistAudit.missingCount;
+    const crawlStatus =
+      result.eventsUpserted === 0 && result.eventsFound === 0
+        ? "failed"
+        : totalErrorCount > 0
+          ? "partial"
+          : "success";
+
+    // crawl 스텝 완료 기록
+    if (crawlStatus === "failed") {
+      await stepFailed("crawl", `eventsFound=0`).catch(() => null);
+    } else {
+      await stepDone("crawl", {
+        [source]: {
+          eventsFound: result.eventsFound,
+          eventsUpserted: result.eventsUpserted,
+          errorCount: totalErrorCount,
+        },
+      }).catch(() => null);
+    }
+
     const fixR = await track("fix", () =>
       runDataQualityAutoFix({ scope: "recent_1_days" }),
     );
@@ -85,9 +109,18 @@ export async function GET(request: NextRequest) {
     const delR = await track("delete", () => runDataQualityAutoDelete({}));
     const autoDelete = { deleted: delR?.deleted ?? 0 };
 
-    const enrichR = await track("enrich", () =>
-      processArtistEnrichmentQueue(20),
-    );
+    await queueEventEnrichment();
+    const enrichR = await track("enrich", async () => {
+      const [rArtist, rEvent] = await Promise.all([
+        processArtistEnrichmentQueue(20),
+        processEventEnrichmentQueue(20),
+      ]);
+      return {
+        processed: rArtist.processed + rEvent.processed,
+        succeeded: rArtist.succeeded + rEvent.succeeded,
+        failed: rArtist.failed + rEvent.failed,
+      };
+    });
     const enrichQueue = {
       succeeded: enrichR?.succeeded ?? 0,
       failed: enrichR?.failed ?? 0,
@@ -110,16 +143,8 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const totalErrorCount = result.errorCount + artistAudit.missingCount;
-    const status =
-      result.eventsUpserted === 0 && result.eventsFound === 0
-        ? "failed"
-        : totalErrorCount > 0
-          ? "partial"
-          : "success";
-
     await finishCrawlerJob(job.id, {
-      status,
+      status: crawlStatus,
       pagesCrawled: result.pagesCrawled,
       eventsFound: result.eventsFound,
       eventsUpserted: result.eventsUpserted,

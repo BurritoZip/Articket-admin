@@ -104,7 +104,7 @@ const STEPS = [
     key: "enrich",
     label: "보강",
     icon: Sparkles,
-    desc: "아티스트 정보 채우기",
+    desc: "아티스트·공연 정보 채우기",
   },
   {
     key: "merge",
@@ -119,6 +119,17 @@ const STEPS = [
 function stepResultLines(s: PipelineStep): string[] {
   const r = s.result;
   if (!r) return [];
+  if (s.step_name === "crawl") {
+    const sources = Object.entries(r) as Array<
+      [string, Record<string, unknown>]
+    >;
+    if (sources.length === 0) return ["활성 소스 없음"];
+    return sources.map(([src, d]) =>
+      d.error
+        ? `${src}: 오류`
+        : `${src}: 발견 ${d.eventsFound ?? 0} · 저장 ${d.eventsUpserted ?? 0}`,
+    );
+  }
   if (s.step_name === "sweep") {
     const lines = [`업데이트 ${r.updated ?? 0}건`];
     const bd = r.breakdown as Record<string, number> | undefined;
@@ -147,10 +158,6 @@ function stepResultLines(s: PipelineStep): string[] {
   if (s.step_name === "merge")
     return [`아티스트 ${r.artists ?? 0}건`, `공연장 ${r.venues ?? 0}건`];
   return [];
-}
-
-function stepResultSummary(s: PipelineStep): string {
-  return stepResultLines(s).join(" / ");
 }
 
 function elapsed(s: PipelineStep, now?: number): string {

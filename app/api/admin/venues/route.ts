@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
+import { validateVenue } from "@/lib/ingestion/schemas";
 import type { VenueRow } from "@/types/venue";
 import {
   buildPaginationMeta,
@@ -88,13 +89,21 @@ export async function POST(request: Request) {
   if (!guard.ok) return guard.response;
 
   const body = (await request.json()) as Partial<VenueRow>;
-  if (!body.name?.trim()) {
-    return NextResponse.json({ error: "name_required" }, { status: 400 });
+
+  const validation = validateVenue({
+    name: body.name,
+    address: body.address,
+  });
+  if (!validation.ok) {
+    return NextResponse.json(
+      { error: "validation_failed", details: validation.errors },
+      { status: 422 },
+    );
   }
 
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("venues").insert({
-    name: body.name.trim(),
+    name: validation.data.name.trim(),
     address: body.address?.trim() ?? "",
     phone_number: body.phone_number?.trim() ?? "",
   });

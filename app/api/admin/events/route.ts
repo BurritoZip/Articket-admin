@@ -4,6 +4,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { normalizeTitle, normalizeVenueName } from "@/lib/ingestion/normalize";
 import { generateDedupKey } from "@/lib/ingestion/dedup";
+import { URL_RE } from "@/lib/data-quality/patterns";
 import type { EventRow, OptionItem } from "@/types/event";
 import {
   buildPaginationMeta,
@@ -208,6 +209,26 @@ export async function POST(request: Request) {
     return NextResponse.json(
       { error: "missing_required_fields" },
       { status: 400 },
+    );
+  }
+
+  if (body.title.trim().length < 2 || body.title.trim().length > 300) {
+    return NextResponse.json(
+      {
+        error: "validation_failed",
+        details: ["제목은 2~300자 이내여야 합니다."],
+      },
+      { status: 422 },
+    );
+  }
+
+  if (URL_RE.test(body.title)) {
+    return NextResponse.json(
+      {
+        error: "validation_failed",
+        details: ["제목에 URL을 포함할 수 없습니다."],
+      },
+      { status: 422 },
     );
   }
 
