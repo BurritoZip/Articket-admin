@@ -100,27 +100,26 @@ export async function runDataQualityAutoFix(
   ) {
     if (seen_(entityId, fieldName)) return;
     mark(`${entityId}:${fieldName}`);
-    const log: FixLog = {
-      entityType,
-      entityId,
-      fieldName,
-      issueType,
-      oldValue,
-      fixMethod: "queued_ai",
-    };
-    logs.push(log);
+
     if (!dryRun) {
-      await db.from("ai_processing_queue").upsert(
-        {
-          task_type: taskType,
-          entity_type: entityType,
-          entity_id: entityId,
-          status: "pending",
-          priority: 2,
-          payload: { ...payload, issueType, fieldName },
-        },
-        { onConflict: "entity_id,task_type", ignoreDuplicates: true },
-      );
+      // 이미 pending/processing 상태면 새로 큐에 넣지 않음 (중복 카운트 방지)
+      const { count } = await db
+        .from("ai_processing_queue")
+        .select("id", { count: "exact", head: true })
+        .eq("entity_id", entityId)
+        .eq("task_type", taskType)
+        .in("status", ["pending", "processing"]);
+
+      if ((count ?? 0) > 0) return; // 이미 큐에 있음 — 카운트 안 함
+
+      await db.from("ai_processing_queue").insert({
+        task_type: taskType,
+        entity_type: entityType,
+        entity_id: entityId,
+        status: "pending",
+        priority: 2,
+        payload: { ...payload, issueType, fieldName },
+      });
       await db.from("data_quality_fix_logs").insert({
         entity_type: entityType,
         entity_id: entityId,
@@ -131,6 +130,16 @@ export async function runDataQualityAutoFix(
         fix_method: "queued_ai",
       });
     }
+
+    const log: FixLog = {
+      entityType,
+      entityId,
+      fieldName,
+      issueType,
+      oldValue,
+      fixMethod: "queued_ai",
+    };
+    logs.push(log);
   }
 
   // ── venues ────────────────────────────────────────────────────────
@@ -145,26 +154,64 @@ export async function runDataQualityAutoFix(
       address: string | null;
     };
 
-    if (PRICE_RE.test(name))
-      await queueAI("venue", id, "normalize_venue", "name", name, "venue_name_price", { venueName: name });
-    else if (TICKET_GRADE_RE.test(name))
-      await queueAI("venue", id, "normalize_venue", "name", name, "venue_name_ticket_grade", { venueName: name });
-    else if (DATE_RE.test(name))
-      await queueAI("venue", id, "normalize_venue", "name", name, "venue_name_date", { venueName: name });
+    // venue 이름 오염 → venue_id를 참조하는 이벤트의 venue_id를 null로 처리
+    // (처리 코드 없는 AI 큐에 넣지 않고 직접 nullField 처리)
+    if (
+      PRICE_RE.test(name) ||
+      TICKET_GRADE_RE.test(name) ||
+      DATE_RE.test(name)
+    ) {
+      await nullField(
+        "venues",
+        "venue",
+        id,
+        "name",
+        name,
+        "venue_name_contaminated",
+      );
+    }
 
     if (address) {
       if (PRICE_RE.test(address))
-        await nullField("venues", "venue", id, "address", address, "venue_address_price");
+        await nullField(
+          "venues",
+          "venue",
+          id,
+          "address",
+          address,
+          "venue_address_price",
+        );
       else if (URL_RE.test(address))
-        await nullField("venues", "venue", id, "address", address, "venue_address_url");
+        await nullField(
+          "venues",
+          "venue",
+          id,
+          "address",
+          address,
+          "venue_address_url",
+        );
       else if (
         address.length > 2 &&
         !ADDRESS_KEYWORDS_RE.test(address) &&
         VENUE_LIKE_RE.test(address)
       )
-        await nullField("venues", "venue", id, "address", address, "venue_address_looks_like_name");
+        await nullField(
+          "venues",
+          "venue",
+          id,
+          "address",
+          address,
+          "venue_address_looks_like_name",
+        );
       else if (address.trim() === name.trim())
-        await nullField("venues", "venue", id, "address", address, "venue_address_same_as_name");
+        await nullField(
+          "venues",
+          "venue",
+          id,
+          "address",
+          address,
+          "venue_address_same_as_name",
+        );
     }
   }
 
@@ -187,19 +234,55 @@ export async function runDataQualityAutoFix(
     };
 
     if (URL_RE.test(name))
-      await queueAI("artist", id, "clean_data", "name", name, "artist_name_url", { artistName: name });
+      await queueAI(
+        "artist",
+        id,
+        "clean_data",
+        "name",
+        name,
+        "artist_name_url",
+        { artistName: name },
+      );
 
     if (occupation && ADDRESS_KEYWORDS_RE.test(occupation))
-      await nullField("artists", "artist", id, "occupation", occupation, "artist_occupation_address");
+      await nullField(
+        "artists",
+        "artist",
+        id,
+        "occupation",
+        occupation,
+        "artist_occupation_address",
+      );
 
     if (label && PRICE_RE.test(label))
-      await nullField("artists", "artist", id, "label", label, "artist_label_price");
+      await nullField(
+        "artists",
+        "artist",
+        id,
+        "label",
+        label,
+        "artist_label_price",
+      );
 
     if (country && country.length > 30)
-      await nullField("artists", "artist", id, "country", country, "artist_country_too_long");
+      await nullField(
+        "artists",
+        "artist",
+        id,
+        "country",
+        country,
+        "artist_country_too_long",
+      );
 
     if (birth_place && PRICE_RE.test(birth_place))
-      await nullField("artists", "artist", id, "birth_place", birth_place, "artist_birthplace_price");
+      await nullField(
+        "artists",
+        "artist",
+        id,
+        "birth_place",
+        birth_place,
+        "artist_birthplace_price",
+      );
   }
 
   // ── events ────────────────────────────────────────────────────────
@@ -220,15 +303,27 @@ export async function runDataQualityAutoFix(
     };
 
     if (title.trim().length <= 2)
-      await queueAI("event", id, "clean_data", "title", title, "event_title_too_short", { eventTitle: title });
+      await queueAI(
+        "event",
+        id,
+        "clean_data",
+        "title",
+        title,
+        "event_title_too_short",
+        { eventTitle: title },
+      );
     else if (URL_RE.test(title))
-      await queueAI("event", id, "clean_data", "title", title, "event_title_url", { eventTitle: title });
+      await queueAI(
+        "event",
+        id,
+        "clean_data",
+        "title",
+        title,
+        "event_title_url",
+        { eventTitle: title },
+      );
 
-    if (!venue_id && !artist_id)
-      await queueAI("event", id, "match_artist", "venue_id,artist_id", title, "event_no_venue_artist", { eventTitle: title });
-
-    if (!start_date)
-      await queueAI("event", id, "parse_dates", "start_date", null, "event_no_start_date", { eventTitle: title });
+    // match_artist / parse_dates: 처리 코드 없음 — 큐 등록 안 함
   }
 
   const fixed = logs.filter((l) => l.fixMethod === "null_field").length;

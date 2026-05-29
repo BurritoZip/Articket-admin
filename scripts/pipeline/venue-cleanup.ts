@@ -19,7 +19,8 @@ async function findOrCreate(name: string): Promise<string | null> {
   if (!trimmed || trimmed.length < 2) return null;
   if (venueCache.has(trimmed)) return venueCache.get(trimmed)!;
 
-  const { data: rows } = await db.from("venues")
+  const { data: rows } = await db
+    .from("venues")
     .select("id, name")
     .ilike("name", trimmed)
     .not("name", "ilike", "%예매하기%")
@@ -31,7 +32,8 @@ async function findOrCreate(name: string): Promise<string | null> {
   }
   if (DRY_RUN) return "DRY_RUN_ID";
 
-  const { data: created } = await db.from("venues")
+  const { data: created } = await db
+    .from("venues")
     .insert({ name: trimmed, address: "", phone_number: "" })
     .select("id")
     .single();
@@ -44,10 +46,13 @@ async function findOrCreate(name: string): Promise<string | null> {
 }
 
 async function main() {
-  console.log(`\n=== venue 정리 ${DRY_RUN ? "(dry-run)" : "(실제 실행)"} ===\n`);
+  console.log(
+    `\n=== venue 정리 ${DRY_RUN ? "(dry-run)" : "(실제 실행)"} ===\n`,
+  );
 
   // ── 1. 쓰레기 venue 일괄 처리 ─────────────────────────────────────
-  const { data: trashVenues } = await db.from("venues")
+  const { data: trashVenues } = await db
+    .from("venues")
     .select("id, name")
     .ilike("name", "%예매하기%");
 
@@ -61,14 +66,16 @@ async function main() {
     groups.get(realName)!.push(v.id);
   }
 
-  let trashFixed = 0, trashNulled = 0;
+  let trashFixed = 0,
+    trashNulled = 0;
 
-  for (const [realName, trashIds] of groups) {
+  for (const [realName, trashIds] of Array.from(groups.entries())) {
     const toId = realName.length >= 2 ? await findOrCreate(realName) : null;
 
     if (!DRY_RUN) {
       // 이벤트 일괄 재연결
-      await db.from("events")
+      await db
+        .from("events")
         .update({ venue_id: toId })
         .in("venue_id", trashIds);
       // event_venues 일괄 삭제
@@ -81,18 +88,72 @@ async function main() {
       console.log(`  "${realName}" (${trashIds.length}개 venue → 재연결 OK)`);
       trashFixed += trashIds.length;
     } else {
-      console.log(`  "${realName}" (${trashIds.length}개 venue → venue_id=null)`);
+      console.log(
+        `  "${realName}" (${trashIds.length}개 venue → venue_id=null)`,
+      );
       trashNulled += trashIds.length;
     }
   }
 
   console.log(`  → 재연결: ${trashFixed}개, venue null: ${trashNulled}개\n`);
 
-  // ── 2. 세부홀 venue 병합 ─────────────────────────────────────────────
+  // ── 2. exact 중복 venue 병합 ────────────────────────────────────────
+  console.log(`[exact 중복 병합]`);
+  const { data: allForDedup } = await db
+    .from("venues")
+    .select("id, name")
+    .not("name", "ilike", "%예매하기%");
+
+  // name 기준 그룹화
+  const nameGroups = new Map<string, string[]>();
+  for (const v of allForDedup ?? []) {
+    const key = v.name.trim().toLowerCase();
+    if (!nameGroups.has(key)) nameGroups.set(key, []);
+    nameGroups.get(key)!.push(v.id);
+  }
+
+  let dedupMerged = 0;
+  for (const [, ids] of Array.from(nameGroups.entries())) {
+    if (ids.length < 2) continue;
+    // 이벤트 연결 수 기준 keep 결정
+    const counts = await Promise.all(
+      ids.map(async (id: string) => {
+        const { count } = await db
+          .from("events")
+          .select("id", { count: "exact", head: true })
+          .eq("venue_id", id);
+        return { id, count: count ?? 0 };
+      }),
+    );
+    counts.sort((a, b) => b.count - a.count);
+    const keepId = counts[0].id;
+    const deleteIds = counts.slice(1).map((c) => c.id);
+
+    console.log(
+      `  중복 병합: "${allForDedup?.find((v) => v.id === keepId)?.name}" (${deleteIds.length}개 삭제)`,
+    );
+
+    if (!DRY_RUN) {
+      await db
+        .from("events")
+        .update({ venue_id: keepId })
+        .in("venue_id", deleteIds);
+      await db
+        .from("event_venues")
+        .update({ venue_id: keepId })
+        .in("venue_id", deleteIds);
+      await db.from("venues").delete().in("id", deleteIds);
+    }
+    dedupMerged += deleteIds.length;
+  }
+  console.log(`  → ${dedupMerged}개 중복 제거\n`);
+
+  // ── 3. 세부홀 venue 병합 ─────────────────────────────────────────────
   const MERGE_MAP: Array<{ pattern: RegExp; canonical: string }> = [
     { pattern: /킨텍스/i, canonical: "킨텍스" },
     { pattern: /벡스코|bexco/i, canonical: "BEXCO" },
     { pattern: /올림픽공원/i, canonical: "올림픽공원" },
+    { pattern: /올림픽홀/i, canonical: "올림픽공원" },
     { pattern: /올림픽체조경기장|kspo\s*dome/i, canonical: "KSPO DOME" },
     { pattern: /잠실종합운동장|잠실주경기장/i, canonical: "잠실종합운동장" },
     { pattern: /세종문화회관/i, canonical: "세종문화회관" },
@@ -102,19 +163,38 @@ async function main() {
     { pattern: /경기아트센터/i, canonical: "경기아트센터" },
     { pattern: /lg아트센터/i, canonical: "LG아트센터 서울" },
     { pattern: /yes24.*live|예스24.*라이브/i, canonical: "YES24 LIVE HALL" },
+    { pattern: /충무아트센터/i, canonical: "충무아트센터" },
+    { pattern: /dcc|대전컨벤션/i, canonical: "DCC 대전컨벤션센터" },
   ];
 
-  const SUB_SUFFIX =
-    /(대극장|소극장|중극장|블랙박스|제\d+전시장|제\d+관|\d+홀|\d+번홀|야외광장|후면광장)/i;
+  // 가격·티켓등급이 이름에 포함된 venue는 삭제 대상
+  const PRICE_RE = /\d{1,3}(?:,\d{3})*원|₩\s*\d/;
+  const TICKET_RE = /[RSABVIP]석|VIP|스탠딩/i;
 
-  const { data: allVenues } = await db.from("venues")
+  const SUB_SUFFIX =
+    /(대극장|소극장|중극장|블랙박스|제\d+전시장|제\d+관|\d+홀|\d+번홀|야외광장|후면광장|올림픽홀)/i;
+
+  const { data: allVenues } = await db
+    .from("venues")
     .select("id, name")
     .not("name", "ilike", "%예매하기%");
 
-  console.log(`[세부홀 병합]`);
+  console.log(`[세부홀·오염 venue 정리]`);
   let merged = 0;
 
   for (const v of allVenues ?? []) {
+    // 가격·티켓등급 포함 → 이벤트 venue_id null + venue 삭제
+    if (PRICE_RE.test(v.name) || TICKET_RE.test(v.name)) {
+      console.log(`  가격/티켓 오염 삭제: "${v.name.slice(0, 60)}"`);
+      if (!DRY_RUN) {
+        await db.from("events").update({ venue_id: null }).eq("venue_id", v.id);
+        await db.from("event_venues").delete().eq("venue_id", v.id);
+        await db.from("venues").delete().eq("id", v.id);
+      }
+      merged++;
+      continue;
+    }
+
     if (!SUB_SUFFIX.test(v.name)) continue;
     const target = MERGE_MAP.find((m) => m.pattern.test(v.name));
     if (!target) continue;
@@ -127,13 +207,16 @@ async function main() {
 
     if (!DRY_RUN) {
       await db.from("events").update({ venue_id: toId }).eq("venue_id", v.id);
-      await db.from("event_venues").update({ venue_id: toId }).eq("venue_id", v.id);
+      await db
+        .from("event_venues")
+        .update({ venue_id: toId })
+        .eq("venue_id", v.id);
       await db.from("venues").delete().eq("id", v.id);
     }
     merged++;
   }
 
-  console.log(`  → ${merged}개 병합\n`);
+  console.log(`  → ${merged}개 처리\n`);
   console.log("=== 완료 ===");
 }
 
