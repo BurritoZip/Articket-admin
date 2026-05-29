@@ -65,11 +65,22 @@ class YanoljaScaper(BaseScraper):
                     date_raw = m.group(1)
             start_date, end_date = parse_date_range(date_raw)
 
-            # 공연장 — placeName JSON 필드만 (keywords fallback은 신뢰도 낮아 제거)
+            # 공연장 — dt#venue-label → dd span (Next.js SSR 구조)
             venue_name = ""
-            m = re.search(r'"placeName"\s*:\s*"([^"]+)"', resp.text)
-            if m:
-                venue_name = m.group(1).strip()
+            venue_dt = soup.find("dt", id="venue-label")
+            if venue_dt:
+                dd = venue_dt.find_next_sibling("dd")
+                if dd:
+                    span = dd.find("span")
+                    venue_name = (span or dd).get_text(strip=True)
+            if not venue_name:
+                # fallback: dt 텍스트가 "장소"인 경우
+                for dt in soup.find_all("dt"):
+                    if dt.get_text(strip=True) == "장소":
+                        dd = dt.find_next_sibling("dd")
+                        if dd:
+                            venue_name = dd.get_text(strip=True)
+                            break
 
             # 포스터 이미지
             image_url = None
