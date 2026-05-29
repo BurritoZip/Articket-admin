@@ -7,12 +7,21 @@
 import { sweepEventStatuses } from "../../lib/db/status-sweeper";
 import { runDataQualityAutoFix } from "../../lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "../../lib/data-quality/auto-delete";
-import { processArtistEnrichmentQueue } from "../../lib/artists/enrich";
-import { processEventEnrichmentQueue, queueEventEnrichment } from "../../lib/ingestion/event-enrich";
+import {
+  processArtistEnrichmentQueue,
+  queueArtistEnrichment,
+} from "../../lib/artists/enrich";
+import {
+  processEventEnrichmentQueue,
+  queueEventEnrichment,
+} from "../../lib/ingestion/event-enrich";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
 import { runStagepickScraper } from "../../lib/scrapers/stagepick/scraper";
-import { createCrawlerJob, finishCrawlerJob } from "../../lib/crawler/job-manager";
+import {
+  createCrawlerJob,
+  finishCrawlerJob,
+} from "../../lib/crawler/job-manager";
 import { auditCrawlerJobArtists } from "../../lib/ingestion/artist-audit";
 import { createServiceRoleClient } from "../../lib/supabase/service-role";
 import {
@@ -71,14 +80,19 @@ async function main() {
         let artistAudit = { checkedCount: 0, missingCount: 0 };
         try {
           const audit = await auditCrawlerJobArtists(job.id);
-          artistAudit = { checkedCount: audit.checkedCount, missingCount: audit.missingCount };
+          artistAudit = {
+            checkedCount: audit.checkedCount,
+            missingCount: audit.missingCount,
+          };
         } catch {}
 
         const totalErrors = result.errorCount + artistAudit.missingCount;
         const status =
           result.eventsUpserted === 0 && result.eventsFound === 0
             ? "failed"
-            : totalErrors > 0 ? "partial" : "success";
+            : totalErrors > 0
+              ? "partial"
+              : "success";
 
         await finishCrawlerJob(job.id, {
           status,
@@ -95,7 +109,9 @@ async function main() {
           eventsUpserted: result.eventsUpserted,
           errorCount: totalErrors,
         };
-        log(`  stagepick: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}, 오류 ${totalErrors}`);
+        log(
+          `  stagepick: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}, 오류 ${totalErrors}`,
+        );
       } catch (e) {
         await finishCrawlerJob(job.id, {
           status: "failed",
@@ -105,7 +121,9 @@ async function main() {
           eventsSkipped: 0,
           errorCount: 1,
         });
-        results[source.name] = { error: e instanceof Error ? e.message : String(e) };
+        results[source.name] = {
+          error: e instanceof Error ? e.message : String(e),
+        };
       }
     }
 
@@ -123,7 +141,8 @@ async function main() {
 
   // enrich
   await run("enrich", async () => {
-    const { queued: eventQueued } = await queueEventEnrichment();
+    const [{ queued: artistQueued }, { queued: eventQueued }] =
+      await Promise.all([queueArtistEnrichment(), queueEventEnrichment()]);
     const { count: totalPending } = await db
       .from("ai_processing_queue")
       .select("id", { count: "exact", head: true })
@@ -135,7 +154,7 @@ async function main() {
       processed: 0,
       succeeded: 0,
       failed: 0,
-      total_in_queue: (totalPending ?? 0) + eventQueued,
+      total_in_queue: (totalPending ?? 0) + artistQueued + eventQueued,
     };
 
     while (Date.now() < deadline) {

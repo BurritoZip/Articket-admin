@@ -3,7 +3,10 @@ import { requireAdmin } from "@/lib/supabase/require-admin";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
-import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
+import {
+  processArtistEnrichmentQueue,
+  queueArtistEnrichment,
+} from "@/lib/artists/enrich";
 import {
   processEventEnrichmentQueue,
   queueEventEnrichment,
@@ -142,8 +145,9 @@ export async function POST() {
 
   // enrich — queue events + drain all (artist + event), max 4.5min
   await run("enrich", async () => {
-    // 보강 필요한 이벤트 큐 등록
-    const { queued: eventQueued } = await queueEventEnrichment();
+    // 미보강 아티스트 + 이벤트 자동 큐 등록
+    const [{ queued: artistQueued }, { queued: eventQueued }] =
+      await Promise.all([queueArtistEnrichment(), queueEventEnrichment()]);
 
     const { count: totalPending } = await db
       .from("ai_processing_queue")
@@ -156,7 +160,7 @@ export async function POST() {
       processed: 0,
       succeeded: 0,
       failed: 0,
-      total_in_queue: (totalPending ?? 0) + eventQueued,
+      total_in_queue: (totalPending ?? 0) + artistQueued + eventQueued,
     };
 
     while (Date.now() < deadline) {

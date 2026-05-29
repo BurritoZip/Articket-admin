@@ -211,6 +211,44 @@ export async function enrichArtist(
   };
 }
 
+/** 보강이 필요한 아티스트를 큐에 자동 등록 (pipeline enrich 전에 호출) */
+export async function queueArtistEnrichment(): Promise<{ queued: number }> {
+  const db = createServiceRoleClient();
+  let queued = 0;
+
+  // enrichment_status가 null/pending이거나 핵심 필드가 비어있는 아티스트 대상
+  const { data: artists } = await db
+    .from("artists")
+    .select("id, name_en, avatar_url, occupation, enrichment_status")
+    .or("enrichment_status.is.null,enrichment_status.eq.pending")
+    .limit(500);
+
+  for (const artist of artists ?? []) {
+    // 핵심 필드가 이미 다 차있으면 skip
+    if (artist.name_en && artist.avatar_url && artist.occupation) continue;
+
+    const { count } = await db
+      .from("ai_processing_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("entity_id", artist.id)
+      .eq("task_type", "clean_data")
+      .in("status", ["pending", "processing"]);
+
+    if ((count ?? 0) > 0) continue;
+
+    const { error } = await db.from("ai_processing_queue").insert({
+      entity_type: "artist",
+      entity_id: artist.id,
+      task_type: "clean_data",
+      status: "pending",
+      priority: 1,
+    });
+    if (!error) queued++;
+  }
+
+  return { queued };
+}
+
 /** ai_processing_queue에서 대기 중인 아티스트 보강 작업 처리 */
 export async function processArtistEnrichmentQueue(maxItems = 20): Promise<{
   processed: number;

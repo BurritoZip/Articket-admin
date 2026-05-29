@@ -8,7 +8,7 @@ import {
   VENUE_LIKE_RE,
 } from "./patterns";
 
-export type FixMethod = "null_field" | "queued_ai";
+export type FixMethod = "null_field" | "queued_ai" | "flagged";
 
 export interface FixLog {
   entityType: "venue" | "artist" | "event";
@@ -22,6 +22,7 @@ export interface FixLog {
 export interface AutoFixResult {
   fixed: number;
   queued: number;
+  flagged: number;
   details: FixLog[];
 }
 
@@ -323,11 +324,36 @@ export async function runDataQualityAutoFix(
         { eventTitle: title },
       );
 
-    // match_artist / parse_dates: 처리 코드 없음 — 큐 등록 안 함
+    // venue + artist 둘 다 없음 → flagged (처리 코드 없지만 이슈 기록)
+    if (!venue_id && !artist_id && !seen_(id, "venue_id,artist_id")) {
+      mark(`${id}:venue_id,artist_id`);
+      logs.push({
+        entityType: "event",
+        entityId: id,
+        fieldName: "venue_id,artist_id",
+        issueType: "event_no_venue_artist",
+        oldValue: title,
+        fixMethod: "flagged",
+      });
+    }
+
+    // start_date 없음 → flagged
+    if (!start_date && !seen_(id, "start_date")) {
+      mark(`${id}:start_date`);
+      logs.push({
+        entityType: "event",
+        entityId: id,
+        fieldName: "start_date",
+        issueType: "event_no_start_date",
+        oldValue: null,
+        fixMethod: "flagged",
+      });
+    }
   }
 
   const fixed = logs.filter((l) => l.fixMethod === "null_field").length;
   const queued = logs.filter((l) => l.fixMethod === "queued_ai").length;
+  const flagged = logs.filter((l) => l.fixMethod === "flagged").length;
 
-  return { fixed, queued, details: logs };
+  return { fixed, queued, flagged, details: logs };
 }

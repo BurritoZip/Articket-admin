@@ -141,8 +141,12 @@ function stepResultLines(s: PipelineStep): string[] {
     }
     return lines;
   }
-  if (s.step_name === "fix")
-    return [`필드수정 ${r.fixed ?? 0}건`, `AI큐 등록 ${r.queued ?? 0}건`];
+  if (s.step_name === "fix") {
+    const lines = [`필드수정 ${r.fixed ?? 0}건`];
+    if ((r.queued as number) > 0) lines.push(`AI큐 등록 ${r.queued}건`);
+    if ((r.flagged as number) > 0) lines.push(`이슈감지 ${r.flagged}건`);
+    return lines;
+  }
   if (s.step_name === "delete") return [`삭제 ${r.deleted ?? 0}건`];
   if (s.step_name === "enrich") {
     const total = r.total_in_queue as number | undefined;
