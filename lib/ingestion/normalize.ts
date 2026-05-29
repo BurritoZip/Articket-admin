@@ -21,19 +21,27 @@ export function normalizeTitle(raw: string): string {
     .trim();
 }
 
+// venue 이름 뒤에 붙는 티켓 정보 suffix 시작 패턴
+const VENUE_SUFFIX_CUT =
+  /\s+(?:티켓\s*가격|가격\s*[-:·]|가격\s*\(|티켓\s*오픈|오픈\s*[-:·]|예매\s*[-:·]|작성\s|티켓\s*예매|[-·]\s*티켓)/i;
+
 export function normalizeVenueName(
   raw: string | null | undefined,
   eventTitle?: string,
 ): string | null {
   if (!raw?.trim()) return null;
-  const s = raw.trim();
+
+  // 티켓 정보 suffix 먼저 제거 ("예스24 라이브홀 티켓 가격: ..." → "예스24 라이브홀")
+  const cutMatch = VENUE_SUFFIX_CUT.exec(raw);
+  const s = (cutMatch ? raw.slice(0, cutMatch.index) : raw).trim();
+
   if (s.length <= 1) return null;
   // 공연 제목과 동일하면 공연장이 아님
   if (eventTitle && normalizeTitle(s) === normalizeTitle(eventTitle))
     return null;
   // 날짜로 시작하면 공연장이 아님
   if (DATE_RE.test(s.slice(0, 20))) return null;
-  // 가격·티켓등급·URL 포함 시 공연장이 아님
+  // 잘라낸 후에도 가격·티켓등급·URL 포함 시 reject
   if (PRICE_RE.test(s) || TICKET_GRADE_RE.test(s) || URL_RE.test(s))
     return null;
   return s.replace(NORMALIZE_WHITESPACE, " ").trim().toLowerCase();

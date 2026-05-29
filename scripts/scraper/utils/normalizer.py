@@ -56,6 +56,13 @@ _TICKET_GRADE_RE = re.compile(r"\b([RSABVIP]석|VIP|스탠딩|STANDING|FLOOR)\b"
 _TICKET_OPEN_RE = re.compile(r"티켓\s*(오픈|예매)|예매\s*오픈|오픈\s*예정")
 _URL_RE = re.compile(r"https?://|www\.", re.IGNORECASE)
 
+# venue 이름 뒤에 붙는 티켓 정보 suffix 시작 키워드
+# "예스24 라이브홀 티켓 가격: ..." → "예스24 라이브홀"
+_VENUE_SUFFIX_CUT = re.compile(
+    r"\s+(?:티켓\s*가격|가격\s*[-:·]|가격\s*\(|티켓\s*오픈|오픈\s*[-:·]|예매\s*[-:·]|작성\s|티켓\s*예매|[\-·]\s*티켓)",
+    re.IGNORECASE,
+)
+
 # 주소다운 키워드 (주소 필드 검증용)
 _ADDRESS_KW_RE = re.compile(r"시$|구$|동$|로$|길$|번지|특별시|광역시|도\s|읍|면")
 
@@ -81,17 +88,19 @@ def is_exhibition(title: str) -> bool:
 def sanitize_venue(venue_name: str, title: str) -> str:
     """venue_name 정제 및 동의어 표준화.
 
-    다음 경우 빈 문자열 반환 (DB에 저장하지 않음):
-    - title과 동일
-    - 날짜 패턴으로 시작
-    - 가격/티켓등급/티켓오픈/URL이 포함됨
-    - 너무 짧음 (1자)
-
-    이후 _VENUE_ALIASES 매핑으로 표준 공연장명 치환.
+    1. 티켓 정보 suffix 제거: "예스24 라이브홀 티켓 가격: ..." → "예스24 라이브홀"
+    2. 부적합 값이면 빈 문자열 반환
+    3. _VENUE_ALIASES 매핑으로 표준 공연장명 치환
     """
     if not venue_name:
         return ""
     s = venue_name.strip()
+
+    # 티켓 정보 suffix 잘라내기 (reject 전에 먼저 정제)
+    m = _VENUE_SUFFIX_CUT.search(s)
+    if m:
+        s = s[: m.start()].strip()
+
     if len(s) <= 1:
         return ""
     if normalize_title(s) == normalize_title(title):

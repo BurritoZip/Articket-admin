@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { validateArtist, validateVenue } from "./schemas";
+import { normalizeVenueName } from "./normalize";
 
 export type ArtistProfileInput = {
   name: string;
@@ -209,35 +210,47 @@ export async function matchOrCreateVenue(
   venueAddress: string | null,
 ): Promise<string | null> {
   if (!venueName?.trim()) return null;
+
+  // 저장 전에 티켓 정보 suffix 제거 ("예스24 라이브홀 티켓 가격: ..." → "예스24 라이브홀")
+  const cleanName = normalizeVenueName(venueName);
+  if (!cleanName) return null;
+
+  // normalizeVenueName은 lowercase 반환 → 원본 대소문자 보존용 trimmed 버전 따로 유지
+  const storedName = venueName
+    .replace(
+      /\s+(?:티켓\s*가격|가격\s*[-:·]|가격\s*\(|티켓\s*오픈|오픈\s*[-:·]|예매\s*[-:·]|작성\s|티켓\s*예매|[-·]\s*티켓).*/i,
+      "",
+    )
+    .trim();
+
   const db = createServiceRoleClient();
 
-  // 1. 이름 정확 매칭
+  // 1. 이름 정확 매칭 (정제된 이름으로)
   const { data: exact } = await db
     .from("venues")
     .select("id")
-    .ilike("name", venueName.trim())
+    .ilike("name", storedName)
     .limit(1)
     .maybeSingle();
   if (exact) return (exact as { id: string }).id;
 
   // 2. normalized_name 매칭
-  const normalized = venueName.toLowerCase().replace(/\s+/g, " ").trim();
   const { data: normMatch } = await db
     .from("venues")
     .select("id")
-    .ilike("normalized_name", normalized)
+    .ilike("normalized_name", cleanName)
     .limit(1)
     .maybeSingle();
   if (normMatch) return (normMatch as { id: string }).id;
 
   // 3. 새 공연장 생성 — 검증 먼저
   const venueValidation = validateVenue({
-    name: venueName.trim(),
+    name: storedName,
     address: venueAddress?.trim(),
   });
   if (!venueValidation.ok) {
     console.warn(
-      `[VenueMatcher] 유효성 검증 실패 "${venueName}": ${venueValidation.errors.join("; ")}`,
+      `[VenueMatcher] 유효성 검증 실패 "${storedName}": ${venueValidation.errors.join("; ")}`,
     );
     return null;
   }
@@ -245,8 +258,8 @@ export async function matchOrCreateVenue(
   const { data: created, error } = await db
     .from("venues")
     .insert({
-      name: venueName.trim(),
-      normalized_name: normalized,
+      name: storedName,
+      normalized_name: cleanName,
       address: venueAddress?.trim() ?? "",
       phone_number: "",
     })
