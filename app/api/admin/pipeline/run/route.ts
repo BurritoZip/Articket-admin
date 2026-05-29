@@ -6,7 +6,13 @@ import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
 import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
-import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
+import {
+  stepStart,
+  stepDone,
+  stepFailed,
+  stepProgress,
+} from "@/lib/db/pipeline-tracker";
+import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 export const maxDuration = 300;
 
@@ -39,17 +45,34 @@ export async function POST() {
   // delete
   await run("delete", () => runDataQualityAutoDelete({}));
 
-  // enrich — drain until empty (max 4.5min)
+  // enrich — drain until empty (max 4.5min), stepProgress per batch
   await run("enrich", async () => {
+    const db = createServiceRoleClient();
+    const { count: totalPending } = await db
+      .from("ai_processing_queue")
+      .select("id", { count: "exact", head: true })
+      .eq("task_type", "clean_data")
+      .eq("entity_type", "artist")
+      .eq("status", "pending");
+
     const deadline = Date.now() + 270_000;
-    let total = { processed: 0, succeeded: 0, failed: 0 };
+    let total = {
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      total_in_queue: totalPending ?? 0,
+    };
+
     while (Date.now() < deadline) {
-      const r = await processArtistEnrichmentQueue(50);
+      const r = await processArtistEnrichmentQueue(10);
       total = {
+        ...total,
         processed: total.processed + r.processed,
         succeeded: total.succeeded + r.succeeded,
         failed: total.failed + r.failed,
       };
+      // 1.5초 폴링이 잡을 수 있도록 배치마다 DB 업데이트
+      await stepProgress("enrich", total as Record<string, unknown>);
       if (r.processed === 0) break;
     }
     return total;

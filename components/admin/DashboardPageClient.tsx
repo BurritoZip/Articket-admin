@@ -116,24 +116,49 @@ const STEPS = [
 
 // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
-function stepResultSummary(s: PipelineStep): string {
-  if (!s.result) return "";
+function stepResultLines(s: PipelineStep): string[] {
   const r = s.result;
-  if (s.step_name === "sweep") return `${r.updated ?? 0}건`;
+  if (!r) return [];
+  if (s.step_name === "sweep") {
+    const lines = [`업데이트 ${r.updated ?? 0}건`];
+    const bd = r.breakdown as Record<string, number> | undefined;
+    if (bd) {
+      const parts = Object.entries(bd)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => `${k} ${v}`);
+      if (parts.length) lines.push(parts.join(" · "));
+    }
+    return lines;
+  }
   if (s.step_name === "fix")
-    return `수정 ${r.fixed ?? 0} / 큐 ${r.queued ?? 0}`;
-  if (s.step_name === "delete") return `${r.deleted ?? 0}건`;
-  if (s.step_name === "enrich")
-    return `완료 ${r.succeeded ?? 0} / 실패 ${r.failed ?? 0}`;
+    return [`필드수정 ${r.fixed ?? 0}건`, `AI큐 등록 ${r.queued ?? 0}건`];
+  if (s.step_name === "delete") return [`삭제 ${r.deleted ?? 0}건`];
+  if (s.step_name === "enrich") {
+    const total = r.total_in_queue as number | undefined;
+    const processed = (r.processed as number) ?? 0;
+    const succeeded = (r.succeeded as number) ?? 0;
+    const failed = (r.failed as number) ?? 0;
+    const lines = total
+      ? [`${processed} / ${total}건 처리`]
+      : [`처리 ${processed}건`];
+    lines.push(`성공 ${succeeded}  실패 ${failed}`);
+    return lines;
+  }
   if (s.step_name === "merge")
-    return `아티스트 ${r.artists ?? 0} / 공연장 ${r.venues ?? 0}`;
-  return "";
+    return [`아티스트 ${r.artists ?? 0}건`, `공연장 ${r.venues ?? 0}건`];
+  return [];
 }
 
-function elapsed(s: PipelineStep): string {
-  if (!s.started_at || !s.finished_at) return "";
-  const ms =
-    new Date(s.finished_at).getTime() - new Date(s.started_at).getTime();
+function stepResultSummary(s: PipelineStep): string {
+  return stepResultLines(s).join(" / ");
+}
+
+function elapsed(s: PipelineStep, now?: number): string {
+  if (!s.started_at) return "";
+  const end = s.finished_at
+    ? new Date(s.finished_at).getTime()
+    : (now ?? Date.now());
+  const ms = end - new Date(s.started_at).getTime();
   return ms < 60_000
     ? `${Math.round(ms / 1000)}s`
     : `${Math.round(ms / 60_000)}m`;
@@ -149,6 +174,14 @@ export function DashboardPageClient() {
   const [selectedStep, setSelectedStep] = React.useState<PipelineStep | null>(
     null,
   );
+  const [now, setNow] = React.useState(Date.now());
+
+  // 실행 중일 때 경과시간 갱신
+  React.useEffect(() => {
+    if (!runningPipeline) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [runningPipeline]);
 
   // stats
   const { data, isLoading } = useQuery<DashboardStats>({
@@ -372,7 +405,7 @@ export function DashboardPageClient() {
                       {meta.label}
                     </span>
 
-                    {/* 상태 배지 */}
+                    {/* 상태 + 경과시간 */}
                     <span
                       className={`text-body-xs font-semibold ${
                         status === "running"
@@ -387,35 +420,37 @@ export function DashboardPageClient() {
                       {status === "idle" ? (
                         <Minus className="inline h-3 w-3" />
                       ) : status === "running" ? (
-                        "실행 중"
+                        `실행 중 ${elapsed(step!, now)}`
                       ) : status === "done" ? (
-                        "완료"
+                        `완료 ${elapsed(step!)}`
                       ) : (
                         "실패"
                       )}
                     </span>
 
-                    {/* 결과 요약 */}
-                    {step && status === "done" && (
-                      <span className="text-center text-body-xs text-text-tertiary leading-tight">
-                        {stepResultSummary(step)}
-                      </span>
-                    )}
-
-                    {/* 소요 시간 */}
-                    {step && status === "done" && elapsed(step) && (
-                      <span className="text-body-xs text-text-tertiary">
-                        {elapsed(step)}
-                      </span>
-                    )}
+                    {/* 결과 — 실행 중·완료 모두 표시 */}
+                    {step &&
+                      (status === "done" || status === "running") &&
+                      stepResultLines(step).map((line, li) => (
+                        <span
+                          key={li}
+                          className={`text-center text-body-xs leading-tight ${
+                            status === "running"
+                              ? "text-brand/80 font-medium"
+                              : "text-text-tertiary"
+                          }`}
+                        >
+                          {line}
+                        </span>
+                      ))}
 
                     {/* 에러 */}
                     {step?.error && (
                       <span
-                        className="max-w-[100px] truncate text-center text-body-xs text-red-400"
+                        className="max-w-[108px] truncate text-center text-body-xs text-red-500 font-medium"
                         title={step.error}
                       >
-                        {step.error.slice(0, 30)}
+                        ⚠ {step.error.slice(0, 40)}
                       </span>
                     )}
                   </div>
