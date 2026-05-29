@@ -1,4 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { validateArtist, validateVenue } from "./schemas";
 
 export type ArtistProfileInput = {
   name: string;
@@ -100,7 +101,18 @@ export async function matchOrCreateArtist(
     return id;
   }
 
-  // 4. 매칭 실패 시 새 아티스트 생성
+  // 4. 매칭 실패 시 새 아티스트 생성 — 검증 먼저
+  const artistValidation = validateArtist({
+    name: rawName.trim(),
+    avatar_url: profile?.avatarUrl,
+  });
+  if (!artistValidation.ok) {
+    console.warn(
+      `[ArtistMatcher] 유효성 검증 실패 "${rawName}": ${artistValidation.errors.join("; ")}`,
+    );
+    return null;
+  }
+
   const { data: created, error } = await db
     .from("artists")
     .insert({
@@ -218,7 +230,18 @@ export async function matchOrCreateVenue(
     .maybeSingle();
   if (normMatch) return (normMatch as { id: string }).id;
 
-  // 3. 새 공연장 생성
+  // 3. 새 공연장 생성 — 검증 먼저
+  const venueValidation = validateVenue({
+    name: venueName.trim(),
+    address: venueAddress?.trim(),
+  });
+  if (!venueValidation.ok) {
+    console.warn(
+      `[VenueMatcher] 유효성 검증 실패 "${venueName}": ${venueValidation.errors.join("; ")}`,
+    );
+    return null;
+  }
+
   const { data: created, error } = await db
     .from("venues")
     .insert({

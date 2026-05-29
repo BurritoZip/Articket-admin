@@ -5,6 +5,7 @@ import {
   matchOrCreateArtists,
   matchOrCreateVenue,
 } from "./artist-matcher";
+import { validateEvent } from "./schemas";
 import type { NormalizedEvent, UpsertResult } from "@/types/ingestion";
 
 const TRACKED_FIELDS = [
@@ -23,6 +24,37 @@ export async function upsertEvent(
   jobId: string,
 ): Promise<UpsertResult> {
   const db = createServiceRoleClient();
+
+  // ── 입력 유효성 검증 ──────────────────────────────────────────────
+  const validation = validateEvent({
+    title: event.title,
+    start_date: event.startDate,
+    end_date: event.endDate,
+    status: event.status,
+    dedup_key: event.dedupKey,
+    source_name: event.sourceName,
+  });
+
+  if (!validation.ok) {
+    const errors = validation.errors.join("; ");
+    console.warn(
+      `[upsertEvent] 유효성 검증 실패 ("${event.title}"): ${errors}`,
+    );
+    await db
+      .from("ingestion_errors")
+      .insert({
+        source_name: event.sourceName,
+        event_id: null,
+        step: "validate",
+        message: errors,
+        context: { title: event.title, dedupKey: event.dedupKey },
+      })
+      .then(
+        () => null,
+        () => null,
+      );
+    return { action: "skipped", eventId: "", changes: [] };
+  }
 
   const matchedArtists = await matchOrCreateArtists(
     event.artists,

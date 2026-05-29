@@ -4,10 +4,16 @@ from datetime import date, datetime
 from typing import Optional
 
 from supabase import Client
+from validation import validate_venue, validate_artist, validate_event
 
 
-def upsert_venue(client: Client, name: str, address: str, phone: Optional[str] = None) -> str:
-    """공연장 UPSERT. 반환: venue_id (UUID string)"""
+def upsert_venue(client: Client, name: str, address: str, phone: Optional[str] = None) -> Optional[str]:
+    """공연장 UPSERT. 반환: venue_id (UUID string) 또는 None (검증 실패)"""
+    ok, errors = validate_venue(name, address)
+    if not ok:
+        print(f"  [공연장 검증 실패] {name!r}: {'; '.join(errors)}")
+        return None
+
     existing = (
         client.table("venues")
         .select("id")
@@ -31,8 +37,13 @@ def upsert_artist(
     name: str,
     avatar_url: Optional[str] = None,
     upcoming_event_count: Optional[int] = None,
-) -> str:
-    """아티스트 UPSERT (이름 기준). 반환: artist_id (UUID string)"""
+) -> Optional[str]:
+    """아티스트 UPSERT (이름 기준). 반환: artist_id (UUID string) 또는 None (검증 실패)"""
+    ok, errors = validate_artist(name, avatar_url)
+    if not ok:
+        print(f"  [아티스트 검증 실패] {name!r}: {'; '.join(errors)}")
+        return None
+
     existing = client.table("artists").select("id").eq("name", name).execute()
     if existing.data:
         artist_id = existing.data[0]["id"]
@@ -72,13 +83,18 @@ def upsert_event(
     organizer: Optional[str] = None,
     source_name: str,
     source_url: Optional[str] = None,
-) -> str:
+) -> Optional[str]:
     """
     이벤트 UPSERT.
     - 신규: INSERT
     - 기존(dedup_key 충돌): source_urls에 새 출처 추가, crawled_at 갱신
-    반환: event_id
+    반환: event_id 또는 None (검증 실패)
     """
+    ok, errors = validate_event(title, dedup_key, start_date, end_date, source_name)
+    if not ok:
+        print(f"  [이벤트 검증 실패] {title!r}: {'; '.join(errors)}")
+        return None
+
     source_entry = {"site": source_name, "url": source_url} if source_url else {"site": source_name}
 
     # 1차: dedup_key 정확 매칭
