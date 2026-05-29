@@ -65,17 +65,11 @@ class YanoljaScaper(BaseScraper):
                     date_raw = m.group(1)
             start_date, end_date = parse_date_range(date_raw)
 
-            # 공연장 — placeName JSON 필드 또는 keywords 메타 3번째 항목
+            # 공연장 — placeName JSON 필드만 (keywords fallback은 신뢰도 낮아 제거)
             venue_name = ""
             m = re.search(r'"placeName"\s*:\s*"([^"]+)"', resp.text)
             if m:
                 venue_name = m.group(1).strip()
-            if not venue_name:
-                kw = soup.find("meta", attrs={"name": "keywords"})
-                if kw and kw.get("content"):
-                    parts = [p.strip() for p in kw["content"].split(",")]
-                    if len(parts) >= 3:
-                        venue_name = parts[2]
 
             # 포스터 이미지
             image_url = None

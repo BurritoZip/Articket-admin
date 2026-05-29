@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
+import { VenueIngestionSchema } from "@/lib/ingestion/schemas";
 
 export async function PATCH(
   request: Request,
@@ -14,6 +15,22 @@ export async function PATCH(
     address?: string;
     phone_number?: string;
   };
+
+  if (body.name !== undefined || body.address !== undefined) {
+    const result = VenueIngestionSchema.partial().safeParse({
+      name: body.name,
+      address: body.address,
+    });
+    if (!result.success) {
+      return NextResponse.json(
+        {
+          error: "validation_failed",
+          details: result.error.errors.map((e) => e.message),
+        },
+        { status: 422 },
+      );
+    }
+  }
 
   const payload: Record<string, string> = {};
   if (typeof body.name === "string") payload.name = body.name.trim();

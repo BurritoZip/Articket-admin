@@ -1,4 +1,5 @@
 import * as cheerio from "cheerio";
+import { normalizeArtistName } from "@/lib/ingestion/normalize";
 
 export interface StagepickListItem {
   detailUrl: string;
@@ -230,16 +231,23 @@ export function parseDetailPage(
       "예매 상품 선택",
       "공연 소개",
       "다른 회차",
+      "공연 장소",
+      "장소 안내",
+      "관람 안내",
+      "주의 사항",
+      "티켓 정보",
+      "티켓팅",
     ];
     for (const line of lines.slice(artistStart + 1)) {
       if (sectionEndLabels.some((stop) => line.startsWith(stop))) {
         break;
       }
-      const artist = line
+      const raw = line
         .replace(/^#+\s*/, "")
         .replace(/\s*자세히 보기\s*$/, "")
         .trim();
-      if (artist && artist.length < 80 && !artist.includes("공연 장소")) {
+      const artist = normalizeArtistName(raw);
+      if (artist && artist.length >= 1 && artist.length < 80) {
         artists.push(artist);
       }
     }

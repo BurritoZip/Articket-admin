@@ -3,6 +3,7 @@ import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { normalizeTitle, normalizeVenueName } from "@/lib/ingestion/normalize";
 import { generateDedupKey } from "@/lib/ingestion/dedup";
+import { URL_RE } from "@/lib/data-quality/patterns";
 import type { EventRow } from "@/types/event";
 
 async function recomputeUpcomingCount(artistId: string) {
@@ -29,6 +30,26 @@ export async function PATCH(
     artist_ids?: string[];
     venue_ids?: string[];
   };
+
+  if (body.title !== undefined) {
+    const t = body.title?.trim() ?? "";
+    if (t.length < 2 || t.length > 300 || URL_RE.test(t)) {
+      return NextResponse.json(
+        {
+          error: "validation_failed",
+          details: ["제목은 2~300자, URL 포함 불가"],
+        },
+        { status: 422 },
+      );
+    }
+  }
+
+  if (body.end_date && !isNaN(Date.parse(body.end_date)) === false) {
+    return NextResponse.json(
+      { error: "validation_failed", details: ["end_date 날짜 형식 오류"] },
+      { status: 422 },
+    );
+  }
 
   if (
     body.start_date &&
@@ -137,7 +158,9 @@ export async function PATCH(
         .select("id, name")
         .in("id", artist_ids);
       const artistNameMap = new Map(
-        (artistRows as { id: string; name: string }[] | null ?? []).map((a) => [a.id, a.name]),
+        ((artistRows as { id: string; name: string }[] | null) ?? []).map(
+          (a) => [a.id, a.name],
+        ),
       );
       await supabase.from("event_artists").insert(
         artist_ids.map((aid, i) => ({
@@ -193,9 +216,9 @@ export async function DELETE(
     .from("event_artists")
     .select("artist_id")
     .eq("event_id", params.id);
-  const artistIds = (eventArtists as { artist_id: string }[] | null ?? []).map(
-    (a) => a.artist_id,
-  );
+  const artistIds = (
+    (eventArtists as { artist_id: string }[] | null) ?? []
+  ).map((a) => a.artist_id);
 
   // Fallback to events.artist_id if event_artists is empty
   if (artistIds.length === 0) {

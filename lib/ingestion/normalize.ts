@@ -117,7 +117,7 @@ export function inferStatus(
 
 export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
   const normalizedTitle = normalizeTitle(raw.title);
-  const normalizedVenueName = normalizeVenueName(raw.venueName);
+  const normalizedVenueName = normalizeVenueName(raw.venueName, raw.title);
   const startDate = parseDate(raw.startDate);
   const endDate = parseEndDate(raw.endDate) ?? parseEndDate(raw.startDate);
 

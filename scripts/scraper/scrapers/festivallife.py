@@ -87,15 +87,22 @@ class FestivalLifeScraper(BaseScraper):
             # 본문 텍스트에서 날짜/공연장 추출
             body_text = soup.get_text(" ", strip=True)
 
-            # 날짜 파싱
-            date_match = re.search(
+            # 날짜 파싱 — 가격처럼 보이는 패턴(숫자+원) 바로 앞이면 건너뜀
+            DATE_PAT = re.compile(
                 r"(\d{4}년\s*\d{1,2}월\s*\d{1,2}[~～\-]\d{1,2}일"
                 r"|\d{4}년\s*\d{1,2}월\s*\d{1,2}일"
                 r"|\d{4}[.\-]\d{1,2}[.\-]\d{1,2}\s*[~～]\s*\d{4}[.\-]\d{1,2}[.\-]\d{1,2}"
-                r"|\d{4}[.\-]\d{1,2}[.\-]\d{1,2})",
-                body_text
+                r"|\d{4}[.\-]\d{1,2}[.\-]\d{1,2})"
             )
-            date_raw = date_match.group(0) if date_match else ""
+            PRICE_CONTEXT = re.compile(r"\d[\d,]*\s*원")
+            date_raw = ""
+            for m in DATE_PAT.finditer(body_text):
+                # 매칭 앞뒤 30자에 가격 패턴이 있으면 건너뜀
+                ctx = body_text[max(0, m.start() - 30):m.end() + 30]
+                if PRICE_CONTEXT.search(ctx):
+                    continue
+                date_raw = m.group(0)
+                break
             start_date, end_date = parse_date_range(date_raw)
 
             # 공연장

@@ -44,6 +44,19 @@ function toTime(value: string): string {
   return `${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
 }
 
+function isValidTime(t: string): boolean {
+  const match = /^(\d{2}):(\d{2})$/.exec(t);
+  if (!match) return false;
+  const h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  return h >= 0 && h <= 23 && m >= 0 && m <= 59;
+}
+
+function timeToMinutes(t: string): number {
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
 function toDateString(year: number, month: string, day: string): string {
   return `${year}.${month.padStart(2, "0")}.${day.padStart(2, "0")}`;
 }
@@ -69,10 +82,7 @@ function dayNumberFromDate(event: EventInfo, dateString: string): number {
 }
 
 function cleanLine(line: string): string {
-  return line
-    .replace(/[|]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return line.replace(/[|]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function parseLine(
@@ -125,11 +135,17 @@ function parseLine(
 
   if (!artistName || !stageName) return null;
 
+  const startTime = toTime(timeMatch[1]);
+  const endTime = toTime(timeMatch[2]);
+
+  if (!isValidTime(startTime) || !isValidTime(endTime)) return null;
+  if (timeToMinutes(startTime) >= timeToMinutes(endTime)) return null;
+
   return {
     day_number: dayNumber,
     date_string: dateString,
-    start_time: toTime(timeMatch[1]),
-    end_time: toTime(timeMatch[2]),
+    start_time: startTime,
+    end_time: endTime,
     artist_name: artistName,
     stage_name: stageName,
     genre: event.genre ?? "",
@@ -156,11 +172,16 @@ function parseStageTimeSlot(
   const stageName = line.replace(timeMatch[0], " ").trim();
   if (!stageName || /\d{1,2}[:.]\d{2}/.test(stageName)) return null;
 
+  const startTime = toTime(timeMatch[1]);
+  const endTime = toTime(timeMatch[2]);
+  if (!isValidTime(startTime) || !isValidTime(endTime)) return null;
+  if (timeToMinutes(startTime) >= timeToMinutes(endTime)) return null;
+
   return {
     day_number: context.dayNumber,
     date_string: context.dateString || eventDateAt(event, context.dayNumber),
-    start_time: toTime(timeMatch[1]),
-    end_time: toTime(timeMatch[2]),
+    start_time: startTime,
+    end_time: endTime,
     stage_name: stageName,
   };
 }
@@ -233,7 +254,10 @@ export function parseTimetableText(
     if (parsed) {
       rows.push(parsed);
     } else {
-      issues.push({ line, reason: "시간, 아티스트, 스테이지를 확정하지 못했습니다." });
+      issues.push({
+        line,
+        reason: "시간, 아티스트, 스테이지를 확정하지 못했습니다.",
+      });
     }
   }
 

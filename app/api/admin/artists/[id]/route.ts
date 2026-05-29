@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
+import { ArtistIngestionSchema } from "@/lib/ingestion/schemas";
 import type { AlbumRow, ArtistRow, MusicVideoRow } from "@/types/artist";
 
 export async function GET(
@@ -60,6 +61,22 @@ export async function PATCH(
     albums?: Array<Partial<AlbumRow>>;
     videos?: Array<Partial<MusicVideoRow>>;
   };
+
+  if (body.artist?.name !== undefined) {
+    const result = ArtistIngestionSchema.partial().safeParse({
+      name: body.artist.name,
+      avatar_url: body.artist.avatar_url,
+    });
+    if (!result.success) {
+      return NextResponse.json(
+        {
+          error: "validation_failed",
+          details: result.error.errors.map((e) => e.message),
+        },
+        { status: 422 },
+      );
+    }
+  }
 
   const supabase = createServiceRoleClient();
 
