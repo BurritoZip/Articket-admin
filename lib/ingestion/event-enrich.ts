@@ -127,18 +127,16 @@ export async function processEventEnrichmentQueue(maxItems = 20): Promise<{
                 .from("events")
                 .update({ artist_id: artistId })
                 .eq("id", eventId);
-              await db
-                .from("event_artists")
-                .upsert(
-                  {
-                    event_id: eventId,
-                    artist_id: artistId,
-                    artist_name: artistName,
-                    role: "main",
-                    display_order: 1,
-                  },
-                  { onConflict: "event_id,artist_id", ignoreDuplicates: true },
-                );
+              await db.from("event_artists").upsert(
+                {
+                  event_id: eventId,
+                  artist_id: artistId,
+                  artist_name: artistName,
+                  role: "main",
+                  display_order: 1,
+                },
+                { onConflict: "event_id,artist_id", ignoreDuplicates: true },
+              );
             }
           }
         }
@@ -195,23 +193,28 @@ export async function queueEventEnrichment(): Promise<{ queued: number }> {
       });
 
     for (const t of tasks) {
-      // 이미 pending/processing이면 skip
-      const { count } = await db
+      // pending/processing이면 skip, done/failed면 pending으로 리셋(upsert)
+      const { count: activeCount } = await db
         .from("ai_processing_queue")
         .select("id", { count: "exact", head: true })
         .eq("entity_id", event.id)
         .eq("task_type", t.task_type)
         .in("status", ["pending", "processing"]);
-      if ((count ?? 0) > 0) continue;
+      if ((activeCount ?? 0) > 0) continue;
 
-      const { error } = await db.from("ai_processing_queue").insert({
-        entity_type: "event",
-        entity_id: event.id,
-        task_type: t.task_type,
-        field_name: t.field,
-        status: "pending",
-        priority: t.priority,
-      });
+      const { error } = await db.from("ai_processing_queue").upsert(
+        {
+          entity_type: "event",
+          entity_id: event.id,
+          task_type: t.task_type,
+          field_name: t.field,
+          status: "pending",
+          priority: t.priority,
+          processed_at: null,
+          error: null,
+        },
+        { onConflict: "entity_id,task_type" },
+      );
       if (!error) queued++;
     }
   }

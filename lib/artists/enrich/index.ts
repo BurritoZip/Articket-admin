@@ -236,13 +236,18 @@ export async function queueArtistEnrichment(): Promise<{ queued: number }> {
 
     if ((count ?? 0) > 0) continue;
 
-    const { error } = await db.from("ai_processing_queue").insert({
-      entity_type: "artist",
-      entity_id: artist.id,
-      task_type: "clean_data",
-      status: "pending",
-      priority: 1,
-    });
+    const { error } = await db.from("ai_processing_queue").upsert(
+      {
+        entity_type: "artist",
+        entity_id: artist.id,
+        task_type: "clean_data",
+        status: "pending",
+        priority: 1,
+        processed_at: null,
+        error: null,
+      },
+      { onConflict: "entity_id,task_type" },
+    );
     if (!error) queued++;
   }
 
