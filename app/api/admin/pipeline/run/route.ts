@@ -26,6 +26,7 @@ import {
   stepProgress,
 } from "@/lib/db/pipeline-tracker";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { runScoring } from "@/lib/scoring/run";
 
 export const maxDuration = 300;
 
@@ -205,6 +206,9 @@ export async function POST() {
     const venues = await autoMergeExactVenues();
     return { artists: artists.merged, venues: venues.merged };
   });
+
+  // score — 인기/트렌드 점수 산출 (merge 이후: 중복 제거된 아티스트 기준)
+  await run("score", () => runScoring());
 
   return NextResponse.json({ ok: true });
 }

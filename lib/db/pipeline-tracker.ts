@@ -6,7 +6,8 @@ export type PipelineStep =
   | "fix"
   | "delete"
   | "enrich"
-  | "merge";
+  | "merge"
+  | "score";
 
 export async function stepStart(step: PipelineStep) {
   const db = createServiceRoleClient();

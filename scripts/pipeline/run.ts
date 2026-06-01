@@ -27,6 +27,7 @@ import {
 } from "../../lib/crawler/job-manager";
 import { auditCrawlerJobArtists } from "../../lib/ingestion/artist-audit";
 import { createServiceRoleClient } from "../../lib/supabase/service-role";
+import { runScoring } from "../../lib/scoring/run";
 import {
   stepStart,
   stepDone,
@@ -202,6 +203,9 @@ async function main() {
     const venues = await autoMergeExactVenues();
     return { artists: artists.merged, venues: venues.merged };
   });
+
+  // score — 인기/트렌드 점수 산출
+  await run("score", () => runScoring());
 
   log("=== 파이프라인 완료 ===");
 }

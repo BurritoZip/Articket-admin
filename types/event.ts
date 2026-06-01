@@ -1,3 +1,5 @@
+import type { ScoreBreakdown } from "./scoring";
+
 export type EventStatus = "upcoming" | "on_sale" | "ongoing" | "ended";
 
 export type EventRow = {
@@ -21,6 +23,13 @@ export type EventRow = {
   notice_text: string | null;
   is_banner: boolean;
   has_timetable: boolean;
+  /** 인기도 점수 0~100 (스코어링 엔진 산출) */
+  popularity_score: number | null;
+  /** 트렌드 점수 — 최근7일/이전30일 비율 ×100 */
+  trending_score: number | null;
+  /** 점수 산출 근거 (설명가능) */
+  score_breakdown: ScoreBreakdown | null;
+  score_updated_at: string | null;
 };
 
 export type EventArtistRow = {
