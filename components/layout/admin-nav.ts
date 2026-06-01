@@ -6,6 +6,7 @@ import {
   LayoutDashboard,
   Mic2,
   Rss,
+  Sparkles,
   Star,
   Users,
 } from "lucide-react";
@@ -36,6 +37,12 @@ export const ADMIN_NAV: NavItem[] = [
     group: "main",
   },
   { href: "/admin/reviews", label: "리뷰", icon: Star, group: "main" },
+  {
+    href: "/admin/recommendations",
+    label: "추천",
+    icon: Sparkles,
+    group: "main",
+  },
   {
     href: "/admin/crawler",
     label: "크롤러",
