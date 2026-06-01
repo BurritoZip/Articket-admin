@@ -1,3 +1,5 @@
+import type { ScoreBreakdown } from "./scoring";
+
 export type SnsLinks = {
   spotify?: string;
   apple_music?: string;
@@ -46,6 +48,13 @@ export type ArtistRow = {
   enrichment_sources: EnrichmentSources | null;
   /** event_artists 테이블 기준 연결된 공연 수 (서버에서 계산) */
   linked_event_count?: number;
+  /** 인기도 점수 0~100 (스코어링 엔진 산출) */
+  popularity_score: number | null;
+  /** 트렌드 점수 — 최근7일/이전30일 비율 ×100 */
+  trending_score: number | null;
+  /** 점수 산출 근거 (설명가능) */
+  score_breakdown: ScoreBreakdown | null;
+  score_updated_at: string | null;
 };
 
 export type AlbumRow = {

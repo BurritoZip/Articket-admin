@@ -24,6 +24,7 @@ import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
+import { runScoring } from "@/lib/scoring/run";
 import { NextResponse, type NextRequest } from "next/server";
 
 async function track<T>(
@@ -151,6 +152,13 @@ export async function GET(request: NextRequest) {
       );
     }
 
+    // score — 인기/트렌드 점수 산출
+    const scoreR = await track("score", () => runScoring());
+    const scoring = {
+      artistScored: scoreR?.artist_scored ?? 0,
+      concertScored: scoreR?.concert_scored ?? 0,
+    };
+
     await finishCrawlerJob(job.id, {
       status: crawlStatus,
       pagesCrawled: result.pagesCrawled,
@@ -170,6 +178,7 @@ export async function GET(request: NextRequest) {
         statusSweep,
         artistMerge,
         venueMerge,
+        scoring,
       },
     });
 
