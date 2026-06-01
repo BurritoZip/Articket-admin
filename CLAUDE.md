@@ -1,6 +1,28 @@
-# Articket Admin — CLAUDE.md
+# CLAUDE.md
 
-Next.js 14 App Router + Supabase + TanStack Query 기반 관리 콘솔.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Articket Admin — Next.js 14 App Router + Supabase + TanStack Query 관리 콘솔.
+크롤 → 정제 → 보강(Gemini) → 병합 데이터 파이프라인을 운영자가 트리거/모니터링하는 백오피스.
+
+## 명령어
+
+```bash
+npm run dev        # 개발 서버 (localhost:3000 → /admin/dashboard 리다이렉트)
+npm run build      # 프로덕션 빌드 (next build) — Vercel 빌드와 동일
+npm run lint       # next lint (eslint)
+npm run typecheck  # tsc --noEmit (테스트 러너 없음 — 타입체크가 1차 검증)
+
+npx tsx scripts/pipeline/run.ts          # 전체 파이프라인 로컬 실행 (서비스롤 키 필요)
+npx tsx scripts/pipeline/missing-audit.ts # 누락 데이터 감사 (다른 audit/cleanup 스크립트도 동일 패턴)
+```
+
+테스트 프레임워크 없음. 검증은 `typecheck` + `lint` + 파이프라인 스크립트 실측으로 한다.
+
+## 환경 변수
+
+`.env.example` 복사해 `.env.local` 작성. 필수: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_API_KEY`.
+서비스롤 키는 절대 클라이언트에 노출 금지. 배포 리전 `icn1`(서울).
 
 ## 관련 레포 (같은 Supabase 프로젝트 공유)
 
@@ -8,76 +30,81 @@ Next.js 14 App Router + Supabase + TanStack Query 기반 관리 콘솔.
 
 ---
 
-## DB 관리 원칙
+## 데이터 파이프라인 (핵심 아키텍처)
 
-**Migration source of truth**: `supabase/migrations/YYYYMMDDHHMMSS_설명.sql` ← **이 레포에서 관리**
+운영자가 크롤·정제·보강을 6단계 파이프라인으로 돌린다. 단계 이름은 `lib/db/pipeline-tracker.ts`의
+`PipelineStep` 타입과 일치하며 `pipeline_step_status` 테이블에 진행상태가 기록된다(대시보드가 1.5초 폴링).
 
-스키마 변경 시 작업 순서:
-1. `supabase/migrations/` 에 SQL 파일 추가
-2. `types/` 타입 파일 업데이트
-3. iOS DTO/Entity Swift 파일 교차 반영 (아래 표 참조)
+| 순서 | 단계 | 동작 | 주요 모듈 |
+|---|---|---|---|
+| 1 | `crawl` | enabled 크롤러 소스 스크래핑 (현재 stagepick) | `lib/scrapers/`, `lib/crawler/job-manager` |
+| 2 | `sweep` | end_date 기준 이벤트 상태 일괄 갱신 | `lib/db/status-sweeper` |
+| 3 | `fix` | 이상 필드 자동 수정 | `lib/data-quality/auto-fix` |
+| 4 | `delete` | 불량 데이터 삭제 | `lib/data-quality/auto-delete` |
+| 5 | `enrich` | 아티스트 backfill + Gemini 보강(아티스트/장르/연령/공연장 주소) — AI 큐 기반 | `lib/ingestion/event-enrich`, `lib/artists/enrich`, `lib/venues/enrich` |
+| 6 | `merge` | 정확 일치 아티스트·공연장 자동 병합 | `lib/artists/auto-merge`, `lib/venues/auto-merge` |
 
-### DB 변경 시 iOS 레포 동기화 (필수)
+**진입점 (같은 로직, 두 경로):**
+- `app/api/admin/pipeline/run/route.ts` — UI/수동 트리거 (`maxDuration=300`). enrich를 큐 우회 직접 보강으로 처리.
+- `scripts/pipeline/run.ts` — 로컬 launchd cron이 `npx tsx`로 호출. enrich를 큐 드레인으로 처리.
+- `app/api/admin/crawler/cron/route.ts` — Vercel/launchd cron 엔트리포인트.
 
-Admin에서 Supabase 스키마를 변경하면 **iOS 쪽도 즉시 반영**해야 한다.
+두 진입점은 같은 `lib/` 함수를 호출하므로 **파이프라인 로직 수정 시 양쪽 다 반영**해야 한다.
 
-| 변경 내용 | iOS 업데이트 대상 |
-|---|---|
-| `events` 테이블 컬럼 추가/수정 | `Data/DTO/EventRow.swift` + `Domain/Entity/Event.swift` |
-| `artists` 테이블 컬럼 추가/수정 | `Data/DTO/ArtistRow.swift` + `Domain/Entity/Artist.swift` |
-| `venues` 테이블 컬럼 추가/수정 | 해당 DTO |
-| 새 테이블 추가 | DTO + Entity + RepositoryProtocol + SupabaseRepository + MockRepository |
-| API 응답 구조 변경 | iOS Repository fetch 쿼리 확인 |
+**enrich 단계 = Gemini.** `lib/gemini.ts`의 `geminiText(prompt, model="gemini-2.5-flash")`가 공용 클라이언트.
+보강은 `ai_processing_queue` 테이블에 entity(artist/event)를 적재 후 배치 처리.
 
-**규칙**: SQL 변경 작업이 끝나면 **즉시** iOS 레포 Swift 파일도 업데이트한다. 나중으로 미루지 않는다.
+**로컬 cron**: Vercel Pro 없이 macOS launchd로 실행. `scripts/cron/install.sh` 참고. `trigger-python.sh`는 (이름과 무관하게) TS 파이프라인을 로컬 실행함.
+
+**레거시**: `scripts/scraper/` (Python). 현재 프로덕션 파이프라인은 TS(`lib/scrapers/`). Python 코드는 참고용 — 신규 작업은 TS 쪽에 한다.
 
 ---
 
-## 프로젝트 구조
+## 디렉토리별 CLAUDE.md (상세 지도)
 
-```
-supabase/
-  migrations/       DB 마이그레이션 SQL (source of truth)
-  seed.sql          초기 시드 데이터
+각 디렉토리에 모듈 지도가 있다. 해당 영역 작업 전 먼저 읽을 것:
 
-scripts/
-  scraper/          공연 데이터 크롤러 (Python)
-    main.py         진입점
-    config.py       사이트별 설정
-    database.py     Supabase UPSERT 헬퍼
-    scrapers/       사이트별 스크래퍼 (stagepick, yes24, melon, ...)
-    utils/          정규화·이미지·dedup 유틸
-    requirements.txt
-    README.md
-  supabase/
-    rls_policies.sql  RLS 정책 참고용 SQL
-
-app/
-  api/admin/        API 라우트 (Next.js Route Handlers)
-    artists/        아티스트 CRUD
-    events/         이벤트 CRUD
-    venues/         공연장 CRUD
-    timetable/      타임테이블 CRUD
-components/
-  admin/            페이지 클라이언트 컴포넌트
-  ui/               공통 UI (shadcn/ui 기반)
-types/              TypeScript 타입 (DB 스키마 미러)
-lib/
-  supabase/         클라이언트/서버/서비스롤 클라이언트
-```
+- `lib/CLAUDE.md` — 서버 비즈니스 로직 전체 모듈 지도
+- `lib/ingestion/`, `lib/data-quality/`, `lib/artists/`, `lib/venues/`, `lib/crawler/`, `lib/scrapers/`, `lib/db/`, `lib/supabase/` — 각 영역 상세
+- `app/api/admin/CLAUDE.md` — API 라우트 지도
+- `components/admin/CLAUDE.md` — 페이지 컴포넌트
+- `supabase/migrations/CLAUDE.md`, `types/CLAUDE.md`, `scripts/scraper/CLAUDE.md`
 
 ---
 
 ## 핵심 패턴
 
-- **RLS 우회**: 뮤테이션(INSERT/UPDATE/DELETE) → `createServiceRoleClient()` 사용
-- **읽기**: `createClient()` (서버 클라이언트) 사용
-- **관리자 확인**: 모든 API 라우트 최상단에 `requireAdmin()` 호출
-- **페이지네이션**: `AdminListPagination` + `parseAdminPagination()` 조합
+- **RLS 우회**: 뮤테이션(INSERT/UPDATE/DELETE) → `createServiceRoleClient()` (`lib/supabase/`)
+- **읽기**: `createClient()` (서버 클라이언트)
+- **관리자 확인**: 모든 API 라우트 최상단 `requireAdmin()` → 실패 시 즉시 return
+- **에러 핸들링**: 뮤테이션 라우트는 `withErrorHandler()` (`lib/api-handler.ts`) 래퍼
+- **페이지네이션**: `AdminListPagination` + `parseAdminPagination()`
+- **임포트**: `@/*` → 레포 루트 (tsconfig paths)
 
 ---
 
-## DB 현재 상태 (주요 테이블)
+## DB 관리 원칙
+
+**Migration source of truth**: `supabase/migrations/YYYYMMDDHHMMSS_설명.sql` ← **이 레포에서 관리**
+
+스키마 변경 작업 순서:
+1. `supabase/migrations/` 에 SQL 파일 추가
+2. `types/` 타입 파일 업데이트
+3. iOS DTO/Entity Swift 파일 교차 반영 (아래 표)
+
+### DB 변경 시 iOS 레포 동기화 (필수)
+
+Admin에서 Supabase 스키마 변경 시 **iOS 쪽도 즉시 반영**. 나중으로 미루지 않는다.
+
+| 변경 내용 | iOS 업데이트 대상 |
+|---|---|
+| `events` 컬럼 추가/수정 | `Data/DTO/EventRow.swift` + `Domain/Entity/Event.swift` |
+| `artists` 컬럼 추가/수정 | `Data/DTO/ArtistRow.swift` + `Domain/Entity/Artist.swift` |
+| `venues` 컬럼 추가/수정 | 해당 DTO |
+| 새 테이블 추가 | DTO + Entity + RepositoryProtocol + SupabaseRepository + MockRepository |
+| API 응답 구조 변경 | iOS Repository fetch 쿼리 확인 |
+
+### 주요 테이블
 
 | 테이블 | 주요 컬럼 | iOS DTO |
 |---|---|---|
@@ -87,7 +114,6 @@ lib/
 | `timetable_performances` | `id, event_id, artist_id, day_number, date_string, start_time, end_time, artist_name, stage_name, genre` | `TimetablePerformanceRow.swift` |
 | `event_artists` | `id, event_id, artist_id, artist_name, role, display_order` | — |
 | `event_venues` | `id, event_id, venue_id, display_order` | — |
-| `crawler_jobs` | `id, source_name, status, pages_crawled, events_found, ...` | — |
-| `crawler_sources` | `id, name, display_name, base_url, enabled` | — |
-
-Migration 파일 목록: `supabase/migrations/` 참조
+| `crawler_jobs` / `crawler_sources` | 크롤 잡 추적 / enabled 소스 정의 | — |
+| `ai_processing_queue` | enrich 큐 (entity_type artist/event, status pending/...) | — |
+| `pipeline_step_status` | 파이프라인 단계별 실행 상태 | — |

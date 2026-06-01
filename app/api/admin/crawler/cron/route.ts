@@ -16,8 +16,9 @@ import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
 import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
 import {
-  processEventEnrichmentQueue,
-  queueEventEnrichment,
+  enrichEventArtists,
+  enrichEventGenres,
+  enrichEventAges,
 } from "@/lib/ingestion/event-enrich";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
@@ -109,19 +110,26 @@ export async function GET(request: NextRequest) {
     const delR = await track("delete", () => runDataQualityAutoDelete({}));
     const autoDelete = { deleted: delR?.deleted ?? 0 };
 
-    await queueEventEnrichment();
     const enrichR = await track("enrich", async () => {
-      const [rArtist, rEvent] = await Promise.all([
+      // 이벤트 직접 보강(아티스트/장르/연령) + 아티스트 프로필 큐 처리
+      const [{ linked }, genreR, ageR, rArtist] = await Promise.all([
+        enrichEventArtists(100),
+        enrichEventGenres(50),
+        enrichEventAges(50),
         processArtistEnrichmentQueue(20),
-        processEventEnrichmentQueue(20),
       ]);
       return {
-        processed: rArtist.processed + rEvent.processed,
-        succeeded: rArtist.succeeded + rEvent.succeeded,
-        failed: rArtist.failed + rEvent.failed,
+        artistLinked: linked,
+        genreFilled: genreR.filled,
+        ageFilled: ageR.filled,
+        succeeded: rArtist.succeeded,
+        failed: rArtist.failed,
       };
     });
     const enrichQueue = {
+      artistLinked: enrichR?.artistLinked ?? 0,
+      genreFilled: enrichR?.genreFilled ?? 0,
+      ageFilled: enrichR?.ageFilled ?? 0,
       succeeded: enrichR?.succeeded ?? 0,
       failed: enrichR?.failed ?? 0,
     };
