@@ -10,16 +10,18 @@ import * as cheerio from "cheerio";
 export interface WikipediaProfile {
   name?: string;
   name_en?: string;
-  occupation?: string;
+  occupation?: string; // 장르 의미로 사용 (음악 장르; 가수/배우 같은 직업 아님)
   birth_date?: string;
   birth_place?: string;
-  related?: string;   // Associated acts / 그룹
-  label?: string;     // Record label
+  country?: string;
+  related?: string; // Associated acts / 그룹
+  label?: string; // Record label
   source_url: string;
 }
 
 const HEADERS = {
-  "User-Agent": "ArticketBot/1.0 (https://github.com/BurritoZip/Articket-admin; shinjw4675@gmail.com)",
+  "User-Agent":
+    "ArticketBot/1.0 (https://github.com/BurritoZip/Articket-admin; shinjw4675@gmail.com)",
   Accept: "text/html",
 };
 
@@ -33,11 +35,17 @@ async function rateLimit() {
 }
 
 /** Wikipedia API 검색 → 페이지 제목 반환 */
-async function searchWiki(query: string, lang: "ko" | "en"): Promise<string | null> {
+async function searchWiki(
+  query: string,
+  lang: "ko" | "en",
+): Promise<string | null> {
   try {
     await rateLimit();
     const url = `https://${lang}.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&format=json&srlimit=3`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
 
     const data = (await res.json()) as {
@@ -49,23 +57,31 @@ async function searchWiki(query: string, lang: "ko" | "en"): Promise<string | nu
   }
 }
 
-const KO_FIELD_MAP: Record<string, keyof Omit<WikipediaProfile, "source_url">> = {
-  직업: "occupation", 직종: "occupation", 장르: "occupation",
-  출생일: "birth_date", 생년월일: "birth_date",
-  출생지: "birth_place", 출신지: "birth_place",
-  소속: "related", 그룹: "related",
-  레이블: "label", 소속사: "label", 음반사: "label",
-};
+const KO_FIELD_MAP: Record<string, keyof Omit<WikipediaProfile, "source_url">> =
+  {
+    장르: "occupation",
+    출생일: "birth_date",
+    생년월일: "birth_date",
+    출생지: "birth_place",
+    출신지: "birth_place",
+    국적: "country",
+    국가: "country",
+    소속: "related",
+    그룹: "related",
+    레이블: "label",
+    소속사: "label",
+    음반사: "label",
+  };
 
-const EN_FIELD_MAP: Record<string, keyof Omit<WikipediaProfile, "source_url">> = {
-  Born: "birth_date",
-  Origin: "birth_place",
-  Occupation: "occupation",
-  Occupations: "occupation",
-  Genres: "occupation",
-  "Associated acts": "related",
-  "Labels": "label",
-};
+const EN_FIELD_MAP: Record<string, keyof Omit<WikipediaProfile, "source_url">> =
+  {
+    Born: "birth_date",
+    Origin: "birth_place",
+    Nationality: "country",
+    Genres: "occupation",
+    "Associated acts": "related",
+    Labels: "label",
+  };
 
 function parseBirthDate(raw: string): string | undefined {
   const m = raw.match(/(\d{4})[^0-9]*(\d{1,2})[^0-9]*(\d{1,2})/);
@@ -77,7 +93,9 @@ function parseBirthDate(raw: string): string | undefined {
 
 function cleanWikiText(raw: string): string {
   return raw
-    .replace(/\[.*?\]/g, "")
+    .replace(/\.mw-[^{]*\{[^}]*\}/g, "") // mediawiki 인라인 CSS 잔재
+    .replace(/[^{}]*\{[^}]*\}/g, "") // 기타 CSS 블록
+    .replace(/\[.*?\]/g, "") // 각주 [1] 등
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -96,6 +114,8 @@ function parseInfobox(
     const td = $(tr).find("td").first();
     if (!th || !td.length) return;
 
+    // infobox 셀에 섞인 <style>(.mw-parser-output{...})·각주를 제거하고 텍스트 추출
+    td.find("style, script, sup").remove();
     const tdText = cleanWikiText(td.text());
     if (!tdText) return;
 
@@ -127,14 +147,19 @@ function parseInfobox(
   return hasData ? (profile as WikipediaProfile) : null;
 }
 
-export async function fetchWikipediaProfile(query: string): Promise<WikipediaProfile | null> {
+export async function fetchWikipediaProfile(
+  query: string,
+): Promise<WikipediaProfile | null> {
   // 1. 한국어 Wikipedia 시도
   try {
     const koTitle = await searchWiki(query, "ko");
     if (koTitle) {
       await rateLimit();
       const url = `https://ko.wikipedia.org/wiki/${encodeURIComponent(koTitle)}`;
-      const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(10000) });
+      const res = await fetch(url, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(10000),
+      });
       if (res.ok) {
         const html = await res.text();
         const $ = cheerio.load(html);
@@ -142,7 +167,9 @@ export async function fetchWikipediaProfile(query: string): Promise<WikipediaPro
         if (result) return result;
       }
     }
-  } catch { /* 무시하고 영어로 폴백 */ }
+  } catch {
+    /* 무시하고 영어로 폴백 */
+  }
 
   // 2. 영어 Wikipedia 폴백
   try {
@@ -150,14 +177,19 @@ export async function fetchWikipediaProfile(query: string): Promise<WikipediaPro
     if (enTitle) {
       await rateLimit();
       const url = `https://en.wikipedia.org/wiki/${encodeURIComponent(enTitle)}`;
-      const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(10000) });
+      const res = await fetch(url, {
+        headers: HEADERS,
+        signal: AbortSignal.timeout(10000),
+      });
       if (res.ok) {
         const html = await res.text();
         const $ = cheerio.load(html);
         return parseInfobox($, EN_FIELD_MAP, "en", url);
       }
     }
-  } catch { /* 무시 */ }
+  } catch {
+    /* 무시 */
+  }
 
   return null;
 }

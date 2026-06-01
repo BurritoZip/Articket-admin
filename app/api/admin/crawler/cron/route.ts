@@ -23,6 +23,7 @@ import {
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
+import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
 import { runScoring } from "@/lib/scoring/run";
 import { NextResponse, type NextRequest } from "next/server";
@@ -113,24 +114,31 @@ export async function GET(request: NextRequest) {
 
     const enrichR = await track("enrich", async () => {
       // 이벤트 직접 보강(아티스트/장르/연령) + 아티스트 프로필 큐 처리
-      const [{ linked }, genreR, ageR, rArtist] = await Promise.all([
-        enrichEventArtists(100),
+      const [artistR, genreR, ageR, venueR, rArtist] = await Promise.all([
+        enrichEventArtists(200),
         enrichEventGenres(50),
         enrichEventAges(50),
+        processVenueAddressEnrichment(60),
         processArtistEnrichmentQueue(20),
       ]);
       return {
-        artistLinked: linked,
+        artistLinked: artistR.linked,
+        artistMulti: artistR.multiArtist,
+        artistNone: artistR.noArtist,
         genreFilled: genreR.filled,
         ageFilled: ageR.filled,
+        venueAddressFilled: venueR.filled,
         succeeded: rArtist.succeeded,
         failed: rArtist.failed,
       };
     });
     const enrichQueue = {
       artistLinked: enrichR?.artistLinked ?? 0,
+      artistMulti: enrichR?.artistMulti ?? 0,
+      artistNone: enrichR?.artistNone ?? 0,
       genreFilled: enrichR?.genreFilled ?? 0,
       ageFilled: enrichR?.ageFilled ?? 0,
+      venueAddressFilled: enrichR?.venueAddressFilled ?? 0,
       succeeded: enrichR?.succeeded ?? 0,
       failed: enrichR?.failed ?? 0,
     };

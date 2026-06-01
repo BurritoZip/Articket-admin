@@ -149,14 +149,14 @@ async function main() {
     await runArtistBackfill({ limit: 500, dryRun: false });
 
     // 2. 아티스트 없는 이벤트 → Gemini로 제목에서 추출 + 장르/연령/주소 직접 보강
-    const [{ linked: artistLinked }, genreR, ageR, venueR, artistQ] =
-      await Promise.all([
-        enrichEventArtists(100),
-        enrichEventGenres(50),
-        enrichEventAges(50),
-        processVenueAddressEnrichment(30),
-        queueArtistEnrichment(),
-      ]);
+    const [artistR, genreR, ageR, venueR, artistQ] = await Promise.all([
+      enrichEventArtists(200),
+      enrichEventGenres(50),
+      enrichEventAges(50),
+      processVenueAddressEnrichment(60),
+      queueArtistEnrichment(),
+    ]);
+    const artistLinked = artistR.linked;
 
     // 3. 아티스트 프로필 보강 (namu/melon/naver/wikipedia) — 큐 기반
     const { count: artistPending } = await db
@@ -188,6 +188,8 @@ async function main() {
 
     return {
       artist_linked: artistLinked,
+      artist_multi: artistR.multiArtist,
+      artist_none: artistR.noArtist,
       genre_filled: genreR.filled,
       age_filled: ageR.filled,
       venue_address_filled: venueR.filled,

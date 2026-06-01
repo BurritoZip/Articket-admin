@@ -11,9 +11,10 @@ export interface NaverProfile {
   name?: string;
   name_en?: string;
   avatar_url?: string;
-  occupation?: string;
+  occupation?: string; // 장르 의미
   birth_date?: string;
   birth_place?: string;
+  country?: string;
   label?: string;
   related?: string;
   source_url: string;
@@ -51,11 +52,16 @@ function cleanText(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-export async function fetchNaverProfile(query: string): Promise<NaverProfile | null> {
+export async function fetchNaverProfile(
+  query: string,
+): Promise<NaverProfile | null> {
   try {
     await rateLimit();
     const url = `${NAVER_SEARCH}?query=${encodeURIComponent(query)}&where=nexearch&sm=top_hty&fbm=0&ie=utf8`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(10000),
+    });
     if (!res.ok) return null;
 
     const html = await res.text();
@@ -71,7 +77,11 @@ export async function fetchNaverProfile(query: string): Promise<NaverProfile | n
     if (!card.length) return null;
 
     // 이름
-    const name = card.find(".name, .tit_area .name, h2.tit").first().text().trim();
+    const name = card
+      .find(".name, .tit_area .name, h2.tit")
+      .first()
+      .text()
+      .trim();
     if (name) profile.name = cleanText(name);
 
     // 영문명
@@ -79,7 +89,9 @@ export async function fetchNaverProfile(query: string): Promise<NaverProfile | n
     if (nameEn && /[A-Za-z]/.test(nameEn)) profile.name_en = cleanText(nameEn);
 
     // 프로필 이미지
-    const imgSrc = card.find("img.thumb").attr("src") ?? card.find(".img_area img").attr("src");
+    const imgSrc =
+      card.find("img.thumb").attr("src") ??
+      card.find(".img_area img").attr("src");
     if (imgSrc) profile.avatar_url = imgSrc;
 
     // dl/dt/dd 또는 테이블 형식 정보
@@ -89,12 +101,15 @@ export async function fetchNaverProfile(query: string): Promise<NaverProfile | n
       if (!val) return;
 
       const k = key.replace(/\s/g, "");
-      if (k.includes("직업") || k.includes("직종")) {
+      // occupation은 장르 의미 — 네이버는 직업만 파싱하므로 occupation에 넣지 않는다.
+      if (k.includes("장르")) {
         profile.occupation = cleanText(val);
       } else if (k.includes("출생일") || k.includes("생년월일")) {
         profile.birth_date = parseBirthDate(val) ?? cleanText(val);
       } else if (k.includes("출생지") || k.includes("출신지")) {
         profile.birth_place = cleanText(val);
+      } else if (k.includes("국적") || k.includes("국가")) {
+        profile.country = cleanText(val);
       } else if (k.includes("소속사") || k.includes("기획사")) {
         profile.label = cleanText(val);
       } else if (k.includes("소속") || k.includes("그룹")) {
@@ -105,7 +120,9 @@ export async function fetchNaverProfile(query: string): Promise<NaverProfile | n
     // 텍스트 기반 파싱 (구조화 카드 없을 때 fallback)
     if (!profile.birth_date) {
       const bodyText = card.text();
-      const dateMatch = bodyText.match(/(\d{4})[.년]\s*(\d{1,2})[.월]\s*(\d{1,2})/);
+      const dateMatch = bodyText.match(
+        /(\d{4})[.년]\s*(\d{1,2})[.월]\s*(\d{1,2})/,
+      );
       if (dateMatch) {
         profile.birth_date = parseBirthDate(dateMatch[0]);
       }

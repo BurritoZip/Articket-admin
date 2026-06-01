@@ -38,8 +38,8 @@ EXIT_CODE=${PIPESTATUS[0]}
 if [[ $EXIT_CODE -eq 0 ]]; then
   echo "[$TIMESTAMP] Python 스크래퍼 완료" | tee -a "$LOG_FILE"
 else
-  echo "[$TIMESTAMP] Python 스크래퍼 실패 (exit $EXIT_CODE)" | tee -a "$LOG_FILE"
-  exit $EXIT_CODE
+  # 레거시 보조 스크래퍼 실패는 비치명적 — 핵심 TS 파이프라인은 계속 실행한다.
+  echo "[$TIMESTAMP] ⚠️ Python 스크래퍼 실패 (exit $EXIT_CODE) — TS 파이프라인은 계속 진행" | tee -a "$LOG_FILE"
 fi
 
 # ── 전체 파이프라인 실행 (stagepick 크롤 + sweep + fix + delete + enrich + merge) ──

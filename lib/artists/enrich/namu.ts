@@ -9,14 +9,14 @@
 import * as cheerio from "cheerio";
 
 export interface NamuProfile {
-  name?: string;          // 본명 (한글)
-  name_en?: string;       // 영문 예명
-  occupation?: string;    // 직업 (예: 가수, 배우)
-  birth_date?: string;    // YYYY-MM-DD
-  birth_place?: string;   // 출생지
-  label?: string;         // 소속사
-  related?: string;       // 소속 그룹
-  country?: string;       // 국가 코드 (예: KR)
+  name?: string; // 본명 (한글)
+  name_en?: string; // 영문 예명
+  occupation?: string; // 직업 (예: 가수, 배우)
+  birth_date?: string; // YYYY-MM-DD
+  birth_place?: string; // 출생지
+  label?: string; // 소속사
+  related?: string; // 소속 그룹
+  country?: string; // 국가 코드 (예: KR)
   source_url: string;
 }
 
@@ -43,7 +43,10 @@ async function searchNamu(query: string): Promise<string | null> {
   try {
     await rateLimit();
     const url = `${SEARCH_API}?query=${encodeURIComponent(query)}&namespace=0&limit=5`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(8000) });
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(8000),
+    });
     if (!res.ok) return null;
 
     const data = (await res.json()) as { items?: Array<{ title: string }> };
@@ -60,8 +63,7 @@ const KO_FIELD_MAP: Record<string, keyof Omit<NamuProfile, "source_url">> = {
   영문명: "name_en",
   로마자: "name_en",
   영어: "name_en",
-  직업: "occupation",
-  직종: "occupation",
+  장르: "occupation", // occupation = 장르 의미 (직업 아님)
   출생일: "birth_date",
   생년월일: "birth_date",
   출생: "birth_date",
@@ -73,17 +75,23 @@ const KO_FIELD_MAP: Record<string, keyof Omit<NamuProfile, "source_url">> = {
   음반사: "label",
   소속: "related",
   그룹: "related",
-  활동: "occupation",
 };
 
 const COUNTRY_MAP: Record<string, string> = {
-  대한민국: "KR", 한국: "KR", 미국: "US", 일본: "JP", 중국: "CN",
-  영국: "GB", 캐나다: "CA", 호주: "AU", 프랑스: "FR",
+  대한민국: "KR",
+  한국: "KR",
+  미국: "US",
+  일본: "JP",
+  중국: "CN",
+  영국: "GB",
+  캐나다: "CA",
+  호주: "AU",
+  프랑스: "FR",
 };
 
 function cleanValue(raw: string): string {
   return raw
-    .replace(/\[\d+\]/g, "")   // 각주 제거
+    .replace(/\[\d+\]/g, "") // 각주 제거
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -140,7 +148,9 @@ function parseNamuHtml(html: string, sourceUrl: string): NamuProfile | null {
   return hasData ? (profile as NamuProfile) : null;
 }
 
-export async function fetchNamuProfile(query: string): Promise<NamuProfile | null> {
+export async function fetchNamuProfile(
+  query: string,
+): Promise<NamuProfile | null> {
   try {
     const pageUrl = await searchNamu(query);
     if (!pageUrl) return null;
