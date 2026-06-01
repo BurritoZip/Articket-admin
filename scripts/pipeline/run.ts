@@ -12,8 +12,9 @@ import {
   queueArtistEnrichment,
 } from "../../lib/artists/enrich";
 import {
-  processEventEnrichmentQueue,
-  queueEventEnrichment,
+  enrichEventArtists,
+  enrichEventGenres,
+  enrichEventAges,
 } from "../../lib/ingestion/event-enrich";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
@@ -141,42 +142,58 @@ async function main() {
   // delete
   await run("delete", () => runDataQualityAutoDelete({}));
 
-  // enrich
+  // enrich — 직접 보강 (큐 우회), max 4.5min
   await run("enrich", async () => {
+    // 1. raw_payload 기반 아티스트 backfill
     await runArtistBackfill({ limit: 500, dryRun: false });
-    await processVenueAddressEnrichment(30);
-    const [{ queued: artistQueued }, { queued: eventQueued }] =
-      await Promise.all([queueArtistEnrichment(), queueEventEnrichment()]);
-    const { count: totalPending } = await db
+
+    // 2. 아티스트 없는 이벤트 → Gemini로 제목에서 추출 + 장르/연령/주소 직접 보강
+    const [{ linked: artistLinked }, genreR, ageR, venueR, artistQ] =
+      await Promise.all([
+        enrichEventArtists(100),
+        enrichEventGenres(50),
+        enrichEventAges(50),
+        processVenueAddressEnrichment(30),
+        queueArtistEnrichment(),
+      ]);
+
+    // 3. 아티스트 프로필 보강 (namu/melon/naver/wikipedia) — 큐 기반
+    const { count: artistPending } = await db
       .from("ai_processing_queue")
       .select("id", { count: "exact", head: true })
-      .in("entity_type", ["artist", "event"])
+      .eq("entity_type", "artist")
       .eq("status", "pending");
 
     const deadline = Date.now() + 270_000;
-    let total = {
-      processed: 0,
-      succeeded: 0,
-      failed: 0,
-      total_in_queue: (totalPending ?? 0) + artistQueued + eventQueued,
-    };
+    let processed = 0;
+    let succeeded = 0;
+    let failed = 0;
 
     while (Date.now() < deadline) {
-      const [rArtist, rEvent] = await Promise.all([
-        processArtistEnrichmentQueue(10),
-        processEventEnrichmentQueue(10),
-      ]);
-      const batchProcessed = rArtist.processed + rEvent.processed;
-      total = {
-        ...total,
-        processed: total.processed + batchProcessed,
-        succeeded: total.succeeded + rArtist.succeeded + rEvent.succeeded,
-        failed: total.failed + rArtist.failed + rEvent.failed,
-      };
-      await stepProgress("enrich", total as Record<string, unknown>);
-      if (batchProcessed === 0) break;
+      const r = await processArtistEnrichmentQueue(10);
+      processed += r.processed;
+      succeeded += r.succeeded;
+      failed += r.failed;
+      await stepProgress("enrich", {
+        artist_linked: artistLinked,
+        genre_filled: genreR.filled,
+        age_filled: ageR.filled,
+        venue_address_filled: venueR.filled,
+        artist_enriched: succeeded,
+        total_in_queue: (artistPending ?? 0) + artistQ.queued,
+      } as Record<string, unknown>);
+      if (r.processed === 0) break;
     }
-    return total;
+
+    return {
+      artist_linked: artistLinked,
+      genre_filled: genreR.filled,
+      age_filled: ageR.filled,
+      venue_address_filled: venueR.filled,
+      artist_enriched: succeeded,
+      artist_failed: failed,
+      processed,
+    };
   });
 
   // merge
