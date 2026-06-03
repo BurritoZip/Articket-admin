@@ -15,12 +15,15 @@ import {
 } from "@/lib/ingestion/artist-audit";
 import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
+import { autoPurgeNonConcerts } from "@/lib/data-quality/purge-non-concerts";
 import { processArtistEnrichmentQueue } from "@/lib/artists/enrich";
 import {
   enrichEventArtists,
   enrichEventGenres,
   enrichEventAges,
+  enrichEventTicketDates,
 } from "@/lib/ingestion/event-enrich";
+import { autoMergeDuplicateEvents } from "@/lib/ingestion/event-auto-merge";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
@@ -129,18 +132,27 @@ export async function GET(request: NextRequest) {
     );
     const autoFix = { fixed: fixR?.fixed ?? 0, queued: fixR?.queued ?? 0 };
 
-    const delR = await track("delete", () => runDataQualityAutoDelete({}));
-    const autoDelete = { deleted: delR?.deleted ?? 0 };
+    const delR = await track("delete", async () => {
+      const dq = await runDataQualityAutoDelete({});
+      const nc = await autoPurgeNonConcerts({ recentDays: 2, maxItems: 300 });
+      return { deleted: dq.deleted, nonConcertDeleted: nc.deleted };
+    });
+    const autoDelete = {
+      deleted: delR?.deleted ?? 0,
+      nonConcertDeleted: delR?.nonConcertDeleted ?? 0,
+    };
 
     const enrichR = await track("enrich", async () => {
       // 이벤트 직접 보강(아티스트/장르/연령) + 아티스트 프로필 큐 처리
-      const [artistR, genreR, ageR, venueR, rArtist] = await Promise.all([
-        enrichEventArtists(200),
-        enrichEventGenres(50),
-        enrichEventAges(50),
-        processVenueAddressEnrichment(60),
-        processArtistEnrichmentQueue(20),
-      ]);
+      const [artistR, genreR, ageR, venueR, ticketR, rArtist] =
+        await Promise.all([
+          enrichEventArtists(200),
+          enrichEventGenres(50),
+          enrichEventAges(50),
+          processVenueAddressEnrichment(60),
+          enrichEventTicketDates(40),
+          processArtistEnrichmentQueue(20),
+        ]);
       return {
         artistLinked: artistR.linked,
         artistMulti: artistR.multiArtist,
@@ -148,6 +160,7 @@ export async function GET(request: NextRequest) {
         genreFilled: genreR.filled,
         ageFilled: ageR.filled,
         venueAddressFilled: venueR.filled,
+        ticketDatesFilled: ticketR.filled,
         succeeded: rArtist.succeeded,
         failed: rArtist.failed,
       };
@@ -166,8 +179,15 @@ export async function GET(request: NextRequest) {
     const sweepR = await track("sweep", () => sweepEventStatuses());
     const statusSweep = { updated: sweepR?.updated ?? 0 };
 
-    const artistMergeR = await track("merge", () => autoMergeExactArtists());
-    const artistMerge = { merged: artistMergeR?.merged ?? 0 };
+    const artistMergeR = await track("merge", async () => {
+      const a = await autoMergeExactArtists();
+      const ev = await autoMergeDuplicateEvents(); // 이벤트 중복(제목+공연일) 자동 병합
+      return { merged: a.merged, eventDupsMerged: ev.deleted };
+    });
+    const artistMerge = {
+      merged: artistMergeR?.merged ?? 0,
+      eventDupsMerged: artistMergeR?.eventDupsMerged ?? 0,
+    };
 
     let venueMerge = { merged: 0 };
     try {
