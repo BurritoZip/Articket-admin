@@ -217,7 +217,7 @@ async function main() {
 
   // merge — AI 아티스트(음역·오타) + 정확일치 아티스트·공연장 + 이벤트 중복 자동 병합
   await run("merge", async () => {
-    const aiArtists = await aiDedupArtists({ maxItems: 150, apply: true });
+    const aiArtists = await aiDedupArtists({ maxItems: 3000, apply: true });
     const artists = await autoMergeExactArtists();
     const venues = await autoMergeExactVenues();
     const events = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
