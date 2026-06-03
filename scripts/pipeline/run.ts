@@ -21,6 +21,7 @@ import { autoMergeDuplicateEvents } from "../../lib/ingestion/event-auto-merge";
 import { autoPurgeNonConcerts } from "../../lib/data-quality/purge-non-concerts";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
 import { aiDedupArtists } from "../../lib/artists/ai-dedup";
+import { geminiEnrichArtists } from "../../lib/artists/enrich/gemini-enrich";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
 import { runArtistBackfill } from "../../lib/ingestion/artist-backfill";
 import { processVenueAddressEnrichment } from "../../lib/venues/enrich";
@@ -173,6 +174,9 @@ async function main() {
     );
     const artistLinked = artistR.linked;
 
+    // 2.5 Gemini 그라운딩 아티스트 보강 (description/occupation/country/name_en)
+    const giArtist = await geminiEnrichArtists({ maxItems: 40 });
+
     // 3. 아티스트 프로필 보강 (namu/melon/naver/wikipedia) — 큐 기반
     const { count: artistPending } = await db
       .from("ai_processing_queue")
@@ -209,6 +213,7 @@ async function main() {
       age_filled: ageR.filled,
       venue_address_filled: venueR.filled,
       ticket_dates_filled: ticketR.filled,
+      gemini_artist_filled: giArtist.filled,
       artist_enriched: succeeded,
       artist_failed: failed,
       processed,

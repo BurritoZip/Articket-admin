@@ -27,6 +27,7 @@ import { autoMergeDuplicateEvents } from "@/lib/ingestion/event-auto-merge";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { aiDedupArtists } from "@/lib/artists/ai-dedup";
+import { geminiEnrichArtists } from "@/lib/artists/enrich/gemini-enrich";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
@@ -145,13 +146,14 @@ export async function GET(request: NextRequest) {
 
     const enrichR = await track("enrich", async () => {
       // 이벤트 직접 보강(아티스트/장르/연령) + 아티스트 프로필 큐 처리
-      const [artistR, genreR, ageR, venueR, ticketR, rArtist] =
+      const [artistR, genreR, ageR, venueR, ticketR, giArtist, rArtist] =
         await Promise.all([
           enrichEventArtists(200),
           enrichEventGenres(50),
           enrichEventAges(50),
           processVenueAddressEnrichment(60),
           enrichEventTicketDates(40),
+          geminiEnrichArtists({ maxItems: 40 }), // Gemini 그라운딩 아티스트 정보
           processArtistEnrichmentQueue(20),
         ]);
       return {
@@ -162,6 +164,7 @@ export async function GET(request: NextRequest) {
         ageFilled: ageR.filled,
         venueAddressFilled: venueR.filled,
         ticketDatesFilled: ticketR.filled,
+        geminiArtistFilled: giArtist.filled,
         succeeded: rArtist.succeeded,
         failed: rArtist.failed,
       };
@@ -184,7 +187,11 @@ export async function GET(request: NextRequest) {
       const ai = await aiDedupArtists({ maxItems: 3000, apply: true }); // 음역·오타
       const a = await autoMergeExactArtists();
       const ev = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
-      return { merged: a.merged, aiMerged: ai.merged, eventDupsMerged: ev.deleted };
+      return {
+        merged: a.merged,
+        aiMerged: ai.merged,
+        eventDupsMerged: ev.deleted,
+      };
     });
     const artistMerge = {
       merged: artistMergeR?.merged ?? 0,
