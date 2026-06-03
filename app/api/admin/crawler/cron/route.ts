@@ -26,6 +26,7 @@ import {
 import { autoMergeDuplicateEvents } from "@/lib/ingestion/event-auto-merge";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
+import { aiDedupArtists } from "@/lib/artists/ai-dedup";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
@@ -180,12 +181,14 @@ export async function GET(request: NextRequest) {
     const statusSweep = { updated: sweepR?.updated ?? 0 };
 
     const artistMergeR = await track("merge", async () => {
+      const ai = await aiDedupArtists({ maxItems: 150, apply: true }); // 음역·오타
       const a = await autoMergeExactArtists();
-      const ev = await autoMergeDuplicateEvents(); // 이벤트 중복(제목+공연일) 자동 병합
-      return { merged: a.merged, eventDupsMerged: ev.deleted };
+      const ev = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
+      return { merged: a.merged, aiMerged: ai.merged, eventDupsMerged: ev.deleted };
     });
     const artistMerge = {
       merged: artistMergeR?.merged ?? 0,
+      aiMerged: artistMergeR?.aiMerged ?? 0,
       eventDupsMerged: artistMergeR?.eventDupsMerged ?? 0,
     };
 

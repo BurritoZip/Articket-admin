@@ -20,6 +20,7 @@ import {
 import { autoMergeDuplicateEvents } from "../../lib/ingestion/event-auto-merge";
 import { autoPurgeNonConcerts } from "../../lib/data-quality/purge-non-concerts";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
+import { aiDedupArtists } from "../../lib/artists/ai-dedup";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
 import { runArtistBackfill } from "../../lib/ingestion/artist-backfill";
 import { processVenueAddressEnrichment } from "../../lib/venues/enrich";
@@ -214,12 +215,14 @@ async function main() {
     };
   });
 
-  // merge — 아티스트·공연장 + 이벤트 중복(제목+공연일 동일) 자동 병합
+  // merge — AI 아티스트(음역·오타) + 정확일치 아티스트·공연장 + 이벤트 중복 자동 병합
   await run("merge", async () => {
+    const aiArtists = await aiDedupArtists({ maxItems: 150, apply: true });
     const artists = await autoMergeExactArtists();
     const venues = await autoMergeExactVenues();
-    const events = await autoMergeDuplicateEvents();
+    const events = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
     return {
+      aiArtistsMerged: aiArtists.merged,
       artists: artists.merged,
       venues: venues.merged,
       eventDupsMerged: events.deleted,
