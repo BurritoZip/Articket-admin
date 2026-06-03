@@ -3,8 +3,67 @@
  * Gemini로 누락 필드 채우기
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { geminiText } from "@/lib/gemini";
+import { geminiText, geminiTextGrounded } from "@/lib/gemini";
 import { matchOrCreateArtist } from "./artist-matcher";
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** "YYYY-MM-DD" 형태이고 실제 유효한 날짜만 통과, 아니면 null */
+function cleanDate(v: unknown): string | null {
+  if (typeof v !== "string" || !ISO_DATE.test(v)) return null;
+  return isNaN(Date.parse(v)) ? null : v;
+}
+
+/**
+ * 예매일자 보강 — 구글검색 그라운딩으로 예매오픈/마감일을 실제 웹에서 확인.
+ * 공연일자(start/end)와 혼동하지 않도록 명시적으로 "예매" 날짜만 요청한다.
+ * 못 찾으면 null 반환 → 가짜 날짜 안 박는다(환각 방지).
+ *
+ * 대상: 종료 안 된 이벤트 중 ticket_open_date 미상.
+ */
+export async function enrichEventTicketDates(
+  maxItems = 200,
+): Promise<{ filled: number; checked: number }> {
+  const db = createServiceRoleClient();
+  const { data: events } = await db
+    .from("events")
+    .select("id,title,start_date,ticket_provider,venue_id")
+    .neq("status", "ended")
+    .is("ticket_open_date", null)
+    .order("start_date", { ascending: true })
+    .limit(maxItems);
+
+  let filled = 0;
+  let checked = 0;
+  for (const e of events ?? []) {
+    checked++;
+    const day = e.start_date ? String(e.start_date).slice(0, 10) : "미상";
+    const prompt = `다음 공연의 "예매(티켓) 오픈일"과 "예매 마감일"을 웹에서 찾아라.
+주의: 공연일자가 아니라 "예매가 시작/종료되는 날짜"다. 둘은 다르다.
+공연명: "${e.title}"
+공연일자(참고): ${day}
+${e.ticket_provider ? `예매처: ${e.ticket_provider}` : ""}
+확실하지 않으면 반드시 null. 추측 금지.
+JSON만 답해: {"ticket_open_date":"YYYY-MM-DD 또는 null","ticket_close_date":"YYYY-MM-DD 또는 null"}`;
+    try {
+      const raw = await geminiTextGrounded(prompt);
+      const m = raw.match(/\{[\s\S]*\}/);
+      if (!m) continue;
+      const parsed = JSON.parse(m[0]) as Record<string, unknown>;
+      const open = cleanDate(parsed.ticket_open_date);
+      const close = cleanDate(parsed.ticket_close_date);
+      if (!open && !close) continue;
+      const patch: Record<string, string> = {};
+      if (open) patch.ticket_open_date = `${open}T00:00:00+00:00`;
+      if (close) patch.ticket_close_date = `${close}T23:59:59+00:00`;
+      await db.from("events").update(patch).eq("id", e.id);
+      filled++;
+    } catch {
+      /* 그라운딩 실패 — 스킵 */
+    }
+  }
+  return { filled, checked };
+}
 
 const GENRES = [
   "뮤지컬",
@@ -166,7 +225,8 @@ export async function enrichEventArtists(maxItems = 100): Promise<{
     const matched: { id: string; name: string }[] = [];
     for (const nm of names) {
       const id = await matchOrCreateArtist(nm).catch(() => null);
-      if (id && !matched.some((m) => m.id === id)) matched.push({ id, name: nm });
+      if (id && !matched.some((m) => m.id === id))
+        matched.push({ id, name: nm });
     }
 
     if (matched.length === 0) {
