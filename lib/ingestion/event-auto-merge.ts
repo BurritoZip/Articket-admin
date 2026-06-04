@@ -38,6 +38,12 @@ function dayOf(e: Ev): string | null {
   return e.start_date ? String(e.start_date).slice(0, 10) : null;
 }
 
+function sourceSet(e: Ev): Set<string> {
+  const s = new Set<string>();
+  for (const u of e.source_urls ?? []) if (u?.site) s.add(u.site);
+  return s;
+}
+
 /** 표시에 더 좋은(서술적인) 제목 우선, 동률이면 먼저 등록된 행 */
 function pickCanonical(members: Ev[]): Ev {
   return [...members].sort((a, b) => {
@@ -168,6 +174,50 @@ export async function autoMergeDuplicateEvents(): Promise<{
       for (let j = i + 1; j < sorted.length; j++) {
         if (consumed.has(sorted[j].id)) continue;
         if (normTitle(sorted[j]).startsWith(shortN)) cluster.push(sorted[j]);
+      }
+      if (cluster.length > 1) {
+        const n = await mergeCluster(db, cluster);
+        if (n > 0) {
+          clusters++;
+          deleted += n;
+          cluster.forEach((e) => consumed.add(e.id));
+        }
+      }
+    }
+  }
+
+  // 패스 4: 크로스소스 중복 — 같은 제목 + 시작일 2일 이내 + 소스 겹치지 않음.
+  //   서로 다른 크롤러가 같은 공연을 시작일만 다르게 올린 경우(예: 06-12 vs 06-13).
+  //   같은 소스의 근접 날짜는 진짜 회차(예: 2일 공연)일 수 있어 보존(소스 겹침으로 구분).
+  const TWO_DAYS = 2 * 86_400_000;
+  const byTitle4 = new Map<string, Ev[]>();
+  for (const e of all) {
+    if (consumed.has(e.id)) continue;
+    const nt = normTitle(e);
+    if (nt.length < 5 || !e.start_date) continue;
+    (byTitle4.get(nt) ?? byTitle4.set(nt, []).get(nt)!).push(e);
+  }
+  for (const group of Array.from(byTitle4.values())) {
+    if (group.length < 2) continue;
+    const sorted = [...group].sort((a, b) =>
+      String(a.start_date) < String(b.start_date) ? -1 : 1,
+    );
+    for (let i = 0; i < sorted.length; i++) {
+      if (consumed.has(sorted[i].id)) continue;
+      const baseDay = Date.parse(String(sorted[i].start_date).slice(0, 10));
+      const srcUnion = sourceSet(sorted[i]);
+      if (srcUnion.size === 0) continue; // 소스 미상 — 비교 불가, 스킵
+      const cluster = [sorted[i]];
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (consumed.has(sorted[j].id)) continue;
+        const day = Date.parse(String(sorted[j].start_date).slice(0, 10));
+        if (Math.abs(day - baseDay) > TWO_DAYS) continue;
+        const s = sourceSet(sorted[j]);
+        if (s.size === 0) continue;
+        // 소스가 겹치면 같은 크롤러의 별개 회차 → 병합 안 함
+        if (Array.from(s).some((x) => srcUnion.has(x))) continue;
+        cluster.push(sorted[j]);
+        s.forEach((x) => srcUnion.add(x));
       }
       if (cluster.length > 1) {
         const n = await mergeCluster(db, cluster);
