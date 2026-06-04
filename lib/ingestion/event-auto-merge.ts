@@ -27,10 +27,11 @@ interface Ev {
 }
 
 function normTitle(e: Ev): string {
+  // 영숫자+한글만 남기고 전부 제거 — 전각/반각 문장부호(＃#·．.·［］[] 등) 차이를 흡수.
   return (e.normalized_title ?? e.title ?? "")
+    .normalize("NFKC") // 전각→반각 정규화
     .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[!-/:-@[-`{-~~·…“”‘’\-–—()[\]<>「」『』【】、，。!?]/g, "");
+    .replace(/[^a-z0-9가-힣]/g, "");
 }
 
 function dayOf(e: Ev): string | null {
@@ -46,7 +47,9 @@ function pickCanonical(members: Ev[]): Ev {
   })[0];
 }
 
-async function fetchAll(db: ReturnType<typeof createServiceRoleClient>): Promise<Ev[]> {
+async function fetchAll(
+  db: ReturnType<typeof createServiceRoleClient>,
+): Promise<Ev[]> {
   const all: Ev[] = [];
   for (let f = 0; ; f += 1000) {
     const { data } = await db
@@ -138,6 +141,42 @@ export async function autoMergeDuplicateEvents(): Promise<{
     if (n > 0) {
       clusters++;
       deleted += n;
+      g.forEach((e) => consumed.add(e.id));
+    }
+  }
+
+  // 패스 3: 같은 공연일 + 제목 truncation(한쪽 제목이 다른쪽의 접두사).
+  //   크롤 소스가 제목을 잘라 저장해 생기는 중복("...[ddbb X" vs "...[ddbb X 베리코이버니]").
+  //   접두 길이 15자 이상만 — 짧은 제목 오매칭 방지.
+  const byDay = new Map<string, Ev[]>();
+  for (const e of all) {
+    if (consumed.has(e.id)) continue;
+    const day = dayOf(e);
+    if (!day || normTitle(e).length < 15) continue;
+    (byDay.get(day) ?? byDay.set(day, []).get(day)!).push(e);
+  }
+  for (const group of Array.from(byDay.values())) {
+    if (group.length < 2) continue;
+    // 제목 짧은 것부터 — 접두사 후보
+    const sorted = [...group].sort(
+      (a, b) => normTitle(a).length - normTitle(b).length,
+    );
+    for (let i = 0; i < sorted.length; i++) {
+      if (consumed.has(sorted[i].id)) continue;
+      const shortN = normTitle(sorted[i]);
+      const cluster = [sorted[i]];
+      for (let j = i + 1; j < sorted.length; j++) {
+        if (consumed.has(sorted[j].id)) continue;
+        if (normTitle(sorted[j]).startsWith(shortN)) cluster.push(sorted[j]);
+      }
+      if (cluster.length > 1) {
+        const n = await mergeCluster(db, cluster);
+        if (n > 0) {
+          clusters++;
+          deleted += n;
+          cluster.forEach((e) => consumed.add(e.id));
+        }
+      }
     }
   }
 
