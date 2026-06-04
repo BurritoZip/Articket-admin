@@ -95,9 +95,10 @@ export async function geminiEnrichArtists(opts?: {
   const { data: artists } = await q.limit(2000);
   if (!artists?.length) return { checked: 0, filled: 0, notMusic: 0 };
 
-  const sorted = [...artists].sort(
-    (a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0),
-  );
+  // 활성(이벤트 보유) 아티스트만 — 비활성(0건)은 노출 안 되니 토큰 낭비 방지
+  const sorted = artists
+    .filter((a) => (counts.get(a.id) ?? 0) > 0)
+    .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0));
   const target = sorted.slice(0, maxItems);
 
   const now = new Date().toISOString();
