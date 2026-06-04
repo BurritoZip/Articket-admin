@@ -289,5 +289,63 @@ export async function autoMergeDuplicateEvents(): Promise<{
     }
   }
 
+  // 패스 6: 같은 공연장 + 같은 날짜 + 소스 겹치지 않음(크로스소스).
+  //   한/영 표기로 글자가 안 겹치는 동일 공연(페스티벌 多): 서로 다른 크롤러가 같은
+  //   공연장·날짜에 올렸으면 같은 공연일 확률이 큼. 같은 소스의 같은 공연장·날짜(다른
+  //   가수 단독공연 2개 등)는 소스 겹침으로 구분돼 보존된다.
+  const lcs6 = (a: string, b: string): number => {
+    let best = 0;
+    const dp = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = 0;
+      for (let j = 1; j <= b.length; j++) {
+        const tmp = dp[j];
+        dp[j] = a[i - 1] === b[j - 1] ? prev + 1 : 0;
+        if (dp[j] > best) best = dp[j];
+        prev = tmp;
+      }
+    }
+    return best;
+  };
+  const FEST = /페스티벌|페스타|페스트|festival|fes\b|fest\b/i;
+  const byVD = new Map<string, Ev[]>();
+  for (const e of all) {
+    if (consumed.has(e.id)) continue;
+    const day = dayOf(e);
+    if (!e.venue_id || !day) continue;
+    const k = `${e.venue_id}|${day}`;
+    (byVD.get(k) ?? byVD.set(k, []).get(k)!).push(e);
+  }
+  for (const group of Array.from(byVD.values())) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      if (consumed.has(group[i].id)) continue;
+      const srcUnion = sourceSet(group[i]);
+      if (srcUnion.size === 0) continue;
+      const cluster = [group[i]];
+      for (let j = i + 1; j < group.length; j++) {
+        if (consumed.has(group[j].id)) continue;
+        const s = sourceSet(group[j]);
+        if (s.size === 0) continue;
+        if (Array.from(s).some((x) => srcUnion.has(x))) continue; // 소스 겹침 → 별개
+        // 둘 다 페스티벌이거나 제목 공통문자열 3자+ 일 때만(같은 공연장 다른 단독공연 방지)
+        const bothFest =
+          FEST.test(group[i].title ?? "") && FEST.test(group[j].title ?? "");
+        if (!bothFest && lcs6(normTitle(group[i]), normTitle(group[j])) < 3)
+          continue;
+        cluster.push(group[j]);
+        s.forEach((x) => srcUnion.add(x));
+      }
+      if (cluster.length > 1) {
+        const n = await mergeCluster(db, cluster);
+        if (n > 0) {
+          clusters++;
+          deleted += n;
+          cluster.forEach((e) => consumed.add(e.id));
+        }
+      }
+    }
+  }
+
   return { clusters, deleted };
 }
