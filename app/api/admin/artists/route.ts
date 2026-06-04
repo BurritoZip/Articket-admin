@@ -97,27 +97,17 @@ export async function GET(request: Request) {
   const total = res.count ?? 0;
   const artistIds = (res.data ?? []).map((a) => (a as { id: string }).id);
 
-  // 팔로워 수 + event_artists 기반 연결 공연 수 병렬 조회
-  let followMap: Record<string, number> = {};
+  // followers_count 는 트리거로 유지되는 컬럼을 그대로 사용한다.
+  //   (예전엔 user_artist_followings 를 RLS 적용 클라이언트로 즉석 COUNT 했는데,
+  //    RLS 가 "본인 팔로우만" 막아 admin 에는 항상 0 으로 보였음.)
+  // 연결 공연 수만 event_artists(유저 RLS 없음)로 라이브 집계.
   let linkedEventCountMap: Record<string, number> = {};
-
   if (artistIds.length > 0) {
-    const [followsRes, eventArtistsRes] = await Promise.all([
-      supabase
-        .from("user_artist_followings")
-        .select("artist_id")
-        .in("artist_id", artistIds),
-      supabase
-        .from("event_artists")
-        .select("artist_id")
-        .in("artist_id", artistIds),
-    ]);
-
-    for (const row of followsRes.data ?? []) {
-      const id = (row as { artist_id: string }).artist_id;
-      followMap[id] = (followMap[id] ?? 0) + 1;
-    }
-    for (const row of eventArtistsRes.data ?? []) {
+    const { data: eventArtists } = await supabase
+      .from("event_artists")
+      .select("artist_id")
+      .in("artist_id", artistIds);
+    for (const row of eventArtists ?? []) {
       const id = (row as { artist_id: string }).artist_id;
       linkedEventCountMap[id] = (linkedEventCountMap[id] ?? 0) + 1;
     }
@@ -125,7 +115,6 @@ export async function GET(request: Request) {
 
   const rows = (res.data ?? []).map((artist) => ({
     ...artist,
-    followers_count: followMap[(artist as { id: string }).id] ?? 0,
     linked_event_count: linkedEventCountMap[(artist as { id: string }).id] ?? 0,
   }));
 
