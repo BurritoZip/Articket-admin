@@ -1,19 +1,30 @@
 /**
- * Gemini 그라운딩 아티스트 보강 — 브리틀한 HTTP 스크래핑(namu/melon/naver) 대체.
+ * Gemini 그라운딩 아티스트 보강 (통합) — 브리틀한 HTTP 스크래핑 대체 + 토큰 절약.
  *
- * 구글검색 그라운딩으로 실제 웹에서 아티스트 정보를 확인해 채운다.
- * description·occupation·country·name_en 등 텍스트 사실을 한 번에 가져온다.
- * 못 찾으면 null(환각 방지). 기존값은 덮어쓰지 않는다(force 제외).
+ * 아티스트당 Gemini 1콜로 정보 + 표준명(canonical)을 동시에 가져온다.
+ *   - 정보: description/occupation/country/name_en (없으면 null, 환각 방지)
+ *   - canonical: 한/영·오타 통일한 표준 영문 키 → artists.gemini_canon 저장 →
+ *     dedup(aiDedupArtists)이 Gemini 없이 이 키로 그룹핑.
+ * gemini_checked_at 마커로 한 번만 호출(못 채워도 재호출 안 함).
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { geminiTextGrounded } from "@/lib/gemini";
 
 interface GeminiArtistInfo {
   is_music_artist: boolean | null;
+  canonical: string | null; // 표준 영문명(원문)
   name_en: string | null;
   occupation: string | null;
   country: string | null;
   description: string | null;
+}
+
+/** canonical 표준 키 — 비교/그룹핑용 (영숫자+한글만) */
+export function canonKey(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFKC")
+    .replace(/[^a-z0-9가-힣]/g, "");
 }
 
 function parse(raw: string): GeminiArtistInfo | null {
@@ -28,6 +39,7 @@ function parse(raw: string): GeminiArtistInfo | null {
     return {
       is_music_artist:
         typeof o.is_music_artist === "boolean" ? o.is_music_artist : null,
+      canonical: str(o.canonical_name),
       name_en: str(o.name_en),
       occupation: str(o.occupation),
       country: str(o.country),
@@ -42,6 +54,7 @@ async function fetchOne(name: string): Promise<GeminiArtistInfo | null> {
   const prompt = `대중음악 아티스트 "${name}" 정보를 웹에서 찾아 JSON으로만 답하라.
 {
   "is_music_artist": true/false,   // 가수·밴드·래퍼·아이돌·싱어송라이터면 true. 화가·배우·전시·작가 등이면 false
+  "canonical_name": "표준 영문(로마자) 이름 — 같은 아티스트면 항상 동일하게(예: 찰리 푸스/Chalie Puth → Charlie Puth)",
   "name_en": "영문 표기 또는 null",
   "occupation": "가수|밴드|래퍼|아이돌|싱어송라이터|DJ 중 하나 또는 null",
   "country": "국적(예: 대한민국, 미국, 일본) 또는 null",
@@ -63,7 +76,7 @@ export async function geminiEnrichArtists(opts?: {
   const force = opts?.force ?? false;
   const db = createServiceRoleClient();
 
-  // description 비어있는(=미보강) 아티스트 우선. 이벤트 보유 아티스트부터.
+  // 이벤트 보유(활성) 아티스트 우선
   const counts = new Map<string, number>();
   for (let f = 0; ; f += 1000) {
     const { data } = await db
@@ -79,33 +92,34 @@ export async function geminiEnrichArtists(opts?: {
 
   let q = db
     .from("artists")
-    .select("id,name,name_en,occupation,country,description");
-  if (!force) q = q.is("description", null); // 한줄소개 미보강분
+    .select("id,name,name_en,occupation,country");
+  if (!force) q = q.is("gemini_checked_at", null); // 한 번만 — 재호출 방지(토큰 절약)
   const { data: artists } = await q.limit(2000);
   if (!artists?.length) return { checked: 0, filled: 0, notMusic: 0 };
 
-  // 이벤트 많은 순 정렬 후 상한
   const sorted = [...artists].sort(
     (a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0),
   );
   const target = sorted.slice(0, maxItems);
 
+  const now = new Date().toISOString();
   let filled = 0;
   let notMusic = 0;
   for (const a of target) {
     const info = await fetchOne(a.name);
-    if (!info) continue;
-    if (info.is_music_artist === false) notMusic++;
-    const patch: Record<string, string> = {};
-    if (info.description) patch.description = info.description;
-    if (info.occupation && (force || !a.occupation))
-      patch.occupation = info.occupation;
-    if (info.country && (force || !a.country)) patch.country = info.country;
-    if (info.name_en && (force || !a.name_en)) patch.name_en = info.name_en;
-    if (Object.keys(patch).length) {
-      await db.from("artists").update(patch).eq("id", a.id);
-      filled++;
+    // 시도 기록은 항상 — 못 찾아도 재호출 안 함
+    const patch: Record<string, string> = { gemini_checked_at: now };
+    if (info) {
+      if (info.is_music_artist === false) notMusic++;
+      if (info.canonical) patch.gemini_canon = canonKey(info.canonical);
+      if (info.description) patch.description = info.description;
+      if (info.occupation && (force || !a.occupation))
+        patch.occupation = info.occupation;
+      if (info.country && (force || !a.country)) patch.country = info.country;
+      if (info.name_en && (force || !a.name_en)) patch.name_en = info.name_en;
+      if (Object.keys(patch).length > 1) filled++;
     }
+    await db.from("artists").update(patch).eq("id", a.id);
   }
   return { checked: target.length, filled, notMusic };
 }
