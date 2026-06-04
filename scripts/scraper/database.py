@@ -129,6 +129,7 @@ def upsert_event(
     payload = {
         "title": title,
         "dedup_key": dedup_key,
+        "source_name": source_name,
         "source_urls": [source_entry],
         "crawled_at": datetime.utcnow().isoformat(),
         "status": status,

@@ -234,13 +234,18 @@ def main():
     save_events(client, supp_events)
 
     print("\n완료!")
+    # macOS 알림은 부가기능 — terminal-notifier 미설치 시 조용히 건너뜀.
+    # (check=False여도 바이너리 부재면 Popen이 FileNotFoundError를 던져 main이 죽고
+    #  cron이 뒤이은 TS 파이프라인까지 중단시키던 버그 방지)
+    import shutil
     import subprocess
-    subprocess.run([
-        "terminal-notifier",
-        "-message", f"{len(supp_events)}개 이벤트 저장 완료!",
-        "-title", "Articket 크롤러",
-        "-sound", "Glass",
-    ], check=False)
+    if shutil.which("terminal-notifier"):
+        subprocess.run([
+            "terminal-notifier",
+            "-message", f"{len(supp_events)}개 이벤트 저장 완료!",
+            "-title", "Articket 크롤러",
+            "-sound", "Glass",
+        ], check=False)
 
 
 if __name__ == "__main__":

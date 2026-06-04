@@ -9,13 +9,13 @@ import * as cheerio from "cheerio";
 
 export interface MelonProfile {
   avatar_url?: string;
-  name?: string;         // 한글 이름 (멜론 표시명)
-  name_en?: string;      // 영문 이름
-  label?: string;        // 소속사
-  country?: string;      // 국가 코드
-  occupation?: string;   // 활동 유형 (솔로, 그룹 등 → 가수)
-  debut_date?: string;   // 데뷔일 (birth_date 아님)
-  genre?: string;        // 장르 (metadata 용)
+  name?: string; // 한글 이름 (멜론 표시명)
+  name_en?: string; // 영문 이름
+  label?: string; // 소속사
+  country?: string; // 국가 코드
+  occupation?: string; // 활동 유형 (솔로, 그룹 등 → 가수)
+  debut_date?: string; // 데뷔일 (birth_date 아님)
+  genre?: string; // 장르 (metadata 용)
   source_url: string;
 }
 
@@ -37,8 +37,13 @@ async function rateLimit() {
 }
 
 const COUNTRY_MAP: Record<string, string> = {
-  한국: "KR", 국내: "KR", 미국: "US", 일본: "JP",
-  중국: "CN", 영국: "GB", 캐나다: "CA",
+  한국: "KR",
+  국내: "KR",
+  미국: "US",
+  일본: "JP",
+  중국: "CN",
+  영국: "GB",
+  캐나다: "CA",
 };
 
 /** 멜론 검색에서 첫 번째 아티스트 ID 추출 */
@@ -46,7 +51,10 @@ async function searchMelonArtistId(query: string): Promise<string | null> {
   try {
     await rateLimit();
     const url = `${MELON_BASE}/search/artist/index.htm?q=${encodeURIComponent(query)}`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(10000),
+    });
     if (!res.ok) return null;
 
     const html = await res.text();
@@ -74,11 +82,16 @@ async function searchMelonArtistId(query: string): Promise<string | null> {
 }
 
 /** 멜론 아티스트 상세 페이지 파싱 */
-async function fetchMelonDetail(artistId: string): Promise<MelonProfile | null> {
+async function fetchMelonDetail(
+  artistId: string,
+): Promise<MelonProfile | null> {
   try {
     await rateLimit();
     const url = `${MELON_BASE}/artist/detail.htm?artistId=${artistId}`;
-    const res = await fetch(url, { headers: HEADERS, signal: AbortSignal.timeout(10000) });
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(10000),
+    });
     if (!res.ok) return null;
 
     const html = await res.text();
@@ -95,7 +108,13 @@ async function fetchMelonDetail(artistId: string): Promise<MelonProfile | null> 
     }
 
     // 한글명 / 영문명
-    const titleText = $(".title_atist").clone().children().remove().end().text().trim();
+    const titleText = $(".title_atist")
+      .clone()
+      .children()
+      .remove()
+      .end()
+      .text()
+      .trim();
     if (titleText) profile.name = titleText;
 
     const enName = $(".title_atist .gray, .title_atist .english").text().trim();
@@ -108,13 +127,14 @@ async function fetchMelonDetail(artistId: string): Promise<MelonProfile | null> 
       if (!val) return;
 
       if (key.includes("데뷔")) profile.debut_date = val;
-      else if (key.includes("소속사") || key.includes("기획사")) profile.label = val;
+      else if (key.includes("소속사") || key.includes("기획사"))
+        profile.label = val;
       else if (key.includes("국가") || key.includes("활동지역")) {
         profile.country = COUNTRY_MAP[val] ?? val;
-      } else if (key.includes("장르")) profile.genre = val;
-      else if (key.includes("활동유형") || key.includes("분류")) {
-        // "남성 솔로", "혼성그룹" 등 → 직업은 "가수"로 통일
-        profile.occupation = "가수";
+      } else if (key.includes("장르")) {
+        // occupation = 장르 의미 (직업 아님)
+        profile.genre = val;
+        profile.occupation = val;
       }
     });
 
@@ -124,7 +144,9 @@ async function fetchMelonDetail(artistId: string): Promise<MelonProfile | null> 
   }
 }
 
-export async function fetchMelonProfile(query: string): Promise<MelonProfile | null> {
+export async function fetchMelonProfile(
+  query: string,
+): Promise<MelonProfile | null> {
   try {
     const artistId = await searchMelonArtistId(query);
     if (!artistId) return null;

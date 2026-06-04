@@ -7,12 +7,15 @@ async function predictVenueAddress(venueName: string): Promise<string | null> {
 주소만 (도로명 주소 형식, 없으면 "모름"):`;
   try {
     const raw = await geminiText(prompt).then((s) => s.trim());
-    if (!raw || raw === "모름" || raw.length < 5 || raw.length > 150) return null;
+    if (!raw || raw === "모름" || raw.length < 5 || raw.length > 150)
+      return null;
     // 주소 키워드 없으면 reject
     const ADDRESS_KW = /시|구|동|로|길|번지|특별시|광역시|도\s|읍|면/;
     if (!ADDRESS_KW.test(raw)) return null;
     return raw;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 /** 주소 없는 공연장 Gemini로 보강 */
@@ -26,17 +29,25 @@ export async function processVenueAddressEnrichment(maxItems = 30): Promise<{
     .from("venues")
     .select("id,name,address")
     .or("address.is.null,address.eq.")
+    .is("address_attempted_at", null) // 재선택 방지 — 시도한 건 제외
     .limit(maxItems);
 
   if (!venues || venues.length === 0) return { processed: 0, filled: 0 };
 
+  const now = new Date().toISOString();
   let filled = 0;
   for (const venue of venues) {
     const address = await predictVenueAddress(venue.name);
-    if (address) {
-      await db.from("venues").update({ address }).eq("id", venue.id);
-      filled++;
-    }
+    // 성공/실패 모두 시도 마킹 → 다음 run은 다음 배치로 진행
+    await db
+      .from("venues")
+      .update(
+        address
+          ? { address, address_attempted_at: now }
+          : { address_attempted_at: now },
+      )
+      .eq("id", venue.id);
+    if (address) filled++;
   }
 
   return { processed: venues.length, filled };

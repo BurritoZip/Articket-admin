@@ -125,13 +125,23 @@ export async function mergeArtists(params: {
     }
   }
 
-  // ── 4. FK 재지정 (4개 테이블) ──────────────────────────────────
+  // ── 4. FK 재지정 ──────────────────────────────────
   await reassignFK("event_artists", { col1: "event_id", col2: "artist_id" });
   await reassignFK("timetable_performances");
   await reassignFK("user_artist_followings", {
     col1: "user_id",
     col2: "artist_id",
   });
+  // events.artist_id 는 대표 아티스트 단일 컬럼 — 조인테이블이 아니라 직접 갱신.
+  // (누락 시 병합된 아티스트 삭제로 events.artist_id 가 null 로 떨어져 중복이 남았음)
+  {
+    const { data: updated } = await db
+      .from("events")
+      .update({ artist_id: keepId })
+      .eq("artist_id", mergeId)
+      .select("id");
+    fkReassignments["events"] = (updated ?? []).length;
+  }
   // artist_aliases는 별도 처리 (아래)
 
   // ── 5. alias 이관 + merge name/name_en alias 등록 ───────────────

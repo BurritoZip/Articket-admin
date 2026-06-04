@@ -23,6 +23,9 @@ export async function GET(request: Request) {
   const missingField = url.searchParams.get("missing")?.trim();
   const duplicatesOnly = url.searchParams.get("duplicates") === "true";
   const noArtistLink = url.searchParams.get("no_artist_link") === "true";
+  // 끝난 공연(ended)은 기본 숨김 — 데이터는 보존(아티스트 과거공연 이력),
+  // 목록엔 최신만 노출. include_ended=true 또는 status=ended 명시 시 표시.
+  const includeEnded = url.searchParams.get("include_ended") === "true";
   const { page, pageSize } = parseAdminPagination(url.searchParams);
   const from = (page - 1) * pageSize;
   const to = from + pageSize - 1;
@@ -65,6 +68,9 @@ export async function GET(request: Request) {
   if (search) eventsQuery = eventsQuery.ilike("title", `%${search}%`);
   if (status && VALID_STATUSES.includes(status)) {
     eventsQuery = eventsQuery.eq("status", status);
+  } else if (!includeEnded) {
+    // 명시적 status 필터가 없으면 끝난 공연은 숨긴다(데이터는 그대로 보존).
+    eventsQuery = eventsQuery.neq("status", "ended");
   }
 
   if (missingField && VALID_MISSING.has(missingField)) {

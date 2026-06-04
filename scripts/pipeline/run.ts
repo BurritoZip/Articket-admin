@@ -15,8 +15,13 @@ import {
   enrichEventArtists,
   enrichEventGenres,
   enrichEventAges,
+  enrichEventTicketDates,
 } from "../../lib/ingestion/event-enrich";
+import { autoMergeDuplicateEvents } from "../../lib/ingestion/event-auto-merge";
+import { autoPurgeNonConcerts } from "../../lib/data-quality/purge-non-concerts";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
+import { aiDedupArtists } from "../../lib/artists/ai-dedup";
+import { geminiEnrichArtists } from "../../lib/artists/enrich/gemini-enrich";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
 import { runArtistBackfill } from "../../lib/ingestion/artist-backfill";
 import { processVenueAddressEnrichment } from "../../lib/venues/enrich";
@@ -140,8 +145,16 @@ async function main() {
   // fix
   await run("fix", () => runDataQualityAutoFix({ scope: "all" }));
 
-  // delete
-  await run("delete", () => runDataQualityAutoDelete({}));
+  // delete — 불량행 삭제 + 비콘서트(전시/뮤지컬/클래식 등) 자동 제거(최근 크롤분)
+  await run("delete", async () => {
+    const dq = await runDataQualityAutoDelete({});
+    const nc = await autoPurgeNonConcerts({ recentDays: 2, maxItems: 300 });
+    return {
+      ...dq,
+      nonConcertChecked: nc.checked,
+      nonConcertDeleted: nc.deleted,
+    };
+  });
 
   // enrich — 직접 보강 (큐 우회), max 4.5min
   await run("enrich", async () => {
@@ -149,14 +162,20 @@ async function main() {
     await runArtistBackfill({ limit: 500, dryRun: false });
 
     // 2. 아티스트 없는 이벤트 → Gemini로 제목에서 추출 + 장르/연령/주소 직접 보강
-    const [{ linked: artistLinked }, genreR, ageR, venueR, artistQ] =
-      await Promise.all([
-        enrichEventArtists(100),
+    const [artistR, genreR, ageR, venueR, ticketR, artistQ] = await Promise.all(
+      [
+        enrichEventArtists(200),
         enrichEventGenres(50),
         enrichEventAges(50),
-        processVenueAddressEnrichment(30),
+        processVenueAddressEnrichment(60),
+        enrichEventTicketDates(40), // 예매오픈/마감일 그라운딩 보강(점진 드레인)
         queueArtistEnrichment(),
-      ]);
+      ],
+    );
+    const artistLinked = artistR.linked;
+
+    // 2.5 Gemini 그라운딩 아티스트 보강 (description/occupation/country/name_en)
+    const giArtist = await geminiEnrichArtists({ maxItems: 40 });
 
     // 3. 아티스트 프로필 보강 (namu/melon/naver/wikipedia) — 큐 기반
     const { count: artistPending } = await db
@@ -188,20 +207,31 @@ async function main() {
 
     return {
       artist_linked: artistLinked,
+      artist_multi: artistR.multiArtist,
+      artist_none: artistR.noArtist,
       genre_filled: genreR.filled,
       age_filled: ageR.filled,
       venue_address_filled: venueR.filled,
+      ticket_dates_filled: ticketR.filled,
+      gemini_artist_filled: giArtist.filled,
       artist_enriched: succeeded,
       artist_failed: failed,
       processed,
     };
   });
 
-  // merge
+  // merge — AI 아티스트(음역·오타) + 정확일치 아티스트·공연장 + 이벤트 중복 자동 병합
   await run("merge", async () => {
+    const aiArtists = await aiDedupArtists({ maxItems: 3000, apply: true });
     const artists = await autoMergeExactArtists();
     const venues = await autoMergeExactVenues();
-    return { artists: artists.merged, venues: venues.merged };
+    const events = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
+    return {
+      aiArtistsMerged: aiArtists.merged,
+      artists: artists.merged,
+      venues: venues.merged,
+      eventDupsMerged: events.deleted,
+    };
   });
 
   // score — 인기/트렌드 점수 산출

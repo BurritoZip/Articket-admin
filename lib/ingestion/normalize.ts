@@ -111,16 +111,26 @@ export function parseEndDate(raw: string | null | undefined): string | null {
   return parseDate(raw);
 }
 
+// 공연일자(start/end)와 예매일자(ticketOpen)를 구분해 판정.
+//   ended    = 공연 종료일 지남
+//   ongoing  = 공연중
+//   upcoming = 예매예정 — 공연 전 + 예매오픈일이 미래
+//   on_sale  = 예매중   — 공연 전 + 예매오픈됨(또는 오픈일 미상)
+// sweepEventStatuses() 가 이후 ticket_close_date 까지 포함해 재판정하는 단순화 버전.
 export function inferStatus(
   startDate: string | null,
-): "upcoming" | "on_sale" | "ended" {
+  endDate?: string | null,
+  ticketOpenDate?: string | null,
+): "upcoming" | "on_sale" | "ongoing" | "ended" {
   if (!startDate) return "upcoming";
   const now = new Date();
   const start = new Date(startDate);
-  if (start < now) return "ended";
-  const twoWeeksBefore = new Date(start.getTime() - 14 * 24 * 60 * 60 * 1000);
-  if (now >= twoWeeksBefore) return "on_sale";
-  return "upcoming";
+  const end = endDate ? new Date(endDate) : start;
+  if (end < now) return "ended";
+  if (start <= now && now <= end) return "ongoing";
+  // 공연 전(start > now): 예매오픈일로 예매중/예매예정 구분
+  if (ticketOpenDate && new Date(ticketOpenDate) > now) return "upcoming";
+  return "on_sale";
 }
 
 export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
@@ -128,6 +138,7 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
   const normalizedVenueName = normalizeVenueName(raw.venueName, raw.title);
   const startDate = parseDate(raw.startDate);
   const endDate = parseEndDate(raw.endDate) ?? parseEndDate(raw.startDate);
+  const ticketOpenDate = parseDate(raw.ticketOpenDate);
 
   return {
     title: raw.title.trim(),
@@ -138,7 +149,7 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
     venueAddress: raw.venueAddress?.trim() ?? null,
     startDate,
     endDate,
-    ticketOpenDate: parseDate(raw.ticketOpenDate),
+    ticketOpenDate,
     ticketProvider: raw.ticketProvider?.trim() ?? null,
     sourceUrls: [raw.sourceUrl],
     sourceName: raw.sourceName,
@@ -146,7 +157,7 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
     artistProfiles: raw.artistProfiles,
     genre: raw.genre?.trim() ?? null,
     description: raw.description?.trim() ?? null,
-    status: raw.status ?? inferStatus(startDate),
+    status: raw.status ?? inferStatus(startDate, endDate, ticketOpenDate),
     dedupKey: generateDedupKey(normalizedTitle, normalizedVenueName, startDate),
   };
 }

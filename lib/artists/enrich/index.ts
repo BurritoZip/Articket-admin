@@ -48,8 +48,22 @@ const SOURCE_FIELDS: Record<EnrichSource, EnrichField[]> = {
     "country",
   ],
   melon: ["avatar_url", "name_en", "label", "country", "occupation"],
-  naver: ["birth_date", "birth_place", "occupation", "label", "related"],
-  wikipedia: ["occupation", "birth_date", "birth_place", "related", "label"],
+  naver: [
+    "birth_date",
+    "birth_place",
+    "occupation",
+    "label",
+    "related",
+    "country",
+  ],
+  wikipedia: [
+    "occupation",
+    "birth_date",
+    "birth_place",
+    "related",
+    "label",
+    "country",
+  ],
 };
 
 type AnyProfile = NamuProfile | MelonProfile | NaverProfile | WikipediaProfile;
@@ -243,6 +257,7 @@ export async function queueArtistEnrichment(): Promise<{ queued: number }> {
         task_type: "clean_data",
         status: "pending",
         priority: 1,
+        payload: {}, // NOT NULL 제약 — 누락 시 23502로 적재 전량 실패
         processed_at: null,
         error: null,
       },
