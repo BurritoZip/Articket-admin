@@ -44,9 +44,10 @@ function sourceSet(e: Ev): Set<string> {
   return s;
 }
 
-/** 표시에 더 좋은(서술적인) 제목 우선, 동률이면 먼저 등록된 행 */
+/** 아티스트 링크 보유 우선 → 서술적인(긴) 제목 → 먼저 등록된 행 */
 function pickCanonical(members: Ev[]): Ev {
   return [...members].sort((a, b) => {
+    if (!!a.artist_id !== !!b.artist_id) return a.artist_id ? -1 : 1;
     const lt = (b.title?.length ?? 0) - (a.title?.length ?? 0);
     if (lt !== 0) return lt;
     return a.created_at < b.created_at ? -1 : 1;
@@ -218,6 +219,64 @@ export async function autoMergeDuplicateEvents(): Promise<{
         if (Array.from(s).some((x) => srcUnion.has(x))) continue;
         cluster.push(sorted[j]);
         s.forEach((x) => srcUnion.add(x));
+      }
+      if (cluster.length > 1) {
+        const n = await mergeCluster(db, cluster);
+        if (n > 0) {
+          clusters++;
+          deleted += n;
+          cluster.forEach((e) => consumed.add(e.id));
+        }
+      }
+    }
+  }
+
+  // 패스 5: 같은 공연일 + (같은 공연장 OR 제목 포함관계) — 소스마다 제목 표기가 다른 동일 공연.
+  //   예) "[부산] …빈백콘서트"(yes24) vs "…빈백콘서트 - 부산"(stagepick) — 같은 공연장+날짜
+  //       "포스트 말론 내한공연"(interpark) vs "Post Malone 포스트말론 내한공연" — 제목 포함관계
+  //   안전장치: 같은공연장 매칭은 공통 부분문자열 6자 이상일 때만(페스티벌 다른 출연 오병합 방지).
+  const lcsLen = (a: string, b: string): number => {
+    let best = 0;
+    const dp = new Array(b.length + 1).fill(0);
+    for (let i = 1; i <= a.length; i++) {
+      let prev = 0;
+      for (let j = 1; j <= b.length; j++) {
+        const tmp = dp[j];
+        dp[j] = a[i - 1] === b[j - 1] ? prev + 1 : 0;
+        if (dp[j] > best) best = dp[j];
+        prev = tmp;
+      }
+    }
+    return best;
+  };
+  const dupP5 = (a: Ev, b: Ev): boolean => {
+    const na = normTitle(a);
+    const nb = normTitle(b);
+    if (na.length < 6 || nb.length < 6) return false;
+    // 제목 포함관계(한쪽이 다른쪽에 통째로 들어감, 8자 이상)
+    const shorter = na.length <= nb.length ? na : nb;
+    const longer = na.length <= nb.length ? nb : na;
+    if (shorter.length >= 8 && longer.includes(shorter)) return true;
+    // 같은 공연장 + 공통 부분문자열 6자 이상
+    if (a.venue_id && b.venue_id && a.venue_id === b.venue_id)
+      return lcsLen(na, nb) >= 6;
+    return false;
+  };
+  const byDay5 = new Map<string, Ev[]>();
+  for (const e of all) {
+    if (consumed.has(e.id)) continue;
+    const day = dayOf(e);
+    if (!day) continue;
+    (byDay5.get(day) ?? byDay5.set(day, []).get(day)!).push(e);
+  }
+  for (const group of Array.from(byDay5.values())) {
+    if (group.length < 2) continue;
+    for (let i = 0; i < group.length; i++) {
+      if (consumed.has(group[i].id)) continue;
+      const cluster = [group[i]];
+      for (let j = i + 1; j < group.length; j++) {
+        if (consumed.has(group[j].id)) continue;
+        if (dupP5(group[i], group[j])) cluster.push(group[j]);
       }
       if (cluster.length > 1) {
         const n = await mergeCluster(db, cluster);
