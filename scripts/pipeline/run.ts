@@ -229,7 +229,7 @@ async function main() {
     const venues = await autoMergeExactVenues();
     const events = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
     return {
-      nonMusicEventsDeleted: nonMusic.deleted,
+      nonMusicUnlinked: nonMusic.unlinked, nonMusicArtistsDeleted: nonMusic.artistsDeleted,
       aiArtistsMerged: aiArtists.merged,
       artists: artists.merged,
       venues: venues.merged,

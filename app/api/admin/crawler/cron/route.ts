@@ -193,7 +193,7 @@ export async function GET(request: NextRequest) {
         merged: a.merged,
         aiMerged: ai.merged,
         eventDupsMerged: ev.deleted,
-        nonMusicEventsDeleted: nonMusic.deleted,
+        nonMusicUnlinked: nonMusic.unlinked, nonMusicArtistsDeleted: nonMusic.artistsDeleted,
       };
     });
     const artistMerge = {
