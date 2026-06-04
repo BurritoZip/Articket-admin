@@ -184,7 +184,7 @@ export async function GET(request: NextRequest) {
     const statusSweep = { updated: sweepR?.updated ?? 0 };
 
     const artistMergeR = await track("merge", async () => {
-      const ai = await aiDedupArtists({ maxItems: 3000, apply: true }); // 음역·오타
+      const ai = await aiDedupArtists({ apply: true }); // 음역·오타
       const a = await autoMergeExactArtists();
       const ev = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
       return {

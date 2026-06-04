@@ -30,9 +30,11 @@ export async function enrichEventTicketDates(
     .select("id,title,start_date,ticket_provider,venue_id")
     .neq("status", "ended")
     .is("ticket_open_date", null)
+    .is("ticket_checked_at", null) // 이미 시도한 건 재그라운딩 안 함(토큰 절약)
     .order("start_date", { ascending: true })
     .limit(maxItems);
 
+  const now = new Date().toISOString();
   let filled = 0;
   let checked = 0;
   for (const e of events ?? []) {
@@ -45,22 +47,23 @@ export async function enrichEventTicketDates(
 ${e.ticket_provider ? `예매처: ${e.ticket_provider}` : ""}
 확실하지 않으면 반드시 null. 추측 금지.
 JSON만 답해: {"ticket_open_date":"YYYY-MM-DD 또는 null","ticket_close_date":"YYYY-MM-DD 또는 null"}`;
+    // 시도 기록은 항상 남긴다(못 찾아도) → 다음 실행에서 재그라운딩 방지.
+    const patch: Record<string, string> = { ticket_checked_at: now };
     try {
       const raw = await geminiTextGrounded(prompt);
       const m = raw.match(/\{[\s\S]*\}/);
-      if (!m) continue;
-      const parsed = JSON.parse(m[0]) as Record<string, unknown>;
-      const open = cleanDate(parsed.ticket_open_date);
-      const close = cleanDate(parsed.ticket_close_date);
-      if (!open && !close) continue;
-      const patch: Record<string, string> = {};
-      if (open) patch.ticket_open_date = `${open}T00:00:00+00:00`;
-      if (close) patch.ticket_close_date = `${close}T23:59:59+00:00`;
-      await db.from("events").update(patch).eq("id", e.id);
-      filled++;
+      if (m) {
+        const parsed = JSON.parse(m[0]) as Record<string, unknown>;
+        const open = cleanDate(parsed.ticket_open_date);
+        const close = cleanDate(parsed.ticket_close_date);
+        if (open) patch.ticket_open_date = `${open}T00:00:00+00:00`;
+        if (close) patch.ticket_close_date = `${close}T23:59:59+00:00`;
+        if (open || close) filled++;
+      }
     } catch {
-      /* 그라운딩 실패 — 스킵 */
+      /* 그라운딩 실패 — checked_at만 기록하고 넘어감 */
     }
+    await db.from("events").update(patch).eq("id", e.id);
   }
   return { filled, checked };
 }
@@ -162,18 +165,19 @@ export async function enrichEventAges(
     .from("events")
     .select("id,title")
     .is("age_restriction", null)
+    .is("age_checked_at", null) // 이미 시도한 건 재호출 안 함(토큰 절약)
     .limit(maxItems);
 
+  const now = new Date().toISOString();
   let filled = 0;
   for (const event of events ?? []) {
     const age = await predictAgeRestriction(event.title);
+    const patch: Record<string, string> = { age_checked_at: now };
     if (age) {
-      await db
-        .from("events")
-        .update({ age_restriction: age })
-        .eq("id", event.id);
+      patch.age_restriction = age;
       filled++;
     }
+    await db.from("events").update(patch).eq("id", event.id);
   }
   return { filled };
 }
