@@ -13,7 +13,6 @@ interface GeminiArtistInfo {
   name_en: string | null;
   occupation: string | null;
   country: string | null;
-  description: string | null;
 }
 
 function parse(raw: string): GeminiArtistInfo | null {
@@ -31,7 +30,6 @@ function parse(raw: string): GeminiArtistInfo | null {
       name_en: str(o.name_en),
       occupation: str(o.occupation),
       country: str(o.country),
-      description: str(o.description),
     };
   } catch {
     return null;
@@ -44,8 +42,7 @@ async function fetchOne(name: string): Promise<GeminiArtistInfo | null> {
   "is_music_artist": true/false,   // 가수·밴드·래퍼·아이돌·싱어송라이터면 true. 화가·배우·전시·작가 등이면 false
   "name_en": "영문 표기 또는 null",
   "occupation": "가수|밴드|래퍼|아이돌|싱어송라이터|DJ 중 하나 또는 null",
-  "country": "국적(예: 대한민국, 미국, 일본) 또는 null",
-  "description": "한국어 한 줄 소개(40자 이내) 또는 null"
+  "country": "국적(예: 대한민국, 미국, 일본) 또는 null"
 }
 확실하지 않으면 해당 값은 null. 추측 금지.`;
   try {
@@ -77,10 +74,8 @@ export async function geminiEnrichArtists(opts?: {
     if (data.length < 1000) break;
   }
 
-  let q = db
-    .from("artists")
-    .select("id,name,name_en,occupation,country,description");
-  if (!force) q = q.is("description", null);
+  let q = db.from("artists").select("id,name,name_en,occupation,country");
+  if (!force) q = q.is("occupation", null); // 직업 미상 = 미보강분
   const { data: artists } = await q.limit(2000);
   if (!artists?.length) return { checked: 0, filled: 0, notMusic: 0 };
 
@@ -97,7 +92,6 @@ export async function geminiEnrichArtists(opts?: {
     if (!info) continue;
     if (info.is_music_artist === false) notMusic++;
     const patch: Record<string, string> = {};
-    if (info.description) patch.description = info.description;
     if (info.occupation && (force || !a.occupation))
       patch.occupation = info.occupation;
     if (info.country && (force || !a.country)) patch.country = info.country;
