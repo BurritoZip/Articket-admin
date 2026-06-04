@@ -90,9 +90,7 @@ export async function geminiEnrichArtists(opts?: {
     if (data.length < 1000) break;
   }
 
-  let q = db
-    .from("artists")
-    .select("id,name,name_en,occupation,country");
+  let q = db.from("artists").select("id,name,name_en,occupation,country");
   if (!force) q = q.is("gemini_checked_at", null); // 한 번만 — 재호출 방지(토큰 절약)
   const { data: artists } = await q.limit(2000);
   if (!artists?.length) return { checked: 0, filled: 0, notMusic: 0 };
@@ -108,8 +106,10 @@ export async function geminiEnrichArtists(opts?: {
   for (const a of target) {
     const info = await fetchOne(a.name);
     // 시도 기록은 항상 — 못 찾아도 재호출 안 함
-    const patch: Record<string, string> = { gemini_checked_at: now };
+    const patch: Record<string, string | boolean> = { gemini_checked_at: now };
     if (info) {
+      if (info.is_music_artist !== null)
+        patch.is_music_artist = info.is_music_artist;
       if (info.is_music_artist === false) notMusic++;
       if (info.canonical) patch.gemini_canon = canonKey(info.canonical);
       if (info.description) patch.description = info.description;

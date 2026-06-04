@@ -28,6 +28,7 @@ import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { aiDedupArtists } from "@/lib/artists/ai-dedup";
 import { geminiEnrichArtists } from "@/lib/artists/enrich/gemini-enrich";
+import { purgeNonMusicArtistEvents } from "@/lib/data-quality/purge-non-music";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
@@ -184,6 +185,7 @@ export async function GET(request: NextRequest) {
     const statusSweep = { updated: sweepR?.updated ?? 0 };
 
     const artistMergeR = await track("merge", async () => {
+      const nonMusic = await purgeNonMusicArtistEvents(); // 자기치유: 비음악 정리
       const ai = await aiDedupArtists({ apply: true }); // 음역·오타
       const a = await autoMergeExactArtists();
       const ev = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
@@ -191,6 +193,7 @@ export async function GET(request: NextRequest) {
         merged: a.merged,
         aiMerged: ai.merged,
         eventDupsMerged: ev.deleted,
+        nonMusicEventsDeleted: nonMusic.deleted,
       };
     });
     const artistMerge = {
