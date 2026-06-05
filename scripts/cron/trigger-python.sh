@@ -4,6 +4,10 @@
 
 set -euo pipefail
 
+# launchd 의 PATH 는 비어있어 node/npx/python 을 못 찾는다(npx 는 `#!/usr/bin/env node` 라
+# node 가 PATH 에 없으면 "env: node: No such file or directory" 로 죽음). Homebrew bin 추가.
+export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SCRAPER_DIR="$(cd "$SCRIPT_DIR/../scraper" && pwd)"
 
