@@ -256,7 +256,7 @@ export async function autoMergeDuplicateEvents(): Promise<{
     // 제목 포함관계(한쪽이 다른쪽에 통째로 들어감, 8자 이상)
     const shorter = na.length <= nb.length ? na : nb;
     const longer = na.length <= nb.length ? nb : na;
-    if (shorter.length >= 8 && longer.includes(shorter)) return true;
+    if (shorter.length >= 7 && longer.includes(shorter)) return true;
     // 같은 공연장 + 공통 부분문자열 6자 이상
     if (a.venue_id && b.venue_id && a.venue_id === b.venue_id)
       return lcsLen(na, nb) >= 6;
@@ -344,6 +344,74 @@ export async function autoMergeDuplicateEvents(): Promise<{
           cluster.forEach((e) => consumed.add(e.id));
         }
       }
+    }
+  }
+
+  // 패스 7: 도시 마커 위치 차이 — "[부산] 제목" vs "제목 - 부산"(소스마다 표기 다름).
+  //   앞 [도시] 와 뒤 "- 도시"를 떼어낸 core 가 같고 같은 날짜면 동일 공연으로 병합.
+  //   같은 날짜로 제한 → 전국투어(도시별 다른 날) 보존.
+  //   티켓종류 마커([스탠딩]/[지정석]/[VIP] 등)는 떼지 않음 → 변형끼리 안 합쳐짐.
+  const TICKET =
+    /스탠딩|지정석|얼리버드|예매|선예매|티켓|블라인드|vip|premium|pass|[rsa]석/i;
+  const coreKey = (e: Ev): string => {
+    let t = (e.normalized_title ?? e.title ?? "").normalize("NFKC");
+    const lead = t.match(/^\s*[[(［（]([^\])］）]{1,10})[\])］）]\s*/);
+    if (lead && !TICKET.test(lead[1])) t = t.slice(lead[0].length); // 도시류만 제거
+    // 뒤 "- 도시"는 대시류가 있을 때만 제거(공백/콜론만으론 안 뗌 → 부제·마지막단어 보존)
+    t = t.replace(/[ \t]*[-－‐‑–—―_⎽~∼][ \t]*[가-힣A-Za-z]{1,6}[ \t]*$/, "");
+    return t.toLowerCase().replace(/[^a-z0-9가-힣]/g, "");
+  };
+  const byCore = new Map<string, Ev[]>();
+  for (const e of all) {
+    if (consumed.has(e.id)) continue;
+    const day = dayOf(e);
+    const ck = coreKey(e);
+    if (!day || ck.length < 6) continue;
+    const k = `${ck}|${day}`;
+    (byCore.get(k) ?? byCore.set(k, []).get(k)!).push(e);
+  }
+  for (const group of Array.from(byCore.values())) {
+    if (group.length < 2) continue;
+    const n = await mergeCluster(db, group);
+    if (n > 0) {
+      clusters++;
+      deleted += n;
+      group.forEach((e) => consumed.add(e.id));
+    }
+  }
+
+  // 패스 8: 페스티벌 서브listing 통합 — 같은 날짜 + 같은 페스티벌명(" - " 앞 부분).
+  //   한 페스티벌이 "- 개최 발표 / 일반 티켓 / 1·2·3차 라인업 / 크루 티켓" 등 여러 행으로 들어옴.
+  //   앱엔 1개여야 함. 페스티벌 키워드가 있는 경우만(일반 콘서트의 "- 1부/2부"는 보존).
+  // 서브listing 신호: "- 라인업/얼리버드/티켓/발표/개최/N차/크루/오픈" 등
+  const LISTING =
+    /라인업|얼리버드|티켓|발표|개최|크루|예매|오픈|lineup|[0-9]\s*차|최종/i;
+  const festPrefix = (e: Ev): string | null => {
+    const raw = (e.title ?? "").normalize("NFKC");
+    const idx = raw.search(/\s[-–—]\s/);
+    const head = idx >= 0 ? raw.slice(0, idx) : raw;
+    const tail = idx >= 0 ? raw.slice(idx) : "";
+    // 페스티벌 키워드가 있거나, "- 라인업/티켓" 같은 서브listing 꼬리가 있을 때만 통합
+    if (!FEST.test(head) && !(tail && LISTING.test(tail))) return null;
+    const k = head.toLowerCase().replace(/[^a-z0-9가-힣]/g, "");
+    return k.length >= 8 ? k : null;
+  };
+  const byFest = new Map<string, Ev[]>();
+  for (const e of all) {
+    if (consumed.has(e.id)) continue;
+    const day = dayOf(e);
+    const fp = festPrefix(e);
+    if (!day || !fp) continue;
+    const k = `${fp}|${day}`;
+    (byFest.get(k) ?? byFest.set(k, []).get(k)!).push(e);
+  }
+  for (const group of Array.from(byFest.values())) {
+    if (group.length < 2) continue;
+    const n = await mergeCluster(db, group);
+    if (n > 0) {
+      clusters++;
+      deleted += n;
+      group.forEach((e) => consumed.add(e.id));
     }
   }
 

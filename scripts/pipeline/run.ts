@@ -20,6 +20,7 @@ import {
 import { autoMergeDuplicateEvents } from "../../lib/ingestion/event-auto-merge";
 import { autoPurgeNonConcerts } from "../../lib/data-quality/purge-non-concerts";
 import { purgeNonMusicArtistEvents } from "../../lib/data-quality/purge-non-music";
+import { purgeUnlinkedEvents } from "../../lib/data-quality/purge-unlinked";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
 import { aiDedupArtists } from "../../lib/artists/ai-dedup";
 import { geminiEnrichArtists } from "../../lib/artists/enrich/gemini-enrich";
@@ -224,12 +225,15 @@ async function main() {
   // merge — 자기치유(비음악 아티스트 이벤트 제거) + AI 아티스트 병합 + 이벤트 중복 병합
   await run("merge", async () => {
     const nonMusic = await purgeNonMusicArtistEvents(); // enrich가 검증한 비음악 정리
+    const unlinked = await purgeUnlinkedEvents(); // 아티스트 연결 실패 이벤트 제거
     const aiArtists = await aiDedupArtists({ apply: true });
     const artists = await autoMergeExactArtists();
     const venues = await autoMergeExactVenues();
     const events = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
     return {
-      nonMusicUnlinked: nonMusic.unlinked, nonMusicArtistsDeleted: nonMusic.artistsDeleted,
+      nonMusicUnlinked: nonMusic.unlinked,
+      nonMusicArtistsDeleted: nonMusic.artistsDeleted,
+      unlinkedDeleted: unlinked.deleted,
       aiArtistsMerged: aiArtists.merged,
       artists: artists.merged,
       venues: venues.merged,
