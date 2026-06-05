@@ -393,8 +393,23 @@ export async function autoMergeDuplicateEvents(): Promise<{
     const tail = idx >= 0 ? raw.slice(idx) : "";
     // 페스티벌 키워드가 있거나, "- 라인업/티켓" 같은 서브listing 꼬리가 있을 때만 통합
     if (!FEST.test(head) && !(tail && LISTING.test(tail))) return null;
-    const k = head.toLowerCase().replace(/[^a-z0-9가-힣]/g, "");
-    return k.length >= 8 ? k : null;
+    // 토큰셋 키: 연도(20xx)·서브listing어·짧은 라틴 약자(≤5자, JUMF 등) 제거 후 정렬.
+    //   → "2026 서울 파크 페스티벌" = "서울 파크 페스티벌 2026", "JUMF 2026 X" = "2026 X".
+    //   한글 단어(재즈 등)는 남겨 "서울 페스티벌" ≠ "서울 재즈 페스티벌" 구분.
+    const toks = head
+      .toLowerCase()
+      .split(/[\s·,]+/)
+      .map((t) => t.replace(/[^a-z0-9가-힣]/g, ""))
+      .filter(
+        (t) =>
+          t.length >= 2 &&
+          !/^20\d\d$/.test(t) &&
+          !LISTING.test(t) &&
+          !/^[a-z]{1,5}$/.test(t), // 짧은 라틴 약자 제거
+      )
+      .sort();
+    const k = toks.join("");
+    return k.length >= 6 ? k : null;
   };
   const byFest = new Map<string, Ev[]>();
   for (const e of all) {
