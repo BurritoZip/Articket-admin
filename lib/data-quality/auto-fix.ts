@@ -1,4 +1,5 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import { cleanDisplayTitle } from "@/lib/ingestion/normalize";
 import {
   PRICE_RE,
   TICKET_GRADE_RE,
@@ -8,7 +9,11 @@ import {
   VENUE_LIKE_RE,
 } from "./patterns";
 
-export type FixMethod = "null_field" | "queued_ai" | "flagged";
+export type FixMethod =
+  | "null_field"
+  | "queued_ai"
+  | "flagged"
+  | "title_cleaned";
 
 export interface FixLog {
   entityType: "venue" | "artist" | "event";
@@ -23,6 +28,7 @@ export interface AutoFixResult {
   fixed: number;
   queued: number;
   flagged: number;
+  cleaned: number;
   details: FixLog[];
 }
 
@@ -324,6 +330,31 @@ export async function runDataQualityAutoFix(
         { eventTitle: title },
       );
 
+    // 발표·예매 단계 꼬리표 제거 ("… - 2차 라인업" → 순수 이름). 결정론적 → 직접 UPDATE.
+    const cleaned = cleanDisplayTitle(title);
+    if (cleaned !== title && !seen_(id, "title")) {
+      mark(`${id}:title`);
+      if (!dryRun) {
+        await db.from("events").update({ title: cleaned }).eq("id", id);
+        await db.from("data_quality_fix_logs").insert({
+          entity_type: "event",
+          entity_id: id,
+          field_name: "title",
+          issue_type: "event_title_announcement_suffix",
+          old_value: title,
+          fix_method: "title_cleaned",
+        });
+      }
+      logs.push({
+        entityType: "event",
+        entityId: id,
+        fieldName: "title",
+        issueType: "event_title_announcement_suffix",
+        oldValue: title,
+        fixMethod: "title_cleaned",
+      });
+    }
+
     // venue + artist 둘 다 없음 → flagged (처리 코드 없지만 이슈 기록)
     if (!venue_id && !artist_id && !seen_(id, "venue_id,artist_id")) {
       mark(`${id}:venue_id,artist_id`);
@@ -354,6 +385,7 @@ export async function runDataQualityAutoFix(
   const fixed = logs.filter((l) => l.fixMethod === "null_field").length;
   const queued = logs.filter((l) => l.fixMethod === "queued_ai").length;
   const flagged = logs.filter((l) => l.fixMethod === "flagged").length;
+  const cleaned = logs.filter((l) => l.fixMethod === "title_cleaned").length;
 
-  return { fixed, queued, flagged, details: logs };
+  return { fixed, queued, flagged, cleaned, details: logs };
 }

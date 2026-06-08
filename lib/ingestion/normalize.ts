@@ -12,6 +12,21 @@ const STRIP_EVENT_SUFFIX =
 const NORMALIZE_WHITESPACE = /\s+/g;
 const REMOVE_SPECIALS = /[^\w\s가-힣]/g;
 
+// 표시 제목에서 발표·예매 단계 꼬리표 제거.
+// "서울재즈페스티벌 2020 - 2차 라인업" → "서울재즈페스티벌 2020"
+// 구분자(- : · – —) 뒤 발표성 세그먼트만 자른다(맨앞 공백 매칭 금지 — 본문 훼손 방지).
+// 예매일자는 ticketOpen 으로 따로 표기되므로 제목엔 불필요.
+const DISPLAY_SUFFIX_CUT =
+  /\s+[\-:·–—]\s*[^\-:·–—]*(?:\d+\s*차|라인업|티켓\s*오픈|티켓\s*정보|선\s*예매|예매\s*(?:방법|안내|오픈)|취소|연기|개최\s*무산|공연\s*취소)[^\-:·–—]*$/;
+
+export function cleanDisplayTitle(raw: string): string {
+  const t = raw.replace(/^﻿/, "").trim();
+  const cut = t.replace(DISPLAY_SUFFIX_CUT, "").trim();
+  // 과삭제 가드: 결과가 너무 짧거나 원본의 30% 미만이면 원본 유지
+  if (cut.length >= 4 && cut.length >= t.length * 0.3) return cut;
+  return t;
+}
+
 export function normalizeTitle(raw: string): string {
   return raw
     .trim()
@@ -134,14 +149,15 @@ export function inferStatus(
 }
 
 export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
-  const normalizedTitle = normalizeTitle(raw.title);
+  const displayTitle = cleanDisplayTitle(raw.title);
+  const normalizedTitle = normalizeTitle(displayTitle);
   const normalizedVenueName = normalizeVenueName(raw.venueName, raw.title);
   const startDate = parseDate(raw.startDate);
   const endDate = parseEndDate(raw.endDate) ?? parseEndDate(raw.startDate);
   const ticketOpenDate = parseDate(raw.ticketOpenDate);
 
   return {
-    title: raw.title.trim(),
+    title: displayTitle,
     normalizedTitle,
     posterUrl: raw.posterUrl ?? null,
     venueName: raw.venueName?.trim() ?? null,
