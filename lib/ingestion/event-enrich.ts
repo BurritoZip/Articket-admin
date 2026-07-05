@@ -8,6 +8,21 @@ import { matchOrCreateArtist } from "./artist-matcher";
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+/**
+ * 재보강 주기 — 마지막 시도(*_checked_at / enrich_attempted_at)가 이만큼 지난 활성 공연은
+ * 다시 보강 대상에 넣는다. 한번 시도하면 영원히 제외하던 걸 "주기적 최신화"로 바꾸는 워터마크.
+ * 제목만으로 결정되는 장르·연령은 재보강해도 결과가 같아 1회성 유지(토큰 절약).
+ */
+export const REENRICH_STALE_DAYS = 7;
+
+/** "col IS NULL OR col < (now - staleDays)" PostgREST or-필터 문자열 */
+function staleGate(col: string, staleDays = REENRICH_STALE_DAYS): string {
+  const cutoff = new Date(
+    Date.now() - staleDays * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  return `${col}.is.null,${col}.lt.${cutoff}`;
+}
+
 /** "YYYY-MM-DD" 형태이고 실제 유효한 날짜만 통과, 아니면 null */
 function cleanDate(v: unknown): string | null {
   if (typeof v !== "string" || !ISO_DATE.test(v)) return null;
@@ -30,7 +45,7 @@ export async function enrichEventTicketDates(
     .select("id,title,start_date,ticket_provider,venue_id")
     .neq("status", "ended")
     .is("ticket_open_date", null)
-    .is("ticket_checked_at", null) // 이미 시도한 건 재그라운딩 안 함(토큰 절약)
+    .or(staleGate("ticket_checked_at")) // 미시도 or REENRICH_STALE_DAYS 지난 건 재그라운딩(예매일 갱신)
     .order("start_date", { ascending: true })
     .limit(maxItems);
 
@@ -68,17 +83,8 @@ JSON만 답해: {"ticket_open_date":"YYYY-MM-DD 또는 null","ticket_close_date"
   return { filled, checked };
 }
 
-const GENRES = [
-  "뮤지컬",
-  "콘서트",
-  "연극",
-  "전시",
-  "무용",
-  "클래식",
-  "오페라",
-  "축제",
-  "기타",
-] as const;
+// Articket = 대중음악 전용. 뮤지컬·연극·전시·무용·클래식·오페라 등 비음악 라벨 제외.
+const GENRES = ["콘서트", "축제", "기타"] as const;
 
 async function predictGenre(title: string): Promise<string | null> {
   const prompt = `다음 공연 제목을 보고 장르를 하나만 선택하세요. 반드시 아래 목록 중 하나만 답변하세요.
@@ -185,7 +191,7 @@ export async function enrichEventAges(
 /**
  * 아티스트 없는 이벤트 Gemini로 직접 연결.
  *
- * - 아직 시도 안 한 이벤트(enrich_attempted_at IS NULL)만 선택 → 매 run 다음 배치로 진행(백로그 드레인).
+ * - 미시도(enrich_attempted_at IS NULL) + REENRICH_STALE_DAYS 지난 건 선택 → 백로그 드레인 + 주기적 재매칭.
  * - 페스티벌/다중 출연 제목은 'multi_artist'로 분류 (단일 artist_id 없는 게 정상, 라인업으로 표현).
  * - 개별 공연인데 추출 불가 → 'no_artist' 마킹 (재선택 방지, 진짜 미흡으로 집계).
  */
@@ -200,7 +206,7 @@ export async function enrichEventArtists(maxItems = 100): Promise<{
     .from("events")
     .select("id,title")
     .is("artist_id", null)
-    .is("enrich_attempted_at", null) // 재선택 방지 — 시도한 건 제외
+    .or(staleGate("enrich_attempted_at")) // 미시도 or REENRICH_STALE_DAYS 지난 건 재시도(DB 성장분 재매칭)
     .not("status", "eq", "ended")
     .order("start_date", { ascending: false })
     .limit(maxItems);

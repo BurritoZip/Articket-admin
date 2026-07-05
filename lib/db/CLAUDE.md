@@ -9,5 +9,5 @@
 
 ## pipeline_step_status 테이블
 
-각 단계(crawl/sweep/fix/delete/enrich/merge)의 실행 상태를 저장.
+각 단계(crawl/sweep/fix/delete/enrich/merge/score/purge)의 실행 상태를 저장.
 대시보드 파이프라인 시각화가 이 테이블을 1.5초마다 폴링.

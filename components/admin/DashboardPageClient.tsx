@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   Clock,
   Database,
+  EyeOff,
   Loader2,
   MapPin,
   Minus,
@@ -17,6 +18,7 @@ import {
   RefreshCw,
   Sparkles,
   Ticket,
+  TrendingUp,
   Users,
   XCircle,
   Zap,
@@ -85,7 +87,7 @@ const STEPS = [
     key: "crawl",
     label: "크롤링",
     icon: Database,
-    desc: "yes24/melon/interpark",
+    desc: "stagepick",
   },
   {
     key: "sweep",
@@ -111,6 +113,18 @@ const STEPS = [
     label: "중복 병합",
     icon: CheckCircle2,
     desc: "완전일치 자동 병합",
+  },
+  {
+    key: "score",
+    label: "점수 산출",
+    icon: TrendingUp,
+    desc: "인기·트렌드 스코어",
+  },
+  {
+    key: "purge",
+    label: "옛날공연 숨김",
+    icon: EyeOff,
+    desc: "종료 180일+ 소프트 숨김",
   },
 ] as const;
 
@@ -161,6 +175,12 @@ function stepResultLines(s: PipelineStep): string[] {
   }
   if (s.step_name === "merge")
     return [`아티스트 ${r.artists ?? 0}건`, `공연장 ${r.venues ?? 0}건`];
+  if (s.step_name === "score")
+    return [
+      `아티스트 ${r.artist_scored ?? 0}건`,
+      `공연 ${r.concert_scored ?? 0}건`,
+    ];
+  if (s.step_name === "purge") return [`숨김 ${r.hidden ?? 0}건`];
   return [];
 }
 

@@ -161,6 +161,8 @@ export async function upsertEvent(
   for (const field of TRACKED_FIELDS) {
     const newVal = fieldMap[field];
     const oldVal = ex[field];
+    // Never overwrite a sweeper-managed status with a scraper value
+    if (field === "status" && oldVal === "ended") continue;
     if (
       newVal !== undefined &&
       newVal !== null &&

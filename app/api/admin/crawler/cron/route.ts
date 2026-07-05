@@ -1,14 +1,18 @@
 /**
- * StagePick 크롤링 + 파이프라인 실행 엔드포인트
+ * 멀티소스 크롤링 + 파이프라인 실행 엔드포인트
  *
  * 로컬 launchd(trigger-python.sh)에서 curl로 호출.
  * CRON_SECRET 환경변수 설정 시 Authorization: Bearer <secret> 헤더 필요.
  */
 
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
-import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
+import { runYes24Scraper } from "@/lib/scrapers/yes24/scraper";
+import { runMelonScraper } from "@/lib/scrapers/melon/scraper";
+import { runInterparkScraper } from "@/lib/scrapers/interpark/scraper";
+import { runFestivallifeScraper } from "@/lib/scrapers/festivallife/scraper";
+import { runYanoljaScraper } from "@/lib/scrapers/yanolja/scraper";
+import { runGeminiSearchScraper } from "@/lib/scrapers/gemini-search/scraper";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { checkStructureChange } from "@/lib/crawler/structure-check";
 import {
   auditCrawlerJobArtists,
   type ArtistAuditReport,
@@ -34,6 +38,7 @@ import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { stepStart, stepDone, stepFailed } from "@/lib/db/pipeline-tracker";
 import { runScoring } from "@/lib/scoring/run";
+import { purgeOldEvents } from "@/lib/data-quality/purge-old-events";
 import { NextResponse, type NextRequest } from "next/server";
 
 async function track<T>(
@@ -64,44 +69,101 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const source = "stagepick";
-  // 운영자가 crawler_sources.enabled 로 stagepick 을 끄면 크롤을 건너뛴다.
-  // (이전엔 하드코딩이라 DB 에서 꺼도 계속 stagepick 을 긁었음.)
   const db = createServiceRoleClient();
-  const { data: srcRow } = await db
-    .from("crawler_sources")
-    .select("enabled")
-    .eq("name", source)
-    .maybeSingle();
-  const crawlEnabled = srcRow?.enabled === true;
 
-  const job = await createCrawlerJob(source);
+  const SCRAPER_MAP: Record<
+    string,
+    (jobId: string) => Promise<{
+      eventsFound: number;
+      eventsUpserted: number;
+      eventsSkipped: number;
+      pagesCrawled: number;
+      errorCount: number;
+    }>
+  > = {
+    yes24: (id) => runYes24Scraper(id, { dryRun: false }),
+    melon: (id) => runMelonScraper(id, { dryRun: false }),
+    interpark: (id) => runInterparkScraper(id, { dryRun: false }),
+    festivallife: (id) => runFestivallifeScraper(id, { dryRun: false }),
+    yanolja: (id) => runYanoljaScraper(id, { dryRun: false }),
+    "gemini-search": (id) => runGeminiSearchScraper(id, { dryRun: false }),
+  };
 
   // crawl 스텝 pipeline_step_status 추적 시작
   await stepStart("crawl").catch(() => null);
 
+  // enabled sources 조회 후 각 스크래퍼 순차 실행
+  const { data: enabledSources } = await db
+    .from("crawler_sources")
+    .select("name")
+    .eq("enabled", true);
+
+  const crawlResults: Record<string, unknown> = {};
+  let totalEventsFound = 0;
+  let totalEventsUpserted = 0;
+  let totalErrorCount = 0;
+  let lastJobId = "";
+  let artistAudit: ArtistAuditReport = {
+    checkedCount: 0,
+    missingCount: 0,
+    issues: [],
+  };
+
   try {
-    const result = crawlEnabled
-      ? await runStagepickScraper(job.id, {
-          maxItems: 100,
-          dryRun: false,
-          jobId: job.id,
-        })
-      : {
+    for (const src of enabledSources ?? []) {
+      const scraper = SCRAPER_MAP[src.name];
+      if (!scraper) continue;
+
+      const job = await createCrawlerJob(src.name);
+      lastJobId = job.id;
+      try {
+        const result = await scraper(job.id);
+        const srcErrors = result.errorCount;
+        const srcStatus =
+          result.eventsUpserted === 0 && result.eventsFound === 0
+            ? "failed"
+            : srcErrors > 0
+              ? "partial"
+              : "success";
+        await finishCrawlerJob(job.id, {
+          status: srcStatus,
+          pagesCrawled: result.pagesCrawled,
+          eventsFound: result.eventsFound,
+          eventsUpserted: result.eventsUpserted,
+          eventsSkipped: result.eventsSkipped,
+          errorCount: srcErrors,
+          meta: { trigger: "cron" },
+        });
+        totalEventsFound += result.eventsFound;
+        totalEventsUpserted += result.eventsUpserted;
+        totalErrorCount += srcErrors;
+        crawlResults[src.name] = {
+          eventsFound: result.eventsFound,
+          eventsUpserted: result.eventsUpserted,
+          errorCount: srcErrors,
+        };
+        console.log(
+          `[Cron] ${src.name}: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}`,
+        );
+      } catch (e) {
+        await finishCrawlerJob(job.id, {
+          status: "failed",
+          pagesCrawled: 0,
           eventsFound: 0,
           eventsUpserted: 0,
           eventsSkipped: 0,
-          pagesCrawled: 0,
-          errorCount: 0,
+          errorCount: 1,
+        });
+        totalErrorCount++;
+        crawlResults[src.name] = {
+          error: e instanceof Error ? e.message : String(e),
         };
+      }
+    }
 
-    let artistAudit: ArtistAuditReport = {
-      checkedCount: 0,
-      missingCount: 0,
-      issues: [],
-    };
     try {
-      artistAudit = await auditCrawlerJobArtists(job.id);
+      artistAudit = await auditCrawlerJobArtists(lastJobId || "");
+      totalErrorCount += artistAudit.missingCount;
     } catch (auditErr) {
       console.error(
         "[Cron] auditCrawlerJobArtists 실패 (무시):",
@@ -109,11 +171,11 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const totalErrorCount = result.errorCount + artistAudit.missingCount;
-    const crawlStatus = !crawlEnabled
-      ? "success" // stagepick 비활성 — 크롤 스킵(실패 아님), 후속 파이프라인은 계속
-      : result.eventsUpserted === 0 && result.eventsFound === 0
-        ? "failed"
+    const crawlStatus =
+      totalEventsUpserted === 0 && totalEventsFound === 0
+        ? enabledSources?.length === 0
+          ? "success"
+          : "failed"
         : totalErrorCount > 0
           ? "partial"
           : "success";
@@ -122,13 +184,7 @@ export async function GET(request: NextRequest) {
     if (crawlStatus === "failed") {
       await stepFailed("crawl", `eventsFound=0`).catch(() => null);
     } else {
-      await stepDone("crawl", {
-        [source]: {
-          eventsFound: result.eventsFound,
-          eventsUpserted: result.eventsUpserted,
-          errorCount: totalErrorCount,
-        },
-      }).catch(() => null);
+      await stepDone("crawl", crawlResults).catch(() => null);
     }
 
     const fixR = await track("fix", () =>
@@ -138,7 +194,7 @@ export async function GET(request: NextRequest) {
 
     const delR = await track("delete", async () => {
       const dq = await runDataQualityAutoDelete({});
-      const nc = await autoPurgeNonConcerts({ recentDays: 2, maxItems: 300 });
+      const nc = await autoPurgeNonConcerts({ maxItems: 300 });
       return { deleted: dq.deleted, nonConcertDeleted: nc.deleted };
     });
     const autoDelete = {
@@ -224,68 +280,24 @@ export async function GET(request: NextRequest) {
       concertScored: scoreR?.concert_scored ?? 0,
     };
 
-    await finishCrawlerJob(job.id, {
-      status: crawlStatus,
-      pagesCrawled: result.pagesCrawled,
-      eventsFound: result.eventsFound,
-      eventsUpserted: result.eventsUpserted,
-      eventsSkipped: result.eventsSkipped,
-      errorCount: totalErrorCount,
-      meta: {
-        trigger: "cron",
-        artistAudit: {
-          checkedCount: artistAudit.checkedCount,
-          missingCount: artistAudit.missingCount,
-        },
-        autoFix,
-        autoDelete,
-        enrichQueue,
-        statusSweep,
-        artistMerge,
-        venueMerge,
-        scoring,
-      },
-    });
-
-    // 구조 변경 감지 — 크롤을 실제로 돌렸을 때만 (비활성 스킵 시 0건은 오탐)
-    const structureCheck = crawlEnabled
-      ? await checkStructureChange({
-          jobId: job.id,
-          sourceName: source,
-          eventsFound: result.eventsFound,
-        }).catch((e) =>
-          console.error(
-            "[Cron] structure check 실패:",
-            e instanceof Error ? e.message : e,
-          ),
-        )
-      : null;
+    // purge — 오래된 종료 공연 소프트 숨김(하드삭제 아님, 앱 노출만 차단)
+    const purgeR = await track("purge", () => purgeOldEvents());
+    const purge = { hidden: purgeR?.hidden ?? 0 };
 
     console.log(
-      `[Cron] 완료 — 발견: ${result.eventsFound}, 저장: ${result.eventsUpserted}, 오류: ${totalErrorCount}`,
-      structureCheck && "detected" in structureCheck && structureCheck.detected
-        ? `⚠️ 구조 변경 감지 (연속 ${structureCheck.consecutiveZeroCount}회)`
-        : "",
+      `[Cron] 완료 — 발견: ${totalEventsFound}, 저장: ${totalEventsUpserted}, 오류: ${totalErrorCount}`,
     );
 
     return NextResponse.json({
       ok: true,
-      jobId: job.id,
-      eventsFound: result.eventsFound,
-      eventsUpserted: result.eventsUpserted,
+      crawlResults,
+      eventsFound: totalEventsFound,
+      eventsUpserted: totalEventsUpserted,
       errorCount: totalErrorCount,
     });
   } catch (e) {
-    await finishCrawlerJob(job.id, {
-      status: "failed",
-      pagesCrawled: 0,
-      eventsFound: 0,
-      eventsUpserted: 0,
-      eventsSkipped: 0,
-      errorCount: 1,
-    });
     const msg = e instanceof Error ? e.message : String(e);
-    console.error("[Cron] 크롤링 실패:", msg);
-    return NextResponse.json({ error: msg, jobId: job.id }, { status: 500 });
+    console.error("[Cron] 파이프라인 실패:", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -17,7 +17,12 @@ import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
 import { runArtistBackfill } from "@/lib/ingestion/artist-backfill";
 import { processVenueAddressEnrichment } from "@/lib/venues/enrich";
 import { createCrawlerJob, finishCrawlerJob } from "@/lib/crawler/job-manager";
-import { runStagepickScraper } from "@/lib/scrapers/stagepick/scraper";
+import { runYes24Scraper } from "@/lib/scrapers/yes24/scraper";
+import { runMelonScraper } from "@/lib/scrapers/melon/scraper";
+import { runInterparkScraper } from "@/lib/scrapers/interpark/scraper";
+import { runFestivallifeScraper } from "@/lib/scrapers/festivallife/scraper";
+import { runYanoljaScraper } from "@/lib/scrapers/yanolja/scraper";
+import { runGeminiSearchScraper } from "@/lib/scrapers/gemini-search/scraper";
 import { auditCrawlerJobArtists } from "@/lib/ingestion/artist-audit";
 import {
   stepStart,
@@ -27,6 +32,7 @@ import {
 } from "@/lib/db/pipeline-tracker";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { runScoring } from "@/lib/scoring/run";
+import { purgeOldEvents } from "@/lib/data-quality/purge-old-events";
 
 export const maxDuration = 300;
 
@@ -46,23 +52,21 @@ async function run<T>(
   }
 }
 
-type ScraperName = "stagepick";
+type ScraperResult = {
+  pagesCrawled: number;
+  eventsFound: number;
+  eventsUpserted: number;
+  eventsSkipped: number;
+  errorCount: number;
+};
 
-const SCRAPERS: Record<
-  ScraperName,
-  (
-    jobId: string,
-    maxItems: number,
-  ) => Promise<{
-    pagesCrawled: number;
-    eventsFound: number;
-    eventsUpserted: number;
-    eventsSkipped: number;
-    errorCount: number;
-  }>
-> = {
-  stagepick: (jobId, maxItems) =>
-    runStagepickScraper(jobId, { maxItems, dryRun: false, jobId }),
+const SCRAPERS: Record<string, (jobId: string) => Promise<ScraperResult>> = {
+  yes24: (id) => runYes24Scraper(id, { dryRun: false }),
+  melon: (id) => runMelonScraper(id, { dryRun: false }),
+  interpark: (id) => runInterparkScraper(id, { dryRun: false }),
+  festivallife: (id) => runFestivallifeScraper(id, { dryRun: false }),
+  yanolja: (id) => runYanoljaScraper(id, { dryRun: false }),
+  "gemini-search": (id) => runGeminiSearchScraper(id, { dryRun: false }),
 };
 
 export async function POST() {
@@ -81,12 +85,12 @@ export async function POST() {
     const results: Record<string, unknown> = {};
 
     for (const source of sources ?? []) {
-      const scraper = SCRAPERS[source.name as ScraperName];
+      const scraper = SCRAPERS[source.name];
       if (!scraper) continue;
 
       const job = await createCrawlerJob(source.name);
       try {
-        const result = await scraper(job.id, 100);
+        const result = await scraper(job.id);
 
         let artistAudit = { checkedCount: 0, missingCount: 0 };
         try {
@@ -209,6 +213,9 @@ export async function POST() {
 
   // score — 인기/트렌드 점수 산출 (merge 이후: 중복 제거된 아티스트 기준)
   await run("score", () => runScoring());
+
+  // purge — 오래된 종료 공연 소프트 숨김(하드삭제 아님, 앱 노출만 차단)
+  await run("purge", () => purgeOldEvents());
 
   return NextResponse.json({ ok: true });
 }

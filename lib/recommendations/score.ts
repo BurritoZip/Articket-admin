@@ -32,8 +32,9 @@ function freshnessNorm(startDate: string): number {
   if (days < 0) return 0.7;
   if (days <= 14) return 1;
   if (days <= 30) return 0.8;
-  if (days <= 60) return 0.6;
-  if (days <= 120) return 0.4;
+  if (days <= 60) return 0.65;
+  if (days <= 90) return 0.5; // 3개월 이내 최소 0.5 보장
+  if (days <= 180) return 0.35;
   return 0.2;
 }
 
@@ -82,6 +83,7 @@ export async function computeRecommendations(
           "id,title,poster_url,start_date,status,genre,popularity_score,trending_score",
         )
         .in("status", ["on_sale", "upcoming"])
+        .gte("end_date", new Date().toISOString().split("T")[0])
         .range(f, t),
     ),
     fetchAll<EventArtistRow>((f, t) =>

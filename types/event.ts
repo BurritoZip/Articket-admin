@@ -34,6 +34,12 @@ export type EventRow = {
   artist_link_status: "linked" | "multi_artist" | "no_artist" | null;
   /** 아티스트 보강 시도 시각 — 재선택 방지 워터마크 */
   enrich_attempted_at: string | null;
+  /** 소프트 숨김 — true 면 앱/목록에서 제외(하드삭제 아님, 이력 보존) */
+  is_hidden: boolean;
+  /** 숨김 처리 시각 */
+  hidden_at: string | null;
+  /** 숨김 사유 (예: "ended_180d") */
+  hidden_reason: string | null;
 };
 
 export type EventArtistRow = {

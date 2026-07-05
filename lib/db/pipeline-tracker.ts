@@ -1,13 +1,7 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
 export type PipelineStep =
-  | "crawl"
-  | "sweep"
-  | "fix"
-  | "delete"
-  | "enrich"
-  | "merge"
-  | "score";
+  "crawl" | "sweep" | "fix" | "delete" | "enrich" | "merge" | "score" | "purge";
 
 export async function stepStart(step: PipelineStep) {
   const db = createServiceRoleClient();

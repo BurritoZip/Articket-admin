@@ -19,6 +19,7 @@ import {
 } from "../../lib/ingestion/event-enrich";
 import { autoMergeDuplicateEvents } from "../../lib/ingestion/event-auto-merge";
 import { autoPurgeNonConcerts } from "../../lib/data-quality/purge-non-concerts";
+import { purgeOldEvents } from "../../lib/data-quality/purge-old-events";
 import { purgeNonMusicArtistEvents } from "../../lib/data-quality/purge-non-music";
 import { purgeUnlinkedEvents } from "../../lib/data-quality/purge-unlinked";
 import { autoMergeExactArtists } from "../../lib/artists/auto-merge";
@@ -27,7 +28,12 @@ import { geminiEnrichArtists } from "../../lib/artists/enrich/gemini-enrich";
 import { autoMergeExactVenues } from "../../lib/venues/auto-merge";
 import { runArtistBackfill } from "../../lib/ingestion/artist-backfill";
 import { processVenueAddressEnrichment } from "../../lib/venues/enrich";
-import { runStagepickScraper } from "../../lib/scrapers/stagepick/scraper";
+import { runYes24Scraper } from "../../lib/scrapers/yes24/scraper";
+import { runMelonScraper } from "../../lib/scrapers/melon/scraper";
+import { runInterparkScraper } from "../../lib/scrapers/interpark/scraper";
+import { runFestivallifeScraper } from "../../lib/scrapers/festivallife/scraper";
+import { runYanoljaScraper } from "../../lib/scrapers/yanolja/scraper";
+import { runGeminiSearchScraper } from "../../lib/scrapers/gemini-search/scraper";
 import {
   createCrawlerJob,
   finishCrawlerJob,
@@ -75,18 +81,39 @@ async function main() {
       .select("name")
       .eq("enabled", true);
 
+    const SCRAPER_MAP: Record<
+      string,
+      (
+        jobId: string,
+        opts: { maxItems?: number; dryRun?: boolean },
+      ) => Promise<unknown>
+    > = {
+      yes24: (id, opts) => runYes24Scraper(id, opts),
+      melon: (id, opts) => runMelonScraper(id, opts),
+      interpark: (id, opts) => runInterparkScraper(id, opts),
+      festivallife: (id, opts) => runFestivallifeScraper(id, opts),
+      yanolja: (id, opts) => runYanoljaScraper(id, opts),
+      "gemini-search": (id, opts) => runGeminiSearchScraper(id, opts),
+    };
+
     const results: Record<string, unknown> = {};
 
     for (const source of sources ?? []) {
-      if (source.name !== "stagepick") continue; // TS 스크래퍼는 stagepick만
+      const scraper = SCRAPER_MAP[source.name];
+      if (!scraper) {
+        log(`  ${source.name}: TS 스크래퍼 없음 (스킵)`);
+        continue;
+      }
 
       const job = await createCrawlerJob(source.name);
       try {
-        const result = await runStagepickScraper(job.id, {
-          maxItems: 100,
-          dryRun: false,
-          jobId: job.id,
-        });
+        const result = (await scraper(job.id, { dryRun: false })) as {
+          eventsFound: number;
+          eventsUpserted: number;
+          eventsSkipped: number;
+          pagesCrawled: number;
+          errorCount: number;
+        };
 
         let artistAudit = { checkedCount: 0, missingCount: 0 };
         try {
@@ -121,7 +148,7 @@ async function main() {
           errorCount: totalErrors,
         };
         log(
-          `  stagepick: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}, 오류 ${totalErrors}`,
+          `  ${source.name}: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}, 오류 ${totalErrors}`,
         );
       } catch (e) {
         await finishCrawlerJob(job.id, {
@@ -150,7 +177,7 @@ async function main() {
   // delete — 불량행 삭제 + 비콘서트(전시/뮤지컬/클래식 등) 자동 제거(최근 크롤분)
   await run("delete", async () => {
     const dq = await runDataQualityAutoDelete({});
-    const nc = await autoPurgeNonConcerts({ recentDays: 2, maxItems: 300 });
+    const nc = await autoPurgeNonConcerts({ maxItems: 300 });
     return {
       ...dq,
       nonConcertChecked: nc.checked,
@@ -243,6 +270,9 @@ async function main() {
 
   // score — 인기/트렌드 점수 산출
   await run("score", () => runScoring());
+
+  // purge — 오래된 종료 공연 소프트 숨김(하드삭제 아님, 앱 노출만 차단)
+  await run("purge", () => purgeOldEvents());
 
   log("=== 파이프라인 완료 ===");
 }

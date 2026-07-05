@@ -86,8 +86,9 @@ cat > "$PLIST_PATH" << PLIST
         </dict>
     </array>
 
+    <!-- 취침/종료로 놓친 정각 배치를 로그인/부팅 시 catch-up 실행 -->
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 
     <key>StandardOutPath</key>
     <string>${HOME}/Library/Logs/articket-python-cron.log</string>
