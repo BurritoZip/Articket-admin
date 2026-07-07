@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -72,7 +73,7 @@ export function TimetableUnmatchedPageClient() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data, isLoading } = useQuery<UnmatchedResponse>({
+  const { data, isLoading, isError } = useQuery<UnmatchedResponse>({
     queryKey: [
       "admin-timetable-unmatched",
       { q: debouncedSearch, status, page, pageSize },
@@ -88,6 +89,7 @@ export function TimetableUnmatchedPageClient() {
       if (!res.ok) throw new Error("fetch failed");
       return res.json() as Promise<UnmatchedResponse>;
     },
+    refetchInterval: 30000, // 새 미매칭 자동 반영
   });
 
   const resolveMutation = useMutation({
@@ -100,11 +102,14 @@ export function TimetableUnmatchedPageClient() {
       if (!res.ok) throw new Error("update failed");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({
         queryKey: ["admin-timetable-unmatched"],
       });
+      queryClient.invalidateQueries({ queryKey: ["admin-attention-counts"] });
+      toast.success(vars.is_resolved ? "해결됨으로 표시" : "미해결로 되돌림");
     },
+    onError: () => toast.error("상태 변경 실패 — 다시 시도하세요."),
   });
 
   const rows = data?.data ?? [];
@@ -112,6 +117,13 @@ export function TimetableUnmatchedPageClient() {
 
   return (
     <div className="space-y-4">
+      {meta && (
+        <p className="text-body-sm text-text-secondary">
+          {status === "unresolved" ? "미해결 " : "총 "}
+          <span className="font-semibold text-text-primary">{meta.total}</span>
+          건
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Input
           placeholder="아티스트명 검색"
@@ -142,6 +154,12 @@ export function TimetableUnmatchedPageClient() {
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
         </div>
+      ) : isError ? (
+        <div className="rounded-lg border border-dashed border-danger/40 bg-danger-weak/30 py-12 text-center">
+          <p className="text-body text-danger">
+            미매칭 로그를 불러오지 못했습니다. 잠시 후 다시 시도하세요.
+          </p>
+        </div>
       ) : rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-surface-muted/40 py-12 text-center">
           <p className="text-body text-text-secondary">
@@ -158,6 +176,7 @@ export function TimetableUnmatchedPageClient() {
                 <TableHead>스테이지</TableHead>
                 <TableHead>출처</TableHead>
                 <TableHead>발생 시각</TableHead>
+                <TableHead>상태</TableHead>
                 <TableHead>처리</TableHead>
               </TableRow>
             </TableHeader>
@@ -180,6 +199,11 @@ export function TimetableUnmatchedPageClient() {
                   </TableCell>
                   <TableCell>{formatKst(row.created_at)}</TableCell>
                   <TableCell>
+                    <Badge variant={row.is_resolved ? "success" : "warning"}>
+                      {row.is_resolved ? "해결됨" : "미해결"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
                     <Button
                       variant={row.is_resolved ? "outline" : "default"}
                       size="sm"
@@ -191,7 +215,9 @@ export function TimetableUnmatchedPageClient() {
                         })
                       }
                     >
-                      {row.is_resolved ? "미해결로" : "해결됨"}
+                      {row.is_resolved
+                        ? "미해결로 되돌리기"
+                        : "해결됨으로 표시"}
                     </Button>
                   </TableCell>
                 </TableRow>

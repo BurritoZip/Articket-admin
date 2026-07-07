@@ -21,22 +21,25 @@ export async function GET() {
     { data: queueRows },
     { data: recentJobs },
     { data: fixLogs },
+    { count: errorLogsUnresolved },
+    { count: timetableUnmatchedUnresolved },
   ] = await Promise.all([
-    supabase.from("events").select("id,title,status,end_date,artist_id,ticket_open_date"),
+    supabase
+      .from("events")
+      .select("id,title,status,end_date,artist_id,ticket_open_date"),
     supabase.from("artists").select("id", { count: "exact", head: true }),
     supabase.from("venues").select("id", { count: "exact", head: true }),
     serviceClient.from("users").select("id", { count: "exact", head: true }),
-    serviceClient
-      .from("artists")
-      .select("enrichment_status")
-      .limit(10000),
+    serviceClient.from("artists").select("enrichment_status").limit(10000),
     serviceClient
       .from("ai_processing_queue")
       .select("status,task_type")
       .limit(5000),
     serviceClient
       .from("crawler_jobs")
-      .select("id,source_name,status,finished_at,events_found,events_upserted,meta")
+      .select(
+        "id,source_name,status,finished_at,events_found,events_upserted,meta",
+      )
       .order("finished_at", { ascending: false })
       .limit(5),
     serviceClient
@@ -44,6 +47,14 @@ export async function GET() {
       .select("fix_method,fixed_at")
       .gte("fixed_at", new Date(Date.now() - 7 * 86_400_000).toISOString())
       .limit(1000),
+    serviceClient
+      .from("app_error_logs")
+      .select("id", { count: "exact", head: true })
+      .eq("is_resolved", false),
+    serviceClient
+      .from("timetable_unmatched_artists")
+      .select("id", { count: "exact", head: true })
+      .eq("is_resolved", false),
   ]);
 
   const allEvents = events ?? [];
@@ -63,30 +74,44 @@ export async function GET() {
   const ticketOpensSoon = allEvents
     .filter((e) => {
       if (!e.ticket_open_date) return false;
-      const diff = differenceInCalendarDays(parseISO(e.ticket_open_date), new Date());
+      const diff = differenceInCalendarDays(
+        parseISO(e.ticket_open_date),
+        new Date(),
+      );
       return diff >= 0 && diff <= 7;
     })
     .map((e) => ({
       id: e.id,
       title: e.title,
       ticket_open_date: e.ticket_open_date!,
-      d_day: differenceInCalendarDays(parseISO(e.ticket_open_date!), new Date()),
+      d_day: differenceInCalendarDays(
+        parseISO(e.ticket_open_date!),
+        new Date(),
+      ),
     }))
     .sort((a, b) => a.d_day - b.d_day);
 
   const unlinkedEvents = allEvents.filter((e) => !e.artist_id).length;
 
   // 보강 현황
-  const enrichRows = (enrichmentRows ?? []) as Array<{ enrichment_status: string | null }>;
+  const enrichRows = (enrichmentRows ?? []) as Array<{
+    enrichment_status: string | null;
+  }>;
   const enrichment = {
-    enriched: enrichRows.filter((r) => r.enrichment_status === "enriched").length,
-    pending: enrichRows.filter((r) => !r.enrichment_status || r.enrichment_status === "pending").length,
+    enriched: enrichRows.filter((r) => r.enrichment_status === "enriched")
+      .length,
+    pending: enrichRows.filter(
+      (r) => !r.enrichment_status || r.enrichment_status === "pending",
+    ).length,
     skipped: enrichRows.filter((r) => r.enrichment_status === "skipped").length,
     failed: enrichRows.filter((r) => r.enrichment_status === "failed").length,
   };
 
   // AI 큐 현황
-  const qRows = (queueRows ?? []) as Array<{ status: string; task_type: string }>;
+  const qRows = (queueRows ?? []) as Array<{
+    status: string;
+    task_type: string;
+  }>;
   const queue = {
     pending: qRows.filter((r) => r.status === "pending").length,
     processing: qRows.filter((r) => r.status === "processing").length,
@@ -123,5 +148,7 @@ export async function GET() {
     queue,
     recent_jobs: jobs,
     quality_fixes_7d: qualityFixes,
+    app_errors_unresolved: errorLogsUnresolved ?? 0,
+    timetable_unmatched_unresolved: timetableUnmatchedUnresolved ?? 0,
   });
 }

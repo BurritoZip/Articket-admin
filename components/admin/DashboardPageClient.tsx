@@ -67,6 +67,8 @@ interface DashboardStats {
     eventsUpserted: number;
   }>;
   quality_fixes_7d: { nulled: number; queued: number; deleted: number };
+  app_errors_unresolved: number;
+  timetable_unmatched_unresolved: number;
 }
 
 type StepStatus = "idle" | "running" | "done" | "failed";
@@ -336,7 +338,9 @@ export function DashboardPageClient() {
     data &&
     (data.events.needs_end_update > 0 ||
       data.unlinked_events > 0 ||
-      data.ticket_opens_soon.length > 0);
+      data.ticket_opens_soon.length > 0 ||
+      data.app_errors_unresolved > 0 ||
+      data.timetable_unmatched_unresolved > 0);
 
   return (
     <div className="space-y-6">
@@ -788,6 +792,28 @@ export function DashboardPageClient() {
                 label={`아티스트 미연결 — ${data.unlinked_events}건`}
                 description="artist_id가 없는 공연"
                 onClick={() => router.push("/admin/events?missing=artist_id")}
+              />
+            )}
+            {data.app_errors_unresolved > 0 && (
+              <ActionRow
+                label={`앱 에러 미해결 — ${data.app_errors_unresolved}건`}
+                description="iOS 등 클라이언트 런타임 에러/크래시"
+                badge={
+                  <Badge variant="danger">{data.app_errors_unresolved}</Badge>
+                }
+                onClick={() => router.push("/admin/error-logs")}
+              />
+            )}
+            {data.timetable_unmatched_unresolved > 0 && (
+              <ActionRow
+                label={`타임테이블 미매칭 — ${data.timetable_unmatched_unresolved}건`}
+                description="기존 아티스트에 연결 안 된 타임테이블 출연자"
+                badge={
+                  <Badge variant="warning">
+                    {data.timetable_unmatched_unresolved}
+                  </Badge>
+                }
+                onClick={() => router.push("/admin/timetable-unmatched")}
               />
             )}
             {data.ticket_opens_soon.map((e) => (

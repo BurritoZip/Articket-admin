@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -84,7 +85,7 @@ export function ErrorLogsPageClient() {
     return () => clearTimeout(t);
   }, [search]);
 
-  const { data, isLoading } = useQuery<ErrorsResponse>({
+  const { data, isLoading, isError } = useQuery<ErrorsResponse>({
     queryKey: [
       "admin-error-logs",
       { q: debouncedSearch, type, status, page, pageSize },
@@ -114,9 +115,12 @@ export function ErrorLogsPageClient() {
       if (!res.ok) throw new Error("update failed");
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_d, vars) => {
       queryClient.invalidateQueries({ queryKey: ["admin-error-logs"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-attention-counts"] });
+      toast.success(vars.is_resolved ? "해결됨으로 표시" : "미해결로 되돌림");
     },
+    onError: () => toast.error("상태 변경 실패 — 다시 시도하세요."),
   });
 
   const rows = data?.data ?? [];
@@ -124,6 +128,13 @@ export function ErrorLogsPageClient() {
 
   return (
     <div className="space-y-4">
+      {meta && (
+        <p className="text-body-sm text-text-secondary">
+          {status === "unresolved" ? "미해결 " : "총 "}
+          <span className="font-semibold text-text-primary">{meta.total}</span>
+          건
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         <Input
           placeholder="에러 메시지 검색"
@@ -172,6 +183,12 @@ export function ErrorLogsPageClient() {
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
           <Skeleton className="h-12 w-full" />
+        </div>
+      ) : isError ? (
+        <div className="rounded-lg border border-dashed border-danger/40 bg-danger-weak/30 py-12 text-center">
+          <p className="text-body text-danger">
+            에러 로그를 불러오지 못했습니다. 잠시 후 다시 시도하세요.
+          </p>
         </div>
       ) : rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-surface-muted/40 py-12 text-center">
