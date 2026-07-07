@@ -262,12 +262,20 @@ export function TimetableSheet({
         ok?: boolean;
         inserted?: number;
         errors?: string[];
+        unmatched?: string[];
         detail?: string;
       };
       if (!res.ok || !json.ok) {
         throw new Error(json.detail ?? "저장 실패");
       }
       toast.success(`${json.inserted}개 공연이 타임테이블에 저장되었습니다.`);
+      const unmatched = json.unmatched ?? [];
+      if (unmatched.length > 0) {
+        toast.warning(
+          `기존 아티스트에 없는 ${unmatched.length}명은 미매칭 로그로 분리되었습니다: ${unmatched.slice(0, 5).join(", ")}${unmatched.length > 5 ? " 외" : ""}. 앱 에러/미매칭 로그에서 검토하세요.`,
+          { duration: 8000 },
+        );
+      }
       setImageParsed(null);
       setImageFile(null);
       setImagePreviewUrl(null);
@@ -391,6 +399,7 @@ export function TimetableSheet({
           insertedCount: number;
           skippedCount: number;
           issues: Array<{ line: string; reason: string }>;
+          unmatched?: string[];
         };
         source?: { text?: string; issues?: string[] };
         detail?: string;
@@ -403,6 +412,13 @@ export function TimetableSheet({
         setImportText(json.source.text);
       setImportResult(json.result);
       toast.success(`${json.result.insertedCount}개 출연을 자동 추가했습니다.`);
+      const unmatched = json.result.unmatched ?? [];
+      if (unmatched.length > 0) {
+        toast.warning(
+          `기존 아티스트에 없는 ${unmatched.length}명은 미매칭 로그로 분리되었습니다: ${unmatched.slice(0, 5).join(", ")}${unmatched.length > 5 ? " 외" : ""}. 미매칭 로그에서 검토하세요.`,
+          { duration: 8000 },
+        );
+      }
       refetch();
       onHasTimetableChange();
       void queryClient.invalidateQueries({ queryKey: ["admin-events"] });

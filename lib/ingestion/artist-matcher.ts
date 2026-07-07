@@ -55,6 +55,62 @@ async function fillMissingArtistProfile(
   await db.from("artists").update(patch).eq("id", artistId);
 }
 
+/**
+ * 기존 아티스트 리스트에 "연결만" 한다 — 매칭 실패 시 신규 생성하지 않고 null 반환.
+ * 타임테이블 임포트처럼 오탈자/표기 흔들림을 새 아티스트로 굳히면 안 되는 경로에서 사용.
+ * 매칭 성공 시 프로필 빈 필드는 채운다.
+ */
+export async function matchExistingArtist(
+  rawName: string,
+  profile?: ArtistProfileInput,
+): Promise<string | null> {
+  if (!rawName?.trim()) return null;
+  const db = createServiceRoleClient();
+  const normalized = normalizeArtistName(rawName);
+
+  // 1. 정확한 이름 매칭
+  const { data: exact } = await db
+    .from("artists")
+    .select("id")
+    .ilike("name", rawName.trim())
+    .limit(1)
+    .maybeSingle();
+  if (exact) {
+    const id = (exact as { id: string }).id;
+    await fillMissingArtistProfile(id, profile);
+    return id;
+  }
+
+  // 2. normalized_name 매칭
+  const { data: normMatch } = await db
+    .from("artists")
+    .select("id")
+    .ilike("normalized_name", normalized)
+    .limit(1)
+    .maybeSingle();
+  if (normMatch) {
+    const id = (normMatch as { id: string }).id;
+    await fillMissingArtistProfile(id, profile);
+    return id;
+  }
+
+  // 3. artist_aliases 매칭
+  const { data: alias } = await db
+    .from("artist_aliases")
+    .select("artist_id")
+    .ilike("alias", rawName.trim())
+    .limit(1)
+    .maybeSingle();
+  if (alias) {
+    const id = (alias as { artist_id: string }).artist_id;
+    await fillMissingArtistProfile(id, profile);
+    return id;
+  }
+
+  // 매칭 실패 — 신규 생성하지 않음
+  return null;
+}
+
 export async function matchOrCreateArtist(
   rawName: string,
   profile?: ArtistProfileInput,

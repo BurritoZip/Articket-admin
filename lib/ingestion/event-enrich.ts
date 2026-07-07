@@ -116,6 +116,112 @@ async function predictAgeRestriction(title: string): Promise<string | null> {
 const MULTI_ARTIST_RE =
   /페스티벌|페스타|페스트|festival|fest['’\s]|워터밤|펜타포트|락\s?페|록\s?페스|라인업|line[\s-]?up|헤드라이너|얼리버드|블라인드|pre[\s-]?sale|premium\s?pass|컨퍼런스|conference|박람회|expo|엑스포/i;
 
+/** source_urls(문자열/{url} 혼용) 에서 URL 문자열만 뽑는다 */
+function extractSourceUrls(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const urls: string[] = [];
+  for (const item of raw) {
+    if (typeof item === "string" && /^https?:\/\//.test(item)) urls.push(item);
+    else if (
+      item &&
+      typeof item === "object" &&
+      typeof (item as { url?: unknown }).url === "string" &&
+      /^https?:\/\//.test((item as { url: string }).url)
+    ) {
+      urls.push((item as { url: string }).url);
+    }
+  }
+  return urls;
+}
+
+/** HTML → 대략적 텍스트 (Gemini 컨텍스트용, 태그/스크립트 제거) */
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function fetchPageText(url: string): Promise<string> {
+  const res = await fetch(url, {
+    headers: {
+      "User-Agent":
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!res.ok) throw new Error(`lineup_http_${res.status}`);
+  return htmlToText(await res.text());
+}
+
+type FestivalEvent = {
+  id: string;
+  title: string;
+  start_date: string | null;
+  source_urls: unknown;
+};
+
+/**
+ * 페스티벌 라인업 전체 수집 — 두 소스를 합쳐 누락을 줄인다:
+ *  1. source_urls(예매 페이지)를 재fetch 해 페이지 텍스트를 Gemini 에 컨텍스트로 제공.
+ *  2. Google 검색 그라운딩으로 웹에서 라인업을 교차 확인.
+ * 확실치 않은 이름은 버린다(환각 방지). 최대 150명.
+ */
+async function collectFestivalLineup(event: FestivalEvent): Promise<string[]> {
+  const urls = extractSourceUrls(event.source_urls).slice(0, 3);
+  let pageText = "";
+  for (const url of urls) {
+    try {
+      pageText += " " + (await fetchPageText(url)).slice(0, 6000);
+    } catch {
+      /* 개별 URL 실패는 무시 — 나머지/검색으로 보완 */
+    }
+  }
+
+  const day = event.start_date ? String(event.start_date).slice(0, 10) : "미상";
+  const prompt = `다음 페스티벌/다중출연 공연에 "실제 출연하는" 아티스트(가수/밴드/그룹) 이름을 빠짐없이 모두 찾아라.
+Google 검색으로 공식 라인업을 확인하고, 아래 예매 페이지 텍스트도 함께 참고하라.
+공연명: "${event.title}"
+공연일자(참고): ${day}
+${pageText ? `예매 페이지 텍스트(참고, 일부):\n${pageText.slice(0, 12000)}` : ""}
+
+규칙:
+- 사람/그룹 이름만. 공연명·페스티벌명·스테이지명·주최사·투어명·회차·티켓등급은 제외.
+- 실제 출연이 확인되는 아티스트만. 확실하지 않으면 넣지 마라(추측·환각 금지).
+- 최대한 많이. 헤드라이너뿐 아니라 서브/신인 라인업까지.
+JSON만 답해: {"artists":["이름1","이름2", ...]}`;
+
+  try {
+    const raw = await geminiTextGrounded(prompt);
+    const m = raw.match(/\{[\s\S]*\}/);
+    if (!m) return [];
+    const parsed = JSON.parse(m[0]) as { artists?: unknown };
+    if (!Array.isArray(parsed.artists)) return [];
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const a of parsed.artists) {
+      if (typeof a !== "string") continue;
+      const nm = a.replace(/^["'\[({]|["'\])}]$/g, "").trim();
+      const key = nm.toLowerCase();
+      if (
+        nm &&
+        nm.length <= 40 &&
+        !seen.has(key) &&
+        !/아티스트|라인업|line[\s-]?up|없음|미정|tba/i.test(nm)
+      ) {
+        seen.add(key);
+        names.push(nm);
+      }
+    }
+    return names.slice(0, 150);
+  } catch {
+    return [];
+  }
+}
+
 /**
  * 제목에서 출연 아티스트를 모두 추출(복수).
  * "선우정아 X 적재", "자우림, 로맨틱펀치" 처럼 합동공연이면 개별로 분리한다.
@@ -204,7 +310,7 @@ export async function enrichEventArtists(maxItems = 100): Promise<{
   const db = createServiceRoleClient();
   const { data: events } = await db
     .from("events")
-    .select("id,title")
+    .select("id,title,start_date,source_urls")
     .is("artist_id", null)
     .or(staleGate("enrich_attempted_at")) // 미시도 or REENRICH_STALE_DAYS 지난 건 재시도(DB 성장분 재매칭)
     .not("status", "eq", "ended")
@@ -217,13 +323,35 @@ export async function enrichEventArtists(maxItems = 100): Promise<{
   let noArtist = 0;
 
   for (const event of events ?? []) {
-    // 1) 페스티벌/다중 출연 → multi_artist 분류, 단일 추출 스킵
+    // 1) 페스티벌/다중 출연 → 라인업 전체를 실제로 수집(재스크래핑 + 검색)해 event_artists 에 연결.
+    //    단일 artist_id 는 없지만(multi_artist) 라인업은 채운다.
     if (MULTI_ARTIST_RE.test(event.title)) {
+      const lineup = await collectFestivalLineup(event as FestivalEvent);
+      const matched: { id: string; name: string }[] = [];
+      for (const nm of lineup) {
+        const id = await matchOrCreateArtist(nm).catch(() => null);
+        if (id && !matched.some((m) => m.id === id))
+          matched.push({ id, name: nm });
+      }
+      if (matched.length > 0) {
+        await db.from("event_artists").upsert(
+          matched.map((m, i) => ({
+            event_id: event.id,
+            artist_id: m.id,
+            artist_name: m.name,
+            role: "lineup",
+            display_order: i + 1,
+          })),
+          { onConflict: "event_id,artist_id", ignoreDuplicates: true },
+        );
+      }
       await db
         .from("events")
         .update({
           artist_link_status: "multi_artist",
           enrich_attempted_at: now,
+          lineup_checked_at: now,
+          lineup_count: matched.length,
         })
         .eq("id", event.id);
       multiArtist++;

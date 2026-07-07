@@ -1,5 +1,6 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { matchOrCreateArtist } from "./artist-matcher";
+import { matchExistingArtist } from "./artist-matcher";
+import { logUnmatchedTimetableArtist } from "./timetable-unmatched";
 
 export type ParsedTimetableRow = {
   day_number: number;
@@ -22,10 +23,13 @@ export type TimetableImportResult = {
   skippedCount: number;
   issues: TimetableImportIssue[];
   rows: ParsedTimetableRow[];
+  /** 기존 아티스트 리스트에 매칭 안 돼 로그로 분리된 이름들 (신규 생성 안 함) */
+  unmatched: string[];
 };
 
 type EventInfo = {
   id: string;
+  title: string | null;
   start_date: string | null;
   end_date: string | null;
   genre: string | null;
@@ -279,7 +283,7 @@ export async function importTimetableText(params: {
   const db = createServiceRoleClient();
   const { data: eventData, error: eventError } = await db
     .from("events")
-    .select("id, start_date, end_date, genre")
+    .select("id, title, start_date, end_date, genre")
     .eq("id", params.eventId)
     .single();
 
@@ -290,13 +294,27 @@ export async function importTimetableText(params: {
   const event = eventData as EventInfo;
   const parsed = parseTimetableText(params.text, event);
   const insertedRows: ParsedTimetableRow[] = [];
+  const unmatched: string[] = [];
 
   if (params.replaceExisting) {
     await db.from("timetable_performances").delete().eq("event_id", event.id);
   }
 
   for (const row of parsed.rows) {
-    const artistId = await matchOrCreateArtist(row.artist_name);
+    // 기존 아티스트에 연결만 — 없으면 신규 생성 대신 로그로 분리
+    const artistId = await matchExistingArtist(row.artist_name);
+    if (!artistId) {
+      unmatched.push(row.artist_name);
+      await logUnmatchedTimetableArtist({
+        eventId: event.id,
+        eventTitle: event.title,
+        artistName: row.artist_name,
+        stageName: row.stage_name,
+        dayNumber: row.day_number,
+        source: "text",
+      });
+    }
+
     const { error } = await db.from("timetable_performances").insert({
       event_id: event.id,
       artist_id: artistId,
@@ -326,5 +344,6 @@ export async function importTimetableText(params: {
     skippedCount: parsed.rows.length - insertedRows.length,
     issues: parsed.issues,
     rows: insertedRows,
+    unmatched: Array.from(new Set(unmatched)),
   };
 }

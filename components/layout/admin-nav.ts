@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bug,
   Building2,
   CalendarDays,
   ClipboardList,
@@ -8,7 +9,9 @@ import {
   Rss,
   Sparkles,
   Star,
+  TriangleAlert,
   Users,
+  UserX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
@@ -36,6 +39,12 @@ export const ADMIN_NAV: NavItem[] = [
     icon: ClipboardList,
     group: "main",
   },
+  {
+    href: "/admin/booking-issues",
+    label: "예매 링크 이슈",
+    icon: TriangleAlert,
+    group: "main",
+  },
   { href: "/admin/reviews", label: "리뷰", icon: Star, group: "main" },
   {
     href: "/admin/recommendations",
@@ -53,6 +62,18 @@ export const ADMIN_NAV: NavItem[] = [
     href: "/admin/ingestion",
     label: "인제스천",
     icon: Activity,
+    group: "automation",
+  },
+  {
+    href: "/admin/error-logs",
+    label: "앱 에러 로그",
+    icon: Bug,
+    group: "automation",
+  },
+  {
+    href: "/admin/timetable-unmatched",
+    label: "타임테이블 미매칭",
+    icon: UserX,
     group: "automation",
   },
 ];

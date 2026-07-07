@@ -19,3 +19,7 @@
 | `20260528200000_data_quality_fix_logs.sql` | 데이터 품질 수정 이력 테이블 |
 | `20260528400000_pipeline_step_status.sql` | 파이프라인 단계별 실시간 상태 |
 | `20260529000000_fix_logs_add_reasoning.sql` | fix_logs에 gemini_reasoning, error_msg 추가 |
+| `20260707130000_event_booking_link_issues.sql` | iOS 예매 링크 미연결 이슈 로그 (anon insert) |
+| `20260707140000_app_error_logs.sql` | iOS 앱 런타임 에러/크래시 로그 (anon insert) — Admin `/admin/error-logs` 조회 |
+| `20260707150000_timetable_unmatched_artists.sql` | 타임테이블 임포트 미매칭 아티스트 로그 (서버 전용) — Admin `/admin/timetable-unmatched` 조회 |
+| `20260707160000_event_lineup_tracking.sql` | events 에 `lineup_checked_at`, `lineup_count` — 페스티벌 라인업 수집 추적 |
