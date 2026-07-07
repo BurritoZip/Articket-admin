@@ -202,7 +202,6 @@ function elapsed(s: PipelineStep, now?: number): string {
 export function DashboardPageClient() {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const [fixingEnded, setFixingEnded] = React.useState(false);
   const [runningPipeline, setRunningPipeline] = React.useState(false);
   const [selectedStep, setSelectedStep] = React.useState<PipelineStep | null>(
     null,
@@ -270,24 +269,6 @@ export function DashboardPageClient() {
       void queryClient.invalidateQueries({
         queryKey: ["admin-dashboard-stats"],
       });
-    }
-  };
-
-  const handleFixEnded = async () => {
-    setFixingEnded(true);
-    try {
-      const res = await fetch("/api/admin/events/sweep-statuses", {
-        method: "POST",
-      });
-      const json = (await res.json()) as { updated?: number };
-      toast.success(`${json.updated ?? 0}건 상태 업데이트`);
-      void queryClient.invalidateQueries({
-        queryKey: ["admin-dashboard-stats"],
-      });
-    } catch {
-      toast.error("실패");
-    } finally {
-      setFixingEnded(false);
     }
   };
 
@@ -776,13 +757,13 @@ export function DashboardPageClient() {
                   >
                     목록 보기
                   </Button>
+                  {/* 상태 일괄 업데이트(sweep)는 인제스천 허브에서 실행 — 트리거 단일화 */}
                   <Button
                     size="sm"
-                    loading={fixingEnded}
-                    onClick={() => void handleFixEnded()}
+                    onClick={() => router.push("/admin/ingestion")}
                   >
                     <CheckCircle2 className="mr-1 h-3 w-3" />
-                    일괄 업데이트
+                    인제스천에서 실행
                   </Button>
                 </div>
               </div>
