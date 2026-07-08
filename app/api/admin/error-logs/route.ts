@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
 import { withErrorHandler } from "@/lib/api-handler";
+import { postSlack } from "@/lib/slack";
 import {
   buildPaginationMeta,
   parseAdminPagination,
@@ -66,13 +67,34 @@ export const PATCH = withErrorHandler(async (request: Request) => {
   }
 
   const supabase = createServiceRoleClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("app_error_logs")
     .update({ is_resolved: body.is_resolved })
-    .eq("id", body.id);
+    .eq("id", body.id)
+    .select("message, error_type, domain, platform, app_version")
+    .maybeSingle();
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+
+  // 해결됨으로 표시되면 Slack 알림 (SLACK_WEBHOOK_URL 설정 시). 실패는 흐름 안 막음.
+  if (body.is_resolved && data) {
+    const r = data as {
+      message: string;
+      error_type: string;
+      domain: string | null;
+      platform: string;
+      app_version: string | null;
+    };
+    void postSlack(
+      `:white_check_mark: *앱 에러 해결됨*\n` +
+        `• 유형: ${r.error_type}\n` +
+        `• 메시지: ${r.message}\n` +
+        `• 위치: ${r.domain ?? "-"}\n` +
+        `• 환경: ${r.platform}${r.app_version ? ` · ${r.app_version}` : ""}`,
+    );
+  }
+
   return NextResponse.json({ ok: true });
 });
