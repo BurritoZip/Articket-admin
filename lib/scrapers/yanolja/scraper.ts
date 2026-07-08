@@ -1,7 +1,10 @@
 /**
- * Yanolja 티켓 스크래퍼 — 콘서트 전용 페이지
- * 목록: https://nol.yanolja.com/ticket/genre/concert  (콘서트만)
- * 상세: https://nol.yanolja.com/ticket/places/{placeId}/products/{productId}  (full URL)
+ * Yanolja(NOL) 티켓 스크래퍼 — 콘서트 장르 페이지(페스티벌·내한공연 포함)
+ * 목록: https://nol.yanolja.com/ticket/genre/concert
+ *   - 상품 앵커의 aria-label 에서 제목·예매오픈일 추출
+ * 상세: https://nol.yanolja.com/ticket/products/{productId}
+ *   - Next.js RSC 스트림(self.__next_f)에 상품 JSON 임베드 → 공연날짜/공연장/주소/장르/설명/포스터 추출
+ *   - 페스티벌 라인업(출연 아티스트)은 NOL 구조화 데이터에 없음(빈값) → enrich 단계(Gemini)가 보강
  */
 import * as cheerio from "cheerio";
 import { normalizeEvent } from "@/lib/ingestion/normalize";
@@ -20,7 +23,6 @@ import type { IngestionPipelineResult } from "@/types/ingestion";
 import { classifyTitlesKeep } from "@/lib/data-quality/classify-keep";
 
 const SOURCE_NAME = "yanolja";
-// 콘서트 전용 페이지 (뮤지컬/전시/클래식 섞이는 entertainment 페이지 사용 안 함)
 const LIST_URL = "https://nol.yanolja.com/ticket/genre/concert";
 const NOL_BASE = "https://nol.yanolja.com";
 
@@ -29,52 +31,10 @@ const UA =
 
 interface RawItem {
   title: string;
-  detailUrl: string; // full URL with /products/{id}
-  imageUrl: string | null;
-}
-
-function parseYanoljaDate(raw: string): {
-  start: string | null;
-  end: string | null;
-} {
-  if (!raw) return { start: null, end: null };
-  const century = 2000;
-
-  // 4자리 연도 범위: "2026.10.02 ~ 2026.10.03"
-  const full4 = raw.match(
-    /(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})\s*[~–]\s*(?:(\d{4})[.\-])?(\d{1,2})[.\-](\d{1,2})/,
-  );
-  if (full4) {
-    const [, sy, sm, sd, ey, em, ed] = full4;
-    return {
-      start: `${sy}-${sm.padStart(2, "0")}-${sd.padStart(2, "0")}`,
-      end: `${ey ?? sy}-${em.padStart(2, "0")}-${ed.padStart(2, "0")}`,
-    };
-  }
-  // 4자리 단일: "2026.10.02"
-  const single4 = raw.match(/(\d{4})[.\-](\d{1,2})[.\-](\d{1,2})/);
-  if (single4) {
-    const iso = `${single4[1]}-${single4[2].padStart(2, "0")}-${single4[3].padStart(2, "0")}`;
-    return { start: iso, end: iso };
-  }
-  // 2자리 연도 범위: "26.10.02 ~ 26.10.03" (aria-label 포맷)
-  const full2 = raw.match(
-    /(\d{2})[.\-](\d{2})[.\-](\d{2})\s*[~–]\s*(?:(\d{2})[.\-])?(\d{2})[.\-](\d{2})/,
-  );
-  if (full2) {
-    const [, sy, sm, sd, ey, em, ed] = full2;
-    return {
-      start: `${century + parseInt(sy)}-${sm}-${sd}`,
-      end: `${century + parseInt(ey ?? sy)}-${em}-${ed}`,
-    };
-  }
-  // 2자리 단일: "26.10.02"
-  const single2 = raw.match(/(\d{2})[.\-](\d{2})[.\-](\d{2})/);
-  if (single2) {
-    const iso = `${century + parseInt(single2[1])}-${single2[2]}-${single2[3]}`;
-    return { start: iso, end: iso };
-  }
-  return { start: null, end: null };
+  detailUrl: string;
+  productId: string;
+  listImage: string | null;
+  ticketOpenRaw: string | null; // aria-label "오픈일: MM.DD(요일) HH:MM"
 }
 
 async function fetchHtml(url: string): Promise<string> {
@@ -90,62 +50,139 @@ async function fetchHtml(url: string): Promise<string> {
   return res.text();
 }
 
-interface RawItemFull extends RawItem {
-  startDate: string | null;
-  endDate: string | null;
-  venueName: string | null;
-}
+// ── 목록 파싱 ────────────────────────────────────────────────────────
 
-function parseListHtml(html: string): RawItemFull[] {
-  const items: RawItemFull[] = [];
-  const seenUrls = new Set<string>();
+function parseListHtml(html: string): RawItem[] {
+  const items: RawItem[] = [];
+  const seen = new Set<string>();
   const $ = cheerio.load(html);
 
-  // aria-label 형식: "제목, 공연장명, 공연 기간: 26.10.02 ~ 26.10.02"
-  $("a[href*='/ticket/places/'][aria-label]").each((_, el) => {
+  $("a[href*='/ticket/'][aria-label]").each((_, el) => {
     const $el = $(el);
     const href = $el.attr("href") ?? "";
     const ariaLabel = $el.attr("aria-label") ?? "";
-    if (!href.includes("/products/")) return;
+    const idMatch = href.match(/\/products\/(\d+)/);
+    if (!idMatch) return;
+    const productId = idMatch[1];
+    if (seen.has(productId)) return;
+    seen.add(productId);
 
-    const detailUrl = href.startsWith("http") ? href : `${NOL_BASE}${href}`;
-    if (seenUrls.has(detailUrl)) return;
-    seenUrls.add(detailUrl);
-
-    // aria-label 파싱: "제목, 장소명, 공연 기간: YY.MM.DD ~ YY.MM.DD"
-    const parts = ariaLabel.split(",").map((p) => p.trim());
-    const title = parts[0] ?? "";
+    // aria-label 첫 조각 = 제목 ("제목, HOT, 단독판매, 오픈일: ..." 또는 "제목, 공연장, 공연 기간: ...")
+    const title = (ariaLabel.split(",")[0] ?? "").trim();
     if (title.length < 2) return;
 
-    let venueName: string | null = null;
-    let startDate: string | null = null;
-    let endDate: string | null = null;
-
-    for (const part of parts.slice(1)) {
-      if (/기간/.test(part)) {
-        // "공연 기간: 26.10.02 ~ 26.10.02"
-        const dateStr = part.replace(/공연\s*기간\s*:?\s*/i, "").trim();
-        const { start, end } = parseYanoljaDate(dateStr);
-        startDate = start;
-        endDate = end;
-      } else if (!venueName && part.length >= 2 && !/기간|^\d/.test(part)) {
-        venueName = part;
-      }
-    }
+    const openMatch = ariaLabel.match(/오픈일\s*:?\s*([^,]+)/);
+    const ticketOpenRaw = openMatch ? openMatch[1].trim() : null;
 
     const img = $el.find("img").first();
     const imgSrc = img.attr("src") ?? img.attr("data-src") ?? "";
-    const imageUrl = imgSrc
+    const listImage = imgSrc
       ? imgSrc.startsWith("//")
         ? `https:${imgSrc}`
         : imgSrc
       : null;
 
-    items.push({ title, detailUrl, imageUrl, startDate, endDate, venueName });
+    items.push({
+      title,
+      detailUrl: `${NOL_BASE}/ticket/products/${productId}`,
+      productId,
+      listImage,
+      ticketOpenRaw,
+    });
   });
 
   return items;
 }
+
+// ── 상세(RSC) 파싱 ───────────────────────────────────────────────────
+
+interface DetailData {
+  playStart: string | null;
+  playEnd: string | null;
+  venueName: string | null;
+  address: string | null;
+  subGenre: string | null;
+  description: string | null;
+  poster: string | null;
+}
+
+/** Next.js RSC 스트림 청크(self.__next_f.push([1,"..."]))를 이어붙여 원본 JSON 텍스트 복원 */
+function rscBlob(html: string): string {
+  const re = /self\.__next_f\.push\(\[1,("(?:\\.|[^"\\])*")\]\)/g;
+  let blob = "";
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    try {
+      blob += JSON.parse(m[1]) as string;
+    } catch {
+      /* 청크 파싱 실패 무시 */
+    }
+  }
+  return blob;
+}
+
+function rscField(blob: string, key: string): string | null {
+  const m = blob.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+  if (!m) return null;
+  try {
+    return JSON.parse(`"${m[1]}"`) as string;
+  } catch {
+    return m[1];
+  }
+}
+
+/** noticeInfo(HTML 조각) → 평문 설명, 과도한 길이 컷 */
+function cleanDescription(raw: string | null): string | null {
+  if (!raw) return null;
+  const text = raw
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return text ? text.slice(0, 1500) : null;
+}
+
+function parseDetail(html: string): DetailData {
+  const blob = rscBlob(html);
+  const iso = (v: string | null) =>
+    v && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null;
+  return {
+    playStart: iso(rscField(blob, "playStartDate")),
+    playEnd: iso(rscField(blob, "playEndDate")),
+    venueName: rscField(blob, "placeName"),
+    address: rscField(blob, "address"),
+    subGenre: rscField(blob, "subGenreName"),
+    description: cleanDescription(rscField(blob, "noticeInfo")),
+    // NOL 포스터는 interpark 티켓 이미지(고화질) — 목록 썸네일보다 우선
+    poster: rscField(blob, "posterImageUrl"),
+  };
+}
+
+// Articket 장르 버킷: 콘서트/축제/기타. NOL subGenreName 매핑.
+function mapGenre(subGenre: string | null): string {
+  if (!subGenre) return "콘서트";
+  if (/페스티벌|페스타|fest/i.test(subGenre)) return "축제";
+  return "콘서트"; // 콘서트/내한공연 등
+}
+
+/** aria-label 오픈일("MM.DD(요일) HH:MM") → ISO KST. 연도는 공연 시작연도로 추정. */
+function parseTicketOpen(
+  raw: string | null,
+  playStart: string | null,
+): string | null {
+  if (!raw) return null;
+  const m = raw.match(/(\d{1,2})[.\-](\d{1,2})(?:\([^)]*\))?\s*(\d{1,2}:\d{2})?/);
+  if (!m) return null;
+  const [, mm, dd, time] = m;
+  const year = playStart ? Number(playStart.slice(0, 4)) : new Date().getFullYear();
+  const hhmm = time ?? "00:00";
+  return `${year}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}T${hhmm}:00+09:00`;
+}
+
+// ── 실행 ─────────────────────────────────────────────────────────────
 
 export async function runYanoljaScraper(
   jobId: string,
@@ -162,7 +199,7 @@ export async function runYanoljaScraper(
   };
   const errors: IngestionPipelineResult["errors"] = [];
 
-  let allItems: RawItemFull[] = [];
+  let allItems: RawItem[] = [];
   try {
     const html = await fetchHtml(LIST_URL);
     stats.pagesCrawled++;
@@ -188,28 +225,46 @@ export async function runYanoljaScraper(
   stats.eventsSkipped += allItems.length - keepItems.length;
 
   for (const item of keepItems.slice(0, maxItems)) {
-    // 날짜 없는 항목 스킵 (aria-label에 날짜 없는 경우 start_date NOT NULL 위반)
-    if (!item.startDate) {
+    let detail: DetailData = {
+      playStart: null,
+      playEnd: null,
+      venueName: null,
+      address: null,
+      subGenre: null,
+      description: null,
+      poster: null,
+    };
+    try {
+      const detailHtml = await fetchHtml(item.detailUrl);
+      detail = parseDetail(detailHtml);
+    } catch (e) {
+      await logCrawlError(jobId, SOURCE_NAME, item.detailUrl, e);
+      stats.errorCount++;
+      errors.push({ url: item.detailUrl, step: "crawl", message: String(e) });
+    }
+
+    // 공연 시작일 필수(start_date NOT NULL). 상세에서 못 얻으면 스킵.
+    if (!detail.playStart) {
       stats.eventsSkipped++;
       continue;
     }
 
-    // 상세 페이지 CSR — 목록 aria-label에서 이미 모든 정보 추출됨
     const rawInput = {
       sourceUrl: item.detailUrl,
       sourceName: SOURCE_NAME,
       title: item.title,
-      posterUrl: item.imageUrl,
-      venueName: item.venueName,
-      venueAddress: null,
-      startDate: item.startDate,
-      endDate: item.endDate,
+      posterUrl: detail.poster ?? item.listImage,
+      venueName: detail.venueName,
+      venueAddress: detail.address,
+      startDate: detail.playStart,
+      endDate: detail.playEnd ?? detail.playStart,
+      ticketOpenDate: parseTicketOpen(item.ticketOpenRaw, detail.playStart),
       ticketProvider: "yanolja",
       ticketUrl: item.detailUrl,
-      artists: [],
+      artists: [], // NOL 라인업 비제공 → enrich(Gemini)가 페스티벌 라인업 수집
       artistProfiles: [],
-      genre: "콘서트",
-      description: null,
+      genre: mapGenre(detail.subGenre),
+      description: detail.description,
       status: "upcoming" as const,
       rawHtml: null,
     };
