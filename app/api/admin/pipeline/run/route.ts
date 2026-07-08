@@ -12,6 +12,7 @@ import {
   enrichEventGenres,
   enrichEventAges,
   enrichEventDescriptions,
+  backfillEventPosters,
 } from "@/lib/ingestion/event-enrich";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
@@ -158,15 +159,23 @@ export async function POST() {
     await runArtistBackfill({ limit: 500, dryRun: false });
 
     // 2. 아티스트 없는 이벤트 → Gemini로 제목에서 추출
-    const [{ linked: artistLinked }, genreR, ageR, venueR, descR, artistQ] =
-      await Promise.all([
-        enrichEventArtists(100),
-        enrichEventGenres(50),
-        enrichEventAges(50),
-        processVenueAddressEnrichment(30),
-        enrichEventDescriptions(30),
-        queueArtistEnrichment(),
-      ]);
+    const [
+      { linked: artistLinked },
+      genreR,
+      ageR,
+      venueR,
+      descR,
+      posterR,
+      artistQ,
+    ] = await Promise.all([
+      enrichEventArtists(100),
+      enrichEventGenres(50),
+      enrichEventAges(50),
+      processVenueAddressEnrichment(30),
+      enrichEventDescriptions(30),
+      backfillEventPosters(30),
+      queueArtistEnrichment(),
+    ]);
 
     // 3. 아티스트 프로필 보강 (namu/melon/naver/wikipedia) — 큐 기반
     const { count: artistPending } = await db
@@ -202,6 +211,7 @@ export async function POST() {
       age_filled: ageR.filled,
       venue_address_filled: venueR.filled,
       description_filled: descR.filled,
+      poster_filled: posterR.filled,
       artist_enriched: succeeded,
       artist_failed: failed,
     };
