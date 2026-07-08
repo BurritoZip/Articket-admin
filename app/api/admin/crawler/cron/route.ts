@@ -26,6 +26,7 @@ import {
   enrichEventGenres,
   enrichEventAges,
   enrichEventTicketDates,
+  enrichEventDescriptions,
 } from "@/lib/ingestion/event-enrich";
 import { autoMergeDuplicateEvents } from "@/lib/ingestion/event-auto-merge";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
@@ -204,13 +205,14 @@ export async function GET(request: NextRequest) {
 
     const enrichR = await track("enrich", async () => {
       // 이벤트 직접 보강(아티스트/장르/연령) + 아티스트 프로필 큐 처리
-      const [artistR, genreR, ageR, venueR, ticketR, giArtist, rArtist] =
+      const [artistR, genreR, ageR, venueR, ticketR, descR, giArtist, rArtist] =
         await Promise.all([
           enrichEventArtists(200),
           enrichEventGenres(50),
           enrichEventAges(50),
           processVenueAddressEnrichment(60),
           enrichEventTicketDates(40),
+          enrichEventDescriptions(40),
           geminiEnrichArtists({ maxItems: 40 }), // Gemini 그라운딩 아티스트 정보
           processArtistEnrichmentQueue(20),
         ]);
@@ -222,6 +224,7 @@ export async function GET(request: NextRequest) {
         ageFilled: ageR.filled,
         venueAddressFilled: venueR.filled,
         ticketDatesFilled: ticketR.filled,
+        descriptionFilled: descR.filled,
         geminiArtistFilled: giArtist.filled,
         succeeded: rArtist.succeeded,
         failed: rArtist.failed,

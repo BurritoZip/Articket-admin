@@ -35,6 +35,8 @@ export type EventRow = {
   artist_link_status: "linked" | "multi_artist" | "no_artist" | null;
   /** 아티스트 보강 시도 시각 — 재선택 방지 워터마크 */
   enrich_attempted_at: string | null;
+  /** 설명 그라운딩 보강 시도 시각 — 재호출 방지 워터마크 */
+  description_checked_at: string | null;
   /** 페스티벌 라인업 마지막 수집 시각 */
   lineup_checked_at: string | null;
   /** 수집된 라인업 아티스트 수 (multi_artist 공연) */

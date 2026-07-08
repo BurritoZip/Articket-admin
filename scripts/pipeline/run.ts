@@ -16,6 +16,7 @@ import {
   enrichEventGenres,
   enrichEventAges,
   enrichEventTicketDates,
+  enrichEventDescriptions,
 } from "../../lib/ingestion/event-enrich";
 import { autoMergeDuplicateEvents } from "../../lib/ingestion/event-auto-merge";
 import { autoPurgeNonConcerts } from "../../lib/data-quality/purge-non-concerts";
@@ -191,16 +192,16 @@ async function main() {
     await runArtistBackfill({ limit: 500, dryRun: false });
 
     // 2. 아티스트 없는 이벤트 → Gemini로 제목에서 추출 + 장르/연령/주소 직접 보강
-    const [artistR, genreR, ageR, venueR, ticketR, artistQ] = await Promise.all(
-      [
+    const [artistR, genreR, ageR, venueR, ticketR, descR, artistQ] =
+      await Promise.all([
         enrichEventArtists(200),
         enrichEventGenres(50),
         enrichEventAges(50),
         processVenueAddressEnrichment(60),
         enrichEventTicketDates(40), // 예매오픈/마감일 그라운딩 보강(점진 드레인)
+        enrichEventDescriptions(40), // 설명 그라운딩 보강(CSR 소스 빈 설명 채움)
         queueArtistEnrichment(),
-      ],
-    );
+      ]);
     const artistLinked = artistR.linked;
 
     // 2.5 Gemini 그라운딩 아티스트 보강 (description/occupation/country/name_en)
@@ -242,6 +243,7 @@ async function main() {
       age_filled: ageR.filled,
       venue_address_filled: venueR.filled,
       ticket_dates_filled: ticketR.filled,
+      description_filled: descR.filled,
       gemini_artist_filled: giArtist.filled,
       artist_enriched: succeeded,
       artist_failed: failed,

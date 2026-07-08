@@ -246,6 +246,57 @@ async function extractArtistsFromTitle(title: string): Promise<string[]> {
   }
 }
 
+/**
+ * 설명(description) 없는 이벤트 보강 — Google 검색 그라운딩으로 공연 소개 확보.
+ *
+ * 배경: melon/interpark/yes24 는 목록만 긁어 description 이 비어 들어온다(상세 CSR/봇차단).
+ * 그라운딩으로 실제 공연 정보를 요약해 채운다. 환각 방지 — 확실치 않으면 비운다.
+ * 대상: 종료 안 된 이벤트 중 description 미상 + 미시도(description_checked_at NULL).
+ */
+export async function enrichEventDescriptions(
+  maxItems = 40,
+): Promise<{ filled: number; checked: number }> {
+  const db = createServiceRoleClient();
+  const { data: events } = await db
+    .from("events")
+    .select("id,title,start_date")
+    .or("description.is.null,description.eq.")
+    .is("description_checked_at", null) // 1회성 — 못 찾아도 재시도 안 함(토큰 절약)
+    .not("status", "eq", "ended")
+    .order("start_date", { ascending: true })
+    .limit(maxItems);
+
+  const now = new Date().toISOString();
+  let filled = 0;
+  let checked = 0;
+  for (const e of events ?? []) {
+    checked++;
+    const day = e.start_date ? String(e.start_date).slice(0, 10) : "미상";
+    const prompt = `다음 공연/콘서트/페스티벌의 공식 소개를 2~4문장으로 요약하라.
+Google 검색으로 실제 정보를 확인하고, 어떤 공연인지·주요 출연/특징·성격이 드러나게 써라.
+공연명: "${e.title}"
+공연일자(참고): ${day}
+규칙: 사실만. 확실하지 않으면 지어내지 말 것. 정보가 거의 없으면 정확히 "없음"이라고만 답하라.
+홍보 문구·이모지·해시태그 없이 담백하게. 250자 이내.`;
+    const patch: Record<string, string> = { description_checked_at: now };
+    try {
+      const raw = await geminiTextGrounded(prompt).then((s) => s.trim());
+      if (
+        raw &&
+        !/^없음$|정보가 (거의 )?없|확실하지/.test(raw) &&
+        raw.length >= 10
+      ) {
+        patch.description = raw.slice(0, 500);
+        filled++;
+      }
+    } catch {
+      /* 그라운딩 실패 — checked_at만 기록하고 넘어감 */
+    }
+    await db.from("events").update(patch).eq("id", e.id);
+  }
+  return { filled, checked };
+}
+
 /** 장르 없는 이벤트 직접 보강 */
 export async function enrichEventGenres(
   maxItems = 50,
