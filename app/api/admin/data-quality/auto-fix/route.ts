@@ -1,10 +1,14 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import { runDataQualityAutoFix, type AutoFixOptions } from "@/lib/data-quality/auto-fix";
+import { withErrorHandler } from "@/lib/api-handler";
+import {
+  runDataQualityAutoFix,
+  type AutoFixOptions,
+} from "@/lib/data-quality/auto-fix";
 
 export const maxDuration = 120;
 
-export async function POST(request: Request) {
+export const POST = withErrorHandler(async (request: Request) => {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
@@ -19,4 +23,4 @@ export async function POST(request: Request) {
   const result = await runDataQualityAutoFix({ scope, dryRun });
 
   return NextResponse.json({ ok: true, dryRun, scope, ...result });
-}
+});

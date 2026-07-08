@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { requireAdmin } from "@/lib/supabase/require-admin";
+import { withErrorHandler } from "@/lib/api-handler";
 import { sweepEventStatuses } from "@/lib/db/status-sweeper";
 import { runDataQualityAutoFix } from "@/lib/data-quality/auto-fix";
 import { runDataQualityAutoDelete } from "@/lib/data-quality/auto-delete";
@@ -71,7 +72,7 @@ const SCRAPERS: Record<string, (jobId: string) => Promise<ScraperResult>> = {
   "gemini-search": (id) => runGeminiSearchScraper(id, { dryRun: false }),
 };
 
-export async function POST() {
+export const POST = withErrorHandler(async () => {
   const guard = await requireAdmin();
   if (!guard.ok) return guard.response;
 
@@ -231,4 +232,4 @@ export async function POST() {
   await run("purge", () => purgeOldEvents());
 
   return NextResponse.json({ ok: true });
-}
+});
