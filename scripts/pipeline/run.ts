@@ -48,6 +48,7 @@ import {
   stepDone,
   stepFailed,
   stepProgress,
+  resetStalePipelineSteps,
 } from "../../lib/db/pipeline-tracker";
 
 const log = (msg: string) =>
@@ -75,6 +76,10 @@ async function run<T>(
 async function main() {
   log("=== 파이프라인 시작 ===");
   const db = createServiceRoleClient();
+
+  // 지난 실행이 중간에 죽어(노트북 취침 등) 남긴 좀비 running 단계 정리 → 자가치유
+  const staleReset = await resetStalePipelineSteps();
+  if (staleReset > 0) log(`⚠ 좀비 running 단계 ${staleReset}개 정리 후 시작`);
 
   // crawl — enabled sources from DB
   await run("crawl", async () => {

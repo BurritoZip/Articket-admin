@@ -32,6 +32,7 @@ import {
   stepDone,
   stepFailed,
   stepProgress,
+  resetStalePipelineSteps,
 } from "@/lib/db/pipeline-tracker";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { runScoring } from "@/lib/scoring/run";
@@ -77,6 +78,9 @@ export const POST = withErrorHandler(async () => {
   if (!guard.ok) return guard.response;
 
   const db = createServiceRoleClient();
+
+  // 이전 실행이 죽어 남긴 좀비 running 단계를 먼저 정리(새 실행이 뒤엉키지 않게).
+  await resetStalePipelineSteps();
 
   // crawl — enabled sources from DB
   await run("crawl", async () => {

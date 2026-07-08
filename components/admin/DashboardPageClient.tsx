@@ -80,6 +80,18 @@ interface PipelineStep {
   finished_at: string | null;
   result: Record<string, unknown> | null;
   error: string | null;
+  elapsed_min?: number | null;
+  stalled?: boolean;
+}
+
+interface PipelineStatusResponse {
+  steps: PipelineStep[];
+  stalledJobs?: Array<{
+    source_name: string;
+    elapsed_min: number | null;
+  }>;
+  staleMinutes?: number;
+  anyStalled?: boolean;
 }
 
 // ── 파이프라인 단계 메타 ───────────────────────────────────────────────
@@ -227,21 +239,42 @@ export function DashboardPageClient() {
   });
 
   // 파이프라인 상태 폴링
-  const { data: pipelineData, refetch: refetchPipeline } = useQuery<{
-    steps: PipelineStep[];
-  }>({
-    queryKey: ["pipeline-status"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/pipeline/status");
-      if (!res.ok) throw new Error("pipeline status fetch failed");
-      return res.json() as Promise<{ steps: PipelineStep[] }>;
-    },
-    refetchInterval: runningPipeline ? 1500 : false,
-    staleTime: 0,
-  });
+  const { data: pipelineData, refetch: refetchPipeline } =
+    useQuery<PipelineStatusResponse>({
+      queryKey: ["pipeline-status"],
+      queryFn: async () => {
+        const res = await fetch("/api/admin/pipeline/status");
+        if (!res.ok) throw new Error("pipeline status fetch failed");
+        return res.json() as Promise<PipelineStatusResponse>;
+      },
+      // 실행 중이거나 멈춤 감지 시 폴링(멈춤은 좀 느리게)
+      refetchInterval: runningPipeline ? 1500 : 20_000,
+      staleTime: 0,
+    });
 
   const steps = pipelineData?.steps ?? [];
-  const isAnyRunning = steps.some((s) => s.status === "running");
+  const anyStalled = pipelineData?.anyStalled ?? false;
+  const stalledJobs = pipelineData?.stalledJobs ?? [];
+  const staleMinutes = pipelineData?.staleMinutes ?? 15;
+  // 멈춘(stalled) 단계는 '실행 중'으로 치지 않는다 → 무한 스피너 방지
+  const isAnyRunning = steps.some((s) => s.status === "running" && !s.stalled);
+
+  const handleResetPipeline = async () => {
+    try {
+      const res = await fetch("/api/admin/pipeline/reset", { method: "POST" });
+      const json = (await res.json()) as {
+        stepsReset?: number;
+        jobsReset?: number;
+      };
+      if (!res.ok) throw new Error("리셋 실패");
+      toast.success(
+        `상태 리셋 — 단계 ${json.stepsReset ?? 0}개, 크롤잡 ${json.jobsReset ?? 0}개 정리`,
+      );
+      void refetchPipeline();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "리셋 실패");
+    }
+  };
 
   // 실행 중 감지 → runningPipeline 동기화
   React.useEffect(() => {
@@ -361,20 +394,52 @@ export function DashboardPageClient() {
       <Card>
         <CardHeader className="flex flex-row items-center justify-between pb-3">
           <CardTitle className="text-base">데이터 파이프라인</CardTitle>
-          <Button
-            size="sm"
-            onClick={() => void handleRunPipeline()}
-            disabled={runningPipeline}
-          >
-            {runningPipeline ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Play className="mr-1.5 h-3.5 w-3.5" />
+          <div className="flex gap-2">
+            {anyStalled && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void handleResetPipeline()}
+              >
+                <AlertTriangle className="mr-1.5 h-3.5 w-3.5 text-danger" />
+                상태 리셋
+              </Button>
             )}
-            {runningPipeline ? "실행 중..." : "지금 실행"}
-          </Button>
+            <Button
+              size="sm"
+              onClick={() => void handleRunPipeline()}
+              disabled={runningPipeline}
+            >
+              {runningPipeline ? (
+                <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Play className="mr-1.5 h-3.5 w-3.5" />
+              )}
+              {runningPipeline ? "실행 중..." : "지금 실행"}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent>
+          {anyStalled && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-danger/40 bg-danger-weak/30 px-3 py-2 text-body-sm">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-danger" />
+              <div>
+                <p className="font-medium text-danger">
+                  파이프라인이 멈춘 것으로 보입니다 ({staleMinutes}분+ 진행
+                  없음)
+                </p>
+                <p className="text-text-secondary">
+                  죽은 실행이 남긴 상태일 수 있습니다.
+                  {stalledJobs.length > 0 &&
+                    ` 멈춘 크롤: ${stalledJobs
+                      .map((j) => `${j.source_name}(${j.elapsed_min ?? "?"}분)`)
+                      .join(", ")}.`}{" "}
+                  <span className="font-medium">상태 리셋</span> 후 다시
+                  실행하세요.
+                </p>
+              </div>
+            </div>
+          )}
           <div className="flex items-start gap-0 overflow-x-auto pb-2">
             {STEPS.map((meta, i) => {
               const step = steps.find((s) => s.step_name === meta.key);
