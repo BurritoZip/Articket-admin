@@ -483,13 +483,10 @@ export function EventsPageClient() {
 
   const submitEdit = async () => {
     if (!editingEvent) return;
-    if (
-      !form.title?.trim() ||
-      !form.start_date ||
-      artistIds.length === 0 ||
-      venueIds.length === 0
-    ) {
-      toast.error("필수 항목을 입력하세요. (공연명, 아티스트, 공연장, 시작일)");
+    // 편집은 공연명·시작일만 필수. 아티스트/공연장은 비어 있어도 허용
+    // (페스티벌·미연결 공연도 예매링크 등 다른 필드를 수정할 수 있어야 함).
+    if (!form.title?.trim() || !form.start_date) {
+      toast.error("필수 항목을 입력하세요. (공연명, 시작일)");
       return;
     }
     setSubmitting(true);
@@ -507,6 +504,7 @@ export function EventsPageClient() {
           duration: form.duration || null,
           age_restriction: form.age_restriction || null,
           ticket_provider: form.ticket_provider || null,
+          booking_url: form.booking_url?.trim() || null,
           notice_text: form.notice_text || null,
         }),
       });
@@ -1425,6 +1423,20 @@ function EventFormFields({
             }
           />
         </div>
+      </div>
+
+      {/* 예매 링크 — 앱 '예매하기' 버튼이 여는 외부 URL */}
+      <div className="space-y-2">
+        <Label htmlFor="event-booking-url">예매 링크 (booking_url)</Label>
+        <Input
+          id="event-booking-url"
+          type="url"
+          placeholder="https://tickets.interpark.com/goods/..."
+          value={form.booking_url ?? ""}
+          onChange={(e) =>
+            setForm((s) => ({ ...s, booking_url: e.target.value }))
+          }
+        />
       </div>
 
       {/* 공연 정보 */}

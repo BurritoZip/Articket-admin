@@ -60,7 +60,7 @@ export async function GET(request: Request) {
   let eventsQuery = supabase
     .from("events")
     .select(
-      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, notice_text, is_banner, has_timetable",
+      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, booking_url, notice_text, is_banner, has_timetable",
       { count: "exact" },
     )
     .order(sortBy, { ascending: sortDir });
