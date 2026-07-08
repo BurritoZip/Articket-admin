@@ -4,9 +4,13 @@
  * 결과는 RawScrapedEvent 형태로 정규화 후 upsert.
  */
 import { geminiTextGrounded } from "@/lib/gemini";
+import { classifyTitlesKeep } from "@/lib/data-quality/classify-keep";
 import { normalizeEvent } from "@/lib/ingestion/normalize";
 import { upsertEvent } from "@/lib/ingestion/upsert";
-import { saveRawPayload, markRawPayloadProcessed } from "@/lib/crawler/job-manager";
+import {
+  saveRawPayload,
+  markRawPayloadProcessed,
+} from "@/lib/crawler/job-manager";
 import { logParseError, logUpsertError } from "@/lib/crawler/error-logger";
 import { RawScrapedEventSchema } from "@/types/ingestion";
 import type { IngestionPipelineResult } from "@/types/ingestion";
@@ -41,7 +45,9 @@ async function searchConcerts(query: string): Promise<GeminiEvent[]> {
 다음 검색어로 국내 공연 정보를 찾아라: "${query}"
 
 반드시 아래 JSON 형식만 반환. 설명 금지.
-콘서트, 페스티벌만 포함. 뮤지컬, 연극, 전시, 클래식, 오페라, 무용, 발레는 절대 포함하지 마라.
+**대중음악(가수·밴드·아이돌·래퍼·싱어송라이터)의 콘서트와 "음악" 페스티벌(락페·재즈·힙합·EDM 등)만** 포함하라.
+다음은 절대 포함하지 마라: 뮤지컬·연극·전시·클래식·오페라·무용·발레.
+그리고 **음악이 주가 아닌 축제/행사도 절대 포함하지 마라**: 지역축제·문화제·민속/전통 행사, 종교·불교·사찰·소원성취·기원제, 먹거리·음식·맥주·커피 축제, 꽃/벚꽃 축제, 불꽃축제, 빛축제, 관광/지자체 홍보행사. (예: "경산갓바위소원성취축제", "○○문화제")
 이미 지난 공연(end_date < ${today})은 제외.
 
 {
@@ -111,7 +117,11 @@ export async function runGeminiSearchScraper(
       }
     } catch (e) {
       stats.errorCount++;
-      errors.push({ url: `gemini-search:${query}`, step: "crawl", message: String(e) });
+      errors.push({
+        url: `gemini-search:${query}`,
+        step: "crawl",
+        message: String(e),
+      });
     }
     // Gemini API rate limit 방지
     await new Promise((r) => setTimeout(r, 1000));
@@ -119,7 +129,13 @@ export async function runGeminiSearchScraper(
 
   stats.eventsFound = allEvents.length;
 
-  for (const ev of allEvents.slice(0, maxItems)) {
+  // 대중음악 콘서트/음악 페스티벌만 — 비음악(전시·연극·지역축제·종교행사 등) 제거
+  const capped = allEvents.slice(0, maxItems);
+  const verdicts = await classifyTitlesKeep(capped.map((e) => e.title));
+  const keepEvents = capped.filter((_, i) => verdicts[i] === "keep");
+  stats.eventsSkipped += capped.length - keepEvents.length;
+
+  for (const ev of keepEvents) {
     const sourceUrl = makeSourceUrl(ev);
     const rawInput = {
       sourceUrl,
@@ -143,7 +159,8 @@ export async function runGeminiSearchScraper(
     let rawPayloadId: string | null = null;
     try {
       const parsed = RawScrapedEventSchema.safeParse(rawInput);
-      if (!parsed.success) throw new Error(`Validation: ${parsed.error.message}`);
+      if (!parsed.success)
+        throw new Error(`Validation: ${parsed.error.message}`);
       if (dryRun) {
         stats.eventsSkipped++;
         continue;
@@ -158,8 +175,11 @@ export async function runGeminiSearchScraper(
       });
       const normalized = normalizeEvent(parsed.data);
       const result = await upsertEvent(normalized, jobId);
-      if (rawPayloadId && result.eventId) await markRawPayloadProcessed(rawPayloadId, result.eventId);
-      result.action === "skipped" ? stats.eventsSkipped++ : stats.eventsUpserted++;
+      if (rawPayloadId && result.eventId)
+        await markRawPayloadProcessed(rawPayloadId, result.eventId);
+      result.action === "skipped"
+        ? stats.eventsSkipped++
+        : stats.eventsUpserted++;
     } catch (e) {
       if (!rawPayloadId) await logParseError(jobId, SOURCE_NAME, sourceUrl, e);
       else await logUpsertError(jobId, SOURCE_NAME, e);
