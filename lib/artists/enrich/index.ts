@@ -277,6 +277,22 @@ export async function processArtistEnrichmentQueue(maxItems = 20): Promise<{
 }> {
   const db = createServiceRoleClient();
 
+  // 유지보수: 큐가 무한 적체되지 않게 드레인 시작 시 정리한다.
+  // (1) 처리 컨슈머가 없는 task_type(레거시) 은 pending 을 failed 로 끊는다.
+  const UNHANDLED = ["match_artist", "normalize_venue", "parse_dates"];
+  await db
+    .from("ai_processing_queue")
+    .update({ status: "failed", error: "no processor for task_type" })
+    .in("task_type", UNHANDLED)
+    .eq("status", "pending");
+  // (2) 죽은 드레인이 남긴 stuck processing(1시간+ 경과) 은 pending 으로 회수해 재시도.
+  const staleCut = new Date(Date.now() - 60 * 60_000).toISOString();
+  await db
+    .from("ai_processing_queue")
+    .update({ status: "pending", error: null })
+    .eq("status", "processing")
+    .lt("created_at", staleCut);
+
   const { data: tasks } = await db
     .from("ai_processing_queue")
     .select("id,entity_id,payload")

@@ -71,7 +71,12 @@ function buildSearchQueries(eventTitle: string): string[] {
   ];
 }
 
-async function queueExternalArtistVerification(params: {
+// match_artist(event) 큐잉 중단(no-op) — 이 task_type 을 처리하는 컨슈머가 없어
+// 큐에 무한 적체만 됐다. 페스티벌 라인업은 enrich 의 collectFestivalLineup(그라운딩)이,
+// 개별 아티스트는 enrichEventArtists 가 직접 채운다. 미연결 신호는 ingestion_errors
+// (step='match') 로 별도 기록돼 admin 에서 조회 가능하므로 큐 등록은 불필요.
+// 처리기를 다시 만들면 여기서 큐잉을 복구하면 된다.
+async function queueExternalArtistVerification(_params: {
   eventId: string;
   eventTitle: string;
   sourceUrl: string;
@@ -80,39 +85,7 @@ async function queueExternalArtistVerification(params: {
   timetableArtists?: string[];
   searchQueries: string[];
 }): Promise<void> {
-  const db = createServiceRoleClient();
-  const { data: existing } = await db
-    .from("ai_processing_queue")
-    .select("id")
-    .eq("task_type", "match_artist")
-    .eq("entity_type", "event")
-    .eq("entity_id", params.eventId)
-    .in("status", ["pending", "processing"])
-    .limit(1)
-    .maybeSingle();
-
-  if (existing) return;
-
-  const { error } = await db.from("ai_processing_queue").insert({
-    task_type: "match_artist",
-    status: "pending",
-    priority: 3,
-    entity_type: "event",
-    entity_id: params.eventId,
-    payload: {
-      target: "external_artist_timetable_verification",
-      eventId: params.eventId,
-      eventTitle: params.eventTitle,
-      sourceUrl: params.sourceUrl,
-      reason: params.reason,
-      parsedArtists: params.artistCandidates,
-      timetableArtists: params.timetableArtists ?? [],
-      searchQueries: params.searchQueries,
-    },
-  });
-  if (error) {
-    console.warn(`[ArtistAudit] AI 큐 등록 실패 (무시): ${error.message}`);
-  }
+  void _params;
 }
 
 export async function auditCrawlerJobArtists(
