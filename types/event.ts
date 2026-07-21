@@ -56,6 +56,8 @@ export type EventRow = {
   locked_fields: string[];
   /** 필드별 출처 {필드명: {source, at}} — upsert 병합이 소스 신뢰도 비교에 사용 */
   field_sources: Record<string, { source?: string; at?: string }>;
+  /** 예매처 선택지 [{provider, label, url}] — 앱 "어디서 예매?" 팝업용 */
+  booking_links: { provider: string; label: string; url: string }[];
 };
 
 export type EventArtistRow = {

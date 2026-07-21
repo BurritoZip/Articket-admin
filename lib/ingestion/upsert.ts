@@ -7,6 +7,7 @@ import {
 } from "./artist-matcher";
 import { validateEvent } from "./schemas";
 import { trustOf } from "./source-trust";
+import { extractBookingLinks } from "./booking-links";
 import type { NormalizedEvent, UpsertResult } from "@/types/ingestion";
 
 const TRACKED_FIELDS = [
@@ -23,7 +24,7 @@ const TRACKED_FIELDS = [
 
 /** 기존 행 조회 컬럼 — TRACKED_FIELDS 비교 + locked_fields + field_sources(provenance) */
 const EXISTING_COLS =
-  "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, booking_url, status, genre, source_urls, raw_payload, locked_fields, field_sources";
+  "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, booking_url, status, genre, source_urls, raw_payload, locked_fields, field_sources, booking_links";
 
 type FieldSource = { source?: string; at?: string };
 
@@ -147,6 +148,7 @@ export async function upsertEvent(
         ticket_open_date: event.ticketOpenDate,
         ticket_provider: event.ticketProvider,
         booking_url: event.ticketUrl,
+        booking_links: extractBookingLinks(event.sourceUrls, event.ticketUrl),
         dedup_key: event.dedupKey,
         source_urls: event.sourceUrls,
         source_name: event.sourceName,
@@ -269,6 +271,14 @@ export async function upsertEvent(
     new Set([...existingUrls, ...event.sourceUrls]),
   );
   if (mergedUrls.length !== existingUrls.length) patch.source_urls = mergedUrls;
+
+  // 예매처 선택지 재계산 — 다른 소스가 합류하면 예매처가 늘 수 있다(선택지 보존)
+  const finalBookingUrl =
+    (patch.booking_url as string | undefined) ??
+    (ex.booking_url as string | null);
+  const newLinks = extractBookingLinks(mergedUrls, finalBookingUrl);
+  if (JSON.stringify(newLinks) !== JSON.stringify(ex.booking_links ?? []))
+    patch.booking_links = newLinks;
 
   if (Object.keys(patch).length > 0) {
     patch.crawled_at = new Date().toISOString();
