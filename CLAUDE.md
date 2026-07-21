@@ -46,12 +46,14 @@ npx tsx scripts/pipeline/missing-audit.ts # 누락 데이터 감사 (다른 audi
 | 7 | `score` | 인기·트렌드 점수 산출 | `lib/scoring/run` |
 | 8 | `purge` | 종료 후 `PURGE_ENDED_AFTER_DAYS`(180일) 지난 공연 소프트 숨김(`is_hidden`, 하드삭제 아님) | `lib/data-quality/purge-old-events` |
 
-**진입점 (같은 8단계, 세 경로):**
-- `app/api/admin/pipeline/run/route.ts` — UI/수동 트리거 (`maxDuration=300`). enrich를 큐 우회 직접 보강으로 처리.
-- `scripts/pipeline/run.ts` — 로컬 launchd cron이 `npx tsx`로 호출. enrich를 큐 드레인으로 처리.
-- `app/api/admin/crawler/cron/route.ts` — Vercel/launchd cron(curl) 엔트리포인트.
+**파이프라인 정의는 `lib/pipeline/run-pipeline.ts`의 `runFullPipeline(opts)` 한 곳뿐이다 (SINGLE SOURCE OF TRUTH).**
+8단계 로직·순서·scope 는 여기서만 바꾼다. 세 진입점은 이 함수를 호출만 하는 얇은 래퍼다:
+- `scripts/pipeline/run.ts` — 로컬 launchd cron이 `npx tsx`로 호출 (`enrichBudgetMs: 270s`).
+- `app/api/admin/pipeline/run/route.ts` — UI/수동 트리거 (`maxDuration=300`, `enrichBudgetMs: 180s`).
+- `app/api/admin/crawler/cron/route.ts` — curl/launchd cron 엔트리포인트 (`enrichBudgetMs: 180s`).
 
-세 진입점 모두 같은 `lib/` 함수를 호출하므로 **파이프라인 단계 추가/수정 시 세 곳 다 반영**해야 한다.
+환경 차이(큐 드레인 예산, 로깅, trigger 태그)는 `PipelineOptions` 로만 조절한다.
+**단계 추가/수정 시 `runFullPipeline` 한 곳만 고치면 된다.** (예전엔 세 곳에 복붙돼 순서·scope 가 서로 어긋나 있었다.)
 
 **enrich 단계 = Gemini.** `lib/gemini.ts`의 `geminiText(prompt, model="gemini-2.5-flash")`가 공용 클라이언트.
 보강은 `ai_processing_queue` 테이블에 entity(artist/event)를 적재 후 배치 처리.
