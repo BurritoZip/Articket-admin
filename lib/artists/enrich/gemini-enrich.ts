@@ -5,10 +5,11 @@
  *   - 정보: description/occupation/country/name_en (없으면 null, 환각 방지)
  *   - canonical: 한/영·오타 통일한 표준 영문 키 → artists.gemini_canon 저장 →
  *     dedup(aiDedupArtists)이 Gemini 없이 이 키로 그룹핑.
- * gemini_checked_at 마커로 한 번만 호출(못 채워도 재호출 안 함).
+ * gemini_checked_at 마커로 한 번만 호출(모델이 "정보 없음"으로 답한 경우도 재호출 안 함).
+ * 단 **호출 자체가 실패한 건은 마킹하지 않는다** — 429 한 번에 배치 전체가 영구 소각되던 원인.
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
-import { geminiTextGrounded } from "@/lib/gemini";
+import { geminiTextGrounded, GeminiQuotaError } from "@/lib/gemini";
 
 interface GeminiArtistInfo {
   is_music_artist: boolean | null;
@@ -61,11 +62,9 @@ async function fetchOne(name: string): Promise<GeminiArtistInfo | null> {
   "description": "한국어 한 줄 소개(40자 이내, 예: '솔로 발라드 가수') 또는 null"
 }
 확실하지 않으면 해당 값은 null. 추측 금지.`;
-  try {
-    return parse(await geminiTextGrounded(prompt));
-  } catch {
-    return null;
-  }
+  // 호출 실패는 던진다 — 호출부가 "정보 없음"과 구분해 gemini_checked_at 을 찍을지 정한다.
+  // 삼키면 429 한 번에 배치 전체가 영구 재시도 불가 상태로 굳는다.
+  return parse(await geminiTextGrounded(prompt));
 }
 
 export async function geminiEnrichArtists(opts?: {
@@ -104,9 +103,18 @@ export async function geminiEnrichArtists(opts?: {
   const now = new Date().toISOString();
   let filled = 0;
   let notMusic = 0;
+  let checked = 0;
   for (const a of target) {
-    const info = await fetchOne(a.name);
-    // 시도 기록은 항상 — 못 찾아도 재호출 안 함
+    let info: GeminiArtistInfo | null;
+    try {
+      info = await fetchOne(a.name);
+    } catch (e) {
+      // 호출 실패(429·네트워크) — 워터마크를 찍지 않아 다음 실행에서 재시도된다.
+      if (e instanceof GeminiQuotaError) break; // 서킷 열림: 남은 건도 전부 실패
+      continue;
+    }
+    checked++;
+    // 모델이 답했으면(정보 없음 포함) 시도 기록 — 재호출 안 함
     const patch: Record<string, string | boolean> = { gemini_checked_at: now };
     if (info) {
       if (info.is_music_artist !== null)
@@ -122,5 +130,5 @@ export async function geminiEnrichArtists(opts?: {
     }
     await db.from("artists").update(patch).eq("id", a.id);
   }
-  return { checked: target.length, filled, notMusic };
+  return { checked, filled, notMusic };
 }

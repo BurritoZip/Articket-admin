@@ -211,37 +211,31 @@ export async function auditCrawlerJobArtists(
     return eventIssues;
   });
 
+  // 대부분의 issue 는 오류가 아니라 enrich 대기 상태다:
+  //   missing_artist_candidates / missing_artist_link — enrichEventArtists(Gemini)가 제목에서 추출
+  //   missing_festival_timetable — collectFestivalLineup(그라운딩)이 라인업 수집
+  // 이걸 매 크롤 수백 건씩 ingestion_errors 로 남겨 크롤 오류가 100+ 로 부풀었다.
+  // 진짜 데이터 이상(파싱 출연진 ≠ 타임테이블)만 기록한다. 미연결 현황은 events.artist_id
+  // IS NULL 로 언제든 조회 가능하므로 로그가 불필요하다.
+  const loggableIssues = issues.filter(
+    (issue) => issue.reason === "timetable_artist_mismatch",
+  );
   await Promise.all(
-    issues.map((issue) =>
+    loggableIssues.map((issue) =>
       logIngestionError({
         jobId,
         sourceName: issue.sourceName,
         sourceUrl: issue.sourceUrl,
         step: "match",
-        error:
-          issue.reason === "missing_artist_candidates"
-            ? new Error(
-                `아티스트 후보를 추출하지 못했습니다: ${issue.eventTitle}`,
-              )
-            : issue.reason === "missing_festival_timetable"
-              ? new Error(
-                  `페스티벌 타임테이블 외부 검증이 필요합니다: ${issue.eventTitle}`,
-                )
-              : issue.reason === "timetable_artist_mismatch"
-                ? new Error(
-                    `파싱 출연진과 타임테이블 아티스트가 일치하지 않습니다: ${issue.eventTitle}`,
-                  )
-                : new Error(
-                    `아티스트 연결에 실패했습니다: ${issue.artistCandidates.join(", ")}`,
-                  ),
+        error: new Error(
+          `파싱 출연진과 타임테이블 아티스트가 일치하지 않습니다: ${issue.eventTitle}`,
+        ),
         rawPayload: {
           eventId: issue.eventId,
           eventTitle: issue.eventTitle,
           artistCandidates: issue.artistCandidates,
           timetableArtists: issue.timetableArtists ?? [],
           reason: issue.reason,
-          searchQueries:
-            issue.searchQueries ?? buildSearchQueries(issue.eventTitle),
         },
       }),
     ),

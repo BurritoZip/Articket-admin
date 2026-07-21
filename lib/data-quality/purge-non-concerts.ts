@@ -25,15 +25,69 @@ const NON_MUSIC_GENRES = [
   "국악",
 ];
 
+/**
+ * 분류 보류(pending_classification) 이벤트 재판정.
+ *
+ * Gemini 429 등으로 크롤 시 분류를 못 해 숨긴 채 저장된 이벤트를, 상한 해제 후 다시 판정한다.
+ *   keep    → 노출(is_hidden 해제)
+ *   drop    → 비콘서트 확정, 계속 숨김(hidden_reason=non_concert). 하드삭제하지 않는다.
+ *   unknown → 아직 판정 불가, 그대로 대기(다음 실행에서 재시도)
+ */
+async function reclassifyHeldEvents(
+  db: ReturnType<typeof createServiceRoleClient>,
+): Promise<{ restored: number; dropped: number; stillHeld: number }> {
+  const { data: held } = await db
+    .from("events")
+    .select("id,title")
+    .eq("hidden_reason", "pending_classification");
+  if (!held?.length) return { restored: 0, dropped: 0, stillHeld: 0 };
+
+  const verdicts = await classifyTitlesKeep(held.map((e) => e.title));
+  const restoreIds: string[] = [];
+  const dropIds: string[] = [];
+  held.forEach((e, i) => {
+    if (verdicts[i] === "keep") restoreIds.push(e.id);
+    else if (verdicts[i] === "drop") dropIds.push(e.id);
+    // unknown → 그대로 대기
+  });
+
+  const CHUNK = 100;
+  for (let i = 0; i < restoreIds.length; i += CHUNK)
+    await db
+      .from("events")
+      .update({ is_hidden: false, hidden_at: null, hidden_reason: null })
+      .in("id", restoreIds.slice(i, i + CHUNK));
+  for (let i = 0; i < dropIds.length; i += CHUNK)
+    await db
+      .from("events")
+      .update({ hidden_reason: "non_concert" })
+      .in("id", dropIds.slice(i, i + CHUNK));
+
+  return {
+    restored: restoreIds.length,
+    dropped: dropIds.length,
+    stillHeld: held.length - restoreIds.length - dropIds.length,
+  };
+}
+
 export async function autoPurgeNonConcerts(opts?: {
   recentDays?: number;
   maxItems?: number;
-}): Promise<{ checked: number; deleted: number }> {
+}): Promise<{
+  checked: number;
+  deleted: number;
+  restored: number;
+  stillHeld: number;
+}> {
   const recentDays = opts?.recentDays ?? 30;
   const maxItems = opts?.maxItems ?? 300;
   const db = createServiceRoleClient();
   let deleted = 0;
   const CHUNK = 100;
+
+  // 분류 보류분 재판정 — keep 은 노출, drop 은 숨김 유지
+  const held = await reclassifyHeldEvents(db);
+  deleted += held.dropped; // drop 확정분(하드삭제는 아니지만 노출에서 빠짐)
 
   // ── 1) 룰 기반: 비음악 장르로 이미 태깅된 이벤트 즉시 삭제 ──────────────────
   const { data: genreTagged } = await db
@@ -77,7 +131,13 @@ export async function autoPurgeNonConcerts(opts?: {
   );
 
   const checked = events.length + genreDropIds.length;
-  if (!events.length) return { checked, deleted };
+  if (!events.length)
+    return {
+      checked,
+      deleted,
+      restored: held.restored,
+      stillHeld: held.stillHeld,
+    };
 
   const verdicts = await classifyTitlesKeep(events.map((e) => e.title));
   const dropIds = events
@@ -92,5 +152,10 @@ export async function autoPurgeNonConcerts(opts?: {
     if (!error) deleted += Math.min(CHUNK, dropIds.length - i);
   }
 
-  return { checked, deleted };
+  return {
+    checked,
+    deleted,
+    restored: held.restored,
+    stillHeld: held.stillHeld,
+  };
 }

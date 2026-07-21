@@ -30,9 +30,7 @@ type ArtistRow = {
 };
 
 export type ArtistBackfillIssueReason =
-  | "missing_raw_payload"
-  | "missing_artist_candidates"
-  | "artist_create_failed";
+  "missing_raw_payload" | "missing_artist_candidates" | "artist_create_failed";
 
 export interface ArtistBackfillIssue {
   eventId: string;
@@ -95,7 +93,9 @@ async function queueArtistEnrichment(artistId: string): Promise<boolean> {
   const db = createServiceRoleClient();
   const { data: artistData, error } = await db
     .from("artists")
-    .select("id, name, avatar_url, occupation, birth_date, birth_place, related")
+    .select(
+      "id, name, avatar_url, occupation, birth_date, birth_place, related",
+    )
     .eq("id", artistId)
     .single();
 
@@ -150,15 +150,15 @@ export async function runArtistBackfill(params?: {
     .limit(limit);
 
   if (eventsError) {
-    throw new Error(`Artist backfill event lookup failed: ${eventsError.message}`);
+    throw new Error(
+      `Artist backfill event lookup failed: ${eventsError.message}`,
+    );
   }
 
   const events = (eventsData ?? []) as EventRow[];
   if (events.length === 0) {
-    const catalogCreatedOrMatchedCount = await backfillArtistCatalogFromPayloads(
-      limit,
-      dryRun,
-    );
+    const catalogCreatedOrMatchedCount =
+      await backfillArtistCatalogFromPayloads(limit, dryRun);
     return {
       scannedCount: 0,
       linkedCount: 0,
@@ -261,20 +261,26 @@ export async function runArtistBackfill(params?: {
 
   if (!dryRun) {
     await Promise.all(Array.from(linkedArtistIds).map(recomputeUpcomingCount));
+
+    // missing_raw_payload / missing_artist_candidates 는 오류가 아니라 정상 흐름이다:
+    //   backfill 은 raw_payload 의 artists 배열로만 연결하고, 그게 없는 이벤트(오래된 것,
+    //   yanolja 처럼 artists:[] 두고 enrich 에 위임하는 소스)는 enrich(Gemini)가 제목에서
+    //   추출한다. 이걸 ingestion_errors 로 남겨 크롤 오류 카운트가 100+ 로 부풀고 crawl 이
+    //   늘 partial 로 떴다. 진짜 실패(artist_create_failed = DB/매칭 오류)만 기록한다.
     await Promise.all(
-      issues.map((issue) =>
-        logIngestionError({
-          sourceName: "artist-backfill",
-          sourceUrl: null,
-          step: "match",
-          error: new Error(
-            issue.reason === "missing_raw_payload"
-              ? `원본 payload가 없어 아티스트를 확인할 수 없습니다: ${issue.eventTitle}`
-              : `아티스트 연결을 완료하지 못했습니다: ${issue.eventTitle}`,
-          ),
-          rawPayload: issue as unknown as Record<string, unknown>,
-        }),
-      ),
+      issues
+        .filter((issue) => issue.reason === "artist_create_failed")
+        .map((issue) =>
+          logIngestionError({
+            sourceName: "artist-backfill",
+            sourceUrl: null,
+            step: "match",
+            error: new Error(
+              `아티스트 연결을 완료하지 못했습니다: ${issue.eventTitle}`,
+            ),
+            rawPayload: issue as unknown as Record<string, unknown>,
+          }),
+        ),
     );
   }
 

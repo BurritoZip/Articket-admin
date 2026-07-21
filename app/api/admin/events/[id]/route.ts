@@ -69,6 +69,20 @@ export async function PATCH(
   const payload: Partial<EventRow> = { ...eventFields };
   if (typeof payload.title === "string") payload.title = payload.title.trim();
 
+  // 운영자가 수정한 크롤 관리 필드는 잠근다 → 다음 크롤 upsert 가 덮어쓰지 못한다.
+  // (status 는 sweeper 가 관리하므로 잠금 대상에서 제외)
+  const LOCKABLE = [
+    "title",
+    "poster_url",
+    "start_date",
+    "end_date",
+    "ticket_open_date",
+    "ticket_provider",
+    "booking_url",
+    "genre",
+  ] as const;
+  const editedLockable = LOCKABLE.filter((f) => f in eventFields);
+
   // If artist_ids provided, set artist_id to first
   if (artist_ids && artist_ids.length > 0) {
     payload.artist_id = artist_ids[0];
@@ -135,6 +149,20 @@ export async function PATCH(
       .single();
     oldArtistId =
       (current as { artist_id: string | null } | null)?.artist_id ?? null;
+  }
+
+  // 수정된 잠금 대상 필드를 기존 locked_fields 와 합집합
+  if (editedLockable.length > 0) {
+    const { data: cur } = await supabase
+      .from("events")
+      .select("locked_fields")
+      .eq("id", params.id)
+      .single();
+    const existing =
+      (cur as { locked_fields: string[] | null } | null)?.locked_fields ?? [];
+    payload.locked_fields = Array.from(
+      new Set([...existing, ...editedLockable]),
+    );
   }
 
   const { error } = await supabase

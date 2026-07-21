@@ -80,11 +80,20 @@ async function searchConcerts(query: string): Promise<GeminiEvent[]> {
   }
 }
 
-function makeSourceUrl(event: GeminiEvent): string {
-  if (event.ticketUrl) return event.ticketUrl;
-  // 안정적인 fallback URL — 제목 기반
-  const slug = encodeURIComponent(event.title.slice(0, 60));
-  return `https://gemini-search.internal/event?q=${slug}`;
+/**
+ * 예매 URL 이 없으면 이 소스는 이벤트를 만들지 않는다.
+ *
+ * 예전엔 `https://gemini-search.internal/event?q=...` 라는 **존재하지 않는 URL** 을 넣었다.
+ * 그 결과 만들어진 레코드는:
+ *   - 포스터 백필(backfillEventPosters)이 source_urls 에서 예매처 코드를 못 찾아 항상 실패 —
+ *     활성 무포스터 이벤트의 거의 전부가 이 소스였다.
+ *   - 라인업 수집(collectFestivalLineup)이 이 URL 을 fetch 하려다 실패해, 페이지 컨텍스트 없이
+ *     그라운딩 호출만 태웠다.
+ * 즉 비용을 두 번 쓰고 결손 레코드를 남겼다. 실 URL 이 있는 건만 받는다.
+ */
+function realSourceUrl(event: GeminiEvent): string | null {
+  const u = event.ticketUrl?.trim();
+  return u && /^https?:\/\//.test(u) ? u : null;
 }
 
 export async function runGeminiSearchScraper(
@@ -132,11 +141,18 @@ export async function runGeminiSearchScraper(
   // 대중음악 콘서트/음악 페스티벌만 — 비음악(전시·연극·지역축제·종교행사 등) 제거
   const capped = allEvents.slice(0, maxItems);
   const verdicts = await classifyTitlesKeep(capped.map((e) => e.title));
-  const keepEvents = capped.filter((_, i) => verdicts[i] === "keep");
-  stats.eventsSkipped += capped.length - keepEvents.length;
+  // drop 만 제외. unknown(분류 실패)은 숨긴 채 저장하고 재분류가 판정한다.
+  const kept = capped
+    .map((e, i) => ({ e, held: verdicts[i] === "unknown" }))
+    .filter((_, i) => verdicts[i] !== "drop");
+  stats.eventsSkipped += capped.length - kept.length;
 
-  for (const ev of keepEvents) {
-    const sourceUrl = makeSourceUrl(ev);
+  // 실 예매 URL 없는 건은 버린다 — 가짜 URL 을 박으면 하류 보강이 전부 무력화된다.
+  const linkable = kept.filter((x) => realSourceUrl(x.e) !== null);
+  stats.eventsSkipped += kept.length - linkable.length;
+
+  for (const { e: ev, held } of linkable) {
+    const sourceUrl = realSourceUrl(ev)!;
     const rawInput = {
       sourceUrl,
       sourceName: SOURCE_NAME,
@@ -174,7 +190,9 @@ export async function runGeminiSearchScraper(
         parsedJson: rawInput as Record<string, unknown>,
       });
       const normalized = normalizeEvent(parsed.data);
-      const result = await upsertEvent(normalized, jobId);
+      const result = await upsertEvent(normalized, jobId, {
+        holdForClassification: held,
+      });
       if (rawPayloadId && result.eventId)
         await markRawPayloadProcessed(rawPayloadId, result.eventId);
       result.action === "skipped"

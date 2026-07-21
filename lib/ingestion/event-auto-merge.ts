@@ -10,8 +10,14 @@
  *   2) 정규화제목 + 공연일      — 아티스트 미연결(페스티벌 등)분 보강
  * 전국투어·N차 라인업은 "공연일까지 동일"해야 묶이므로 보존된다.
  *
- * canonical: 더 서술적인(긴) 제목 우선 → 표시명이 좋게 남게. created_at 은 클러스터 최소값으로
- * 보존(최초 등록일 유지), source_urls 는 합집합.
+ * canonical: 채워진 필드가 많은(정보량 큰) 행 우선 → 더 서술적인 제목. created_at 은 클러스터
+ * 최소값으로 보존(최초 등록일 유지), source_urls 는 합집합.
+ *
+ * 흡수된 행은 **삭제하지 않는다**. 삭제하면 (a) 그 행에만 있던 poster_url·ticket_* 등이 소실되고
+ * (b) events 의 CASCADE 로 user_bookings·user_interested_events·concert_reviews 같은 유저
+ * 데이터까지 함께 사라진다. 대신 결손 필드를 canonical 로 이관한 뒤 `merged_into_event_id` +
+ * `is_hidden` 으로 소프트 병합하고, 병합 직전 스냅샷을 `event_merge_logs` 에 남긴다.
+ * 앱은 is_hidden=false 만 조회하므로 노출 결과는 하드삭제와 같고, 오병합은 되돌릴 수 있다.
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
@@ -20,10 +26,58 @@ interface Ev {
   title: string;
   normalized_title: string | null;
   start_date: string | null;
+  end_date: string | null;
   artist_id: string | null;
   venue_id: string | null;
+  poster_url: string | null;
+  genre: string | null;
+  age_restriction: string | null;
+  ticket_open_date: string | null;
+  ticket_provider: string | null;
+  notice_text: string | null;
+  booking_url: string | null;
   source_urls: { site?: string; url?: string }[] | null;
   created_at: string;
+}
+
+/**
+ * canonical 이 비어 있으면 흡수 행에서 가져오는 필드.
+ * 하드삭제 시절 이 값들이 통째로 소실됐다. artist_id/venue_id 는 연결 정보라 함께 이관한다.
+ */
+const TRANSFERABLE = [
+  "poster_url",
+  "genre",
+  "age_restriction",
+  "ticket_open_date",
+  "ticket_close_date",
+  "ticket_provider",
+  "notice_text",
+  "booking_url",
+  "organizer",
+  "duration",
+  "artist_id",
+  "venue_id",
+  "end_date",
+] as const;
+
+function isBlank(v: unknown): boolean {
+  return v === null || v === undefined || v === "";
+}
+
+/** 채워진 정보량 — canonical 선정의 1차 기준 */
+function infoScore(e: Ev): number {
+  const cols: (keyof Ev)[] = [
+    "poster_url",
+    "genre",
+    "age_restriction",
+    "ticket_open_date",
+    "ticket_provider",
+    "notice_text",
+    "booking_url",
+    "venue_id",
+    "end_date",
+  ];
+  return cols.reduce((n, c) => n + (isBlank(e[c]) ? 0 : 1), 0);
 }
 
 function normTitle(e: Ev): string {
@@ -44,10 +98,18 @@ function sourceSet(e: Ev): Set<string> {
   return s;
 }
 
-/** 아티스트 링크 보유 우선 → 서술적인(긴) 제목 → 먼저 등록된 행 */
+/**
+ * 아티스트 링크 보유 → 채워진 필드 많은 순 → 서술적인(긴) 제목 → 먼저 등록된 행.
+ *
+ * 정보량을 제목 길이보다 앞에 둔다. 예전엔 제목 길이가 우선이라 포스터·예매일이 채워진 행이
+ * "제목이 짧다"는 이유로 흡수 대상이 되곤 했다(소프트 병합 + 필드 이관으로 손실은 막았지만,
+ * 표시되는 행 자체가 빈약해지는 건 여전히 나쁘다).
+ */
 function pickCanonical(members: Ev[]): Ev {
   return [...members].sort((a, b) => {
     if (!!a.artist_id !== !!b.artist_id) return a.artist_id ? -1 : 1;
+    const si = infoScore(b) - infoScore(a);
+    if (si !== 0) return si;
     const lt = (b.title?.length ?? 0) - (a.title?.length ?? 0);
     if (lt !== 0) return lt;
     return a.created_at < b.created_at ? -1 : 1;
@@ -61,9 +123,13 @@ async function fetchAll(
   for (let f = 0; ; f += 1000) {
     const { data } = await db
       .from("events")
+      // prettier-ignore — 한 줄 리터럴이어야 supabase-js 가 행 타입을 추론한다(문자열 결합 불가)
       .select(
-        "id,title,normalized_title,start_date,artist_id,venue_id,source_urls,created_at",
+        "id,title,normalized_title,start_date,end_date,artist_id,venue_id,poster_url,genre,age_restriction,ticket_open_date,ticket_provider,notice_text,booking_url,source_urls,created_at",
       )
+      // 이미 흡수된 행·숨김 행은 병합 대상에서 제외 (재병합/부활 방지)
+      .is("merged_into_event_id", null)
+      .eq("is_hidden", false)
       .range(f, f + 999);
     if (!data?.length) break;
     all.push(...(data as Ev[]));
@@ -75,44 +141,89 @@ async function fetchAll(
 async function mergeCluster(
   db: ReturnType<typeof createServiceRoleClient>,
   members: Ev[],
+  passName: string,
 ): Promise<number> {
   const canon = pickCanonical(members);
   const others = members.filter((e) => e.id !== canon.id);
   if (!others.length) return 0;
 
+  // 병합 직전 전체 행 스냅샷 — 복구 근거이자 이관 소스.
+  const { data: rows } = await db
+    .from("events")
+    .select("*")
+    .in("id", [canon.id, ...others.map((o) => o.id)]);
+  const byId = new Map<string, Record<string, unknown>>(
+    (rows ?? []).map((r) => [String(r.id), r as Record<string, unknown>]),
+  );
+  const canonRow = byId.get(canon.id);
+  if (!canonRow) return 0; // canonical 이 사라짐(동시 실행 등) — 이번 클러스터 스킵
+
+  // 흡수 행에만 있는 값으로 canonical 의 빈 칸을 채운다(fill-only — 기존 값은 덮지 않음).
+  // 정보량 많은 행부터 보게 정렬해 더 나은 값이 우선 선택되게 한다.
+  const donors = [...others].sort((a, b) => infoScore(b) - infoScore(a));
+  const patch: Record<string, unknown> = {};
+  const transferred: string[] = [];
+  for (const col of TRANSFERABLE) {
+    if (!isBlank(canonRow[col])) continue;
+    for (const d of donors) {
+      const v = byId.get(d.id)?.[col];
+      if (!isBlank(v)) {
+        patch[col] = v;
+        transferred.push(col);
+        break;
+      }
+    }
+  }
+
   // source_urls 합집합
   const urls = new Map<string, { site?: string; url?: string }>();
   for (const m of members)
     for (const s of m.source_urls ?? []) urls.set(JSON.stringify(s), s);
+  patch.source_urls = Array.from(urls.values());
   // 최초 등록일 보존
-  const earliest = members.reduce(
+  patch.created_at = members.reduce(
     (min, m) => (m.created_at < min ? m.created_at : min),
     canon.created_at,
   );
 
-  await db
-    .from("events")
-    .update({ source_urls: Array.from(urls.values()), created_at: earliest })
-    .eq("id", canon.id);
-  const { error } = await db
-    .from("events")
-    .delete()
-    .in(
-      "id",
-      others.map((o) => o.id),
-    );
-  return error ? 0 : others.length;
+  await db.from("events").update(patch).eq("id", canon.id);
+
+  // 흡수 행: 삭제하지 않고 소프트 병합. FK 가 살아있어 유저 데이터가 보존된다.
+  const now = new Date().toISOString();
+  let merged = 0;
+  for (const o of others) {
+    const snapshot = byId.get(o.id);
+    if (!snapshot) continue;
+    await db.from("event_merge_logs").insert({
+      canonical_event_id: canon.id,
+      merged_event_id: o.id,
+      pass_name: passName,
+      snapshot,
+      transferred_fields: transferred,
+    });
+    const { error } = await db
+      .from("events")
+      .update({
+        merged_into_event_id: canon.id,
+        is_hidden: true,
+        hidden_at: now,
+        hidden_reason: `merged_into:${canon.id}`,
+      })
+      .eq("id", o.id);
+    if (!error) merged++;
+  }
+  return merged;
 }
 
 export async function autoMergeDuplicateEvents(): Promise<{
   clusters: number;
-  deleted: number;
+  merged: number;
 }> {
   const db = createServiceRoleClient();
   const all = await fetchAll(db);
   const consumed = new Set<string>();
   let clusters = 0;
-  let deleted = 0;
+  let merged = 0;
 
   // 패스 1: artist_id + 공연일
   const byArtistDay = new Map<string, Ev[]>();
@@ -124,10 +235,10 @@ export async function autoMergeDuplicateEvents(): Promise<{
   }
   for (const g of Array.from(byArtistDay.values())) {
     if (g.length < 2) continue;
-    const n = await mergeCluster(db, g);
+    const n = await mergeCluster(db, g, "pass1_artist_day");
     if (n > 0) {
       clusters++;
-      deleted += n;
+      merged += n;
       g.forEach((e) => consumed.add(e.id));
     }
   }
@@ -144,10 +255,10 @@ export async function autoMergeDuplicateEvents(): Promise<{
   }
   for (const g of Array.from(byTitleDay.values())) {
     if (g.length < 2) continue;
-    const n = await mergeCluster(db, g);
+    const n = await mergeCluster(db, g, "pass2_title_day");
     if (n > 0) {
       clusters++;
-      deleted += n;
+      merged += n;
       g.forEach((e) => consumed.add(e.id));
     }
   }
@@ -177,10 +288,10 @@ export async function autoMergeDuplicateEvents(): Promise<{
         if (normTitle(sorted[j]).startsWith(shortN)) cluster.push(sorted[j]);
       }
       if (cluster.length > 1) {
-        const n = await mergeCluster(db, cluster);
+        const n = await mergeCluster(db, cluster, "pass3_title_prefix");
         if (n > 0) {
           clusters++;
-          deleted += n;
+          merged += n;
           cluster.forEach((e) => consumed.add(e.id));
         }
       }
@@ -221,10 +332,10 @@ export async function autoMergeDuplicateEvents(): Promise<{
         s.forEach((x) => srcUnion.add(x));
       }
       if (cluster.length > 1) {
-        const n = await mergeCluster(db, cluster);
+        const n = await mergeCluster(db, cluster, "pass4_cross_source_2d");
         if (n > 0) {
           clusters++;
-          deleted += n;
+          merged += n;
           cluster.forEach((e) => consumed.add(e.id));
         }
       }
@@ -279,10 +390,10 @@ export async function autoMergeDuplicateEvents(): Promise<{
         if (dupP5(group[i], group[j])) cluster.push(group[j]);
       }
       if (cluster.length > 1) {
-        const n = await mergeCluster(db, cluster);
+        const n = await mergeCluster(db, cluster, "pass5_venue_or_contains");
         if (n > 0) {
           clusters++;
-          deleted += n;
+          merged += n;
           cluster.forEach((e) => consumed.add(e.id));
         }
       }
@@ -337,10 +448,14 @@ export async function autoMergeDuplicateEvents(): Promise<{
         s.forEach((x) => srcUnion.add(x));
       }
       if (cluster.length > 1) {
-        const n = await mergeCluster(db, cluster);
+        const n = await mergeCluster(
+          db,
+          cluster,
+          "pass6_venue_day_cross_source",
+        );
         if (n > 0) {
           clusters++;
-          deleted += n;
+          merged += n;
           cluster.forEach((e) => consumed.add(e.id));
         }
       }
@@ -372,10 +487,10 @@ export async function autoMergeDuplicateEvents(): Promise<{
   }
   for (const group of Array.from(byCore.values())) {
     if (group.length < 2) continue;
-    const n = await mergeCluster(db, group);
+    const n = await mergeCluster(db, group, "pass7_city_marker");
     if (n > 0) {
       clusters++;
-      deleted += n;
+      merged += n;
       group.forEach((e) => consumed.add(e.id));
     }
   }
@@ -422,13 +537,13 @@ export async function autoMergeDuplicateEvents(): Promise<{
   }
   for (const group of Array.from(byFest.values())) {
     if (group.length < 2) continue;
-    const n = await mergeCluster(db, group);
+    const n = await mergeCluster(db, group, "pass8_festival_sublisting");
     if (n > 0) {
       clusters++;
-      deleted += n;
+      merged += n;
       group.forEach((e) => consumed.add(e.id));
     }
   }
 
-  return { clusters, deleted };
+  return { clusters, merged };
 }

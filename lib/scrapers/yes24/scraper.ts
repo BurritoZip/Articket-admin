@@ -180,10 +180,13 @@ export async function runYes24Scraper(
 
   // Gemini 분류 — 콘서트/음악 페스티벌이 아닌 것 제외
   const verdicts = await classifyTitlesKeep(allItems.map((i) => i.title));
-  const keepItems = allItems.filter((_, i) => verdicts[i] === "keep");
-  stats.eventsSkipped += allItems.length - keepItems.length;
+  // drop 만 제외. unknown(분류 실패)은 숨긴 채 저장하고 재분류가 판정한다.
+  const kept = allItems
+    .map((it, i) => ({ it, held: verdicts[i] === "unknown" }))
+    .filter((_, i) => verdicts[i] !== "drop");
+  stats.eventsSkipped += allItems.length - kept.length;
 
-  for (const item of keepItems.slice(0, maxItems)) {
+  for (const { it: item, held } of kept.slice(0, maxItems)) {
     const rawInput = {
       sourceUrl:
         item.sourceUrl ?? `${AJAX_URL}?title=${encodeURIComponent(item.title)}`,
@@ -221,7 +224,9 @@ export async function runYes24Scraper(
         parsedJson: rawInput as Record<string, unknown>,
       });
       const normalized = normalizeEvent(parsed.data);
-      const result = await upsertEvent(normalized, jobId);
+      const result = await upsertEvent(normalized, jobId, {
+        holdForClassification: held,
+      });
       if (rawPayloadId && result.eventId)
         await markRawPayloadProcessed(rawPayloadId, result.eventId);
       result.action === "skipped"

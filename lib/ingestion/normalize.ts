@@ -148,6 +148,18 @@ export function inferStatus(
   return "on_sale";
 }
 
+/**
+ * 예매 URL 정규화 — events.booking_url 로 들어간다.
+ *
+ * 스크래퍼 7개 전부 ticketUrl 을 수집하고 RawScrapedEventSchema 에도 있었지만,
+ * NormalizedEvent 에 필드가 없어 여기서 통째로 버려지고 있었다(booking_url writer 부재).
+ * 그래서 2026-07-08 백필 이후 생성된 이벤트의 booking_url 채움률이 0% 였다.
+ */
+function normalizeTicketUrl(raw: string | null | undefined): string | null {
+  const u = raw?.trim();
+  return u && /^https?:\/\//i.test(u) ? u : null;
+}
+
 export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
   const displayTitle = cleanDisplayTitle(raw.title);
   const normalizedTitle = normalizeTitle(displayTitle);
@@ -167,6 +179,8 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
     endDate,
     ticketOpenDate,
     ticketProvider: raw.ticketProvider?.trim() ?? null,
+    // http(s) 인 것만 — 스크래퍼가 상대경로/빈문자를 주는 경우가 있다
+    ticketUrl: normalizeTicketUrl(raw.ticketUrl),
     sourceUrls: [raw.sourceUrl],
     sourceName: raw.sourceName,
     artists: raw.artists,
