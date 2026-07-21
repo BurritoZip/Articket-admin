@@ -20,9 +20,9 @@ const TRACKED_FIELDS = [
   "genre",
 ] as const;
 
-/** 기존 행 조회 컬럼 — TRACKED_FIELDS 비교에 필요한 값 전부 포함해야 한다 */
+/** 기존 행 조회 컬럼 — TRACKED_FIELDS 비교 + locked_fields(운영자 수동수정 보호)에 필요 */
 const EXISTING_COLS =
-  "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, booking_url, status, genre, source_urls, raw_payload";
+  "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, booking_url, status, genre, source_urls, raw_payload, locked_fields";
 
 export async function upsertEvent(
   event: NormalizedEvent,
@@ -197,11 +197,16 @@ export async function upsertEvent(
     });
   }
 
+  // 운영자가 수동 수정해 잠근 필드는 크롤이 덮지 않는다(감사 D S3)
+  const locked = new Set((ex.locked_fields as string[] | null) ?? []);
+
   for (const field of TRACKED_FIELDS) {
     const newVal = fieldMap[field];
     const oldVal = ex[field];
     // Never overwrite a sweeper-managed status with a scraper value
     if (field === "status" && oldVal === "ended") continue;
+    // 운영자 잠금 필드 보호
+    if (locked.has(field)) continue;
     if (
       newVal !== undefined &&
       newVal !== null &&

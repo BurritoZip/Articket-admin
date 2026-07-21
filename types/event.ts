@@ -52,6 +52,8 @@ export type EventRow = {
    * 하드삭제 대신 이 포인터로 남겨 유저 데이터(FK)와 복구 가능성을 지킨다.
    */
   merged_into_event_id: string | null;
+  /** 운영자가 수동 수정해 크롤 덮어쓰기에서 보호할 필드명 목록 (upsert 가 스킵) */
+  locked_fields: string[];
 };
 
 export type EventArtistRow = {
