@@ -54,6 +54,8 @@ export type EventRow = {
   merged_into_event_id: string | null;
   /** 운영자가 수동 수정해 크롤 덮어쓰기에서 보호할 필드명 목록 (upsert 가 스킵) */
   locked_fields: string[];
+  /** 필드별 출처 {필드명: {source, at}} — upsert 병합이 소스 신뢰도 비교에 사용 */
+  field_sources: Record<string, { source?: string; at?: string }>;
 };
 
 export type EventArtistRow = {

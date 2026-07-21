@@ -6,6 +6,7 @@ import {
   matchOrCreateVenue,
 } from "./artist-matcher";
 import { validateEvent } from "./schemas";
+import { trustOf } from "./source-trust";
 import type { NormalizedEvent, UpsertResult } from "@/types/ingestion";
 
 const TRACKED_FIELDS = [
@@ -20,9 +21,11 @@ const TRACKED_FIELDS = [
   "genre",
 ] as const;
 
-/** 기존 행 조회 컬럼 — TRACKED_FIELDS 비교 + locked_fields(운영자 수동수정 보호)에 필요 */
+/** 기존 행 조회 컬럼 — TRACKED_FIELDS 비교 + locked_fields + field_sources(provenance) */
 const EXISTING_COLS =
-  "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, booking_url, status, genre, source_urls, raw_payload, locked_fields";
+  "id, title, artist_id, poster_url, start_date, end_date, ticket_open_date, ticket_provider, booking_url, status, genre, source_urls, raw_payload, locked_fields, field_sources";
+
+type FieldSource = { source?: string; at?: string };
 
 export async function upsertEvent(
   event: NormalizedEvent,
@@ -112,7 +115,23 @@ export async function upsertEvent(
   }
 
   if (!existing) {
-    // INSERT
+    // INSERT — 채운 필드의 provenance 기록
+    const nowIso = new Date().toISOString();
+    const insertFieldMap: Record<string, unknown> = {
+      title: event.title,
+      poster_url: event.posterUrl,
+      start_date: event.startDate,
+      end_date: event.endDate,
+      ticket_open_date: event.ticketOpenDate,
+      ticket_provider: event.ticketProvider,
+      booking_url: event.ticketUrl,
+      genre: event.genre,
+    };
+    const fieldSources: Record<string, FieldSource> = {};
+    for (const [f, v] of Object.entries(insertFieldMap))
+      if (v !== null && v !== undefined && v !== "")
+        fieldSources[f] = { source: event.sourceName, at: nowIso };
+
     const { data: inserted, error } = await db
       .from("events")
       .insert({
@@ -131,7 +150,8 @@ export async function upsertEvent(
         dedup_key: event.dedupKey,
         source_urls: event.sourceUrls,
         source_name: event.sourceName,
-        crawled_at: new Date().toISOString(),
+        field_sources: fieldSources,
+        crawled_at: nowIso,
         updated_by_crawler: true,
         raw_payload: { description: event.description },
         has_timetable: false,
@@ -200,6 +220,13 @@ export async function upsertEvent(
   // 운영자가 수동 수정해 잠근 필드는 크롤이 덮지 않는다(감사 D S3)
   const locked = new Set((ex.locked_fields as string[] | null) ?? []);
 
+  // provenance — 필드별 출처 신뢰도로 병합(낮은 신뢰도 소스가 높은 값을 덮지 못하게)
+  const newTrust = trustOf(event.sourceName);
+  const fieldSources =
+    (ex.field_sources as Record<string, FieldSource> | null) ?? {};
+  const fsPatch: Record<string, FieldSource> = {};
+  const nowIso = new Date().toISOString();
+
   for (const field of TRACKED_FIELDS) {
     const newVal = fieldMap[field];
     const oldVal = ex[field];
@@ -212,7 +239,19 @@ export async function upsertEvent(
       newVal !== null &&
       String(newVal) !== String(oldVal ?? "")
     ) {
+      // 기존 값이 있으면 소스 신뢰도 비교 — 새 소스가 더 낮으면 덮지 않는다.
+      // (status 는 sweeper 관리라 provenance 비교에서 제외, 기존 로직대로 덮음)
+      if (
+        field !== "status" &&
+        oldVal !== null &&
+        oldVal !== "" &&
+        newTrust < trustOf(fieldSources[field]?.source)
+      ) {
+        continue;
+      }
       patch[field] = newVal;
+      if (field !== "status")
+        fsPatch[field] = { source: event.sourceName, at: nowIso };
       changes.push({
         field,
         oldValue: oldVal as string | null,
@@ -220,6 +259,9 @@ export async function upsertEvent(
       });
     }
   }
+
+  if (Object.keys(fsPatch).length > 0)
+    patch.field_sources = { ...fieldSources, ...fsPatch };
 
   // source_urls 병합
   const existingUrls = (ex.source_urls as string[] | null) ?? [];
