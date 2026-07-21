@@ -53,6 +53,8 @@ import {
   stepFailed,
   stepProgress,
   resetStalePipelineSteps,
+  startPipelineRun,
+  finishPipelineRun,
   type PipelineStep,
 } from "@/lib/db/pipeline-tracker";
 
@@ -92,6 +94,9 @@ export async function runFullPipeline(
   const log = opts.log ?? (() => {});
   const enrichBudgetMs = opts.enrichBudgetMs ?? 180_000;
   const summary = {} as PipelineSummary;
+  const failedSteps: string[] = [];
+  const startedAtMs = Date.now();
+  const runId = await startPipelineRun(opts.trigger).catch(() => null);
 
   const run = async <T>(step: PipelineStep, fn: () => Promise<T>) => {
     log(`▶ ${step} 시작`);
@@ -106,6 +111,7 @@ export async function runFullPipeline(
       const msg = e instanceof Error ? e.message : String(e);
       await stepFailed(step, msg).catch(() => null);
       summary[step] = { error: msg };
+      failedSteps.push(step);
       log(`✗ ${step} 실패: ${msg}`);
       return null;
     }
@@ -294,6 +300,10 @@ export async function runFullPipeline(
 
   // 8) purge — 오래된 종료 공연 소프트 숨김
   await run("purge", () => purgeOldEvents());
+
+  await finishPipelineRun(runId, { startedAtMs, summary, failedSteps }).catch(
+    () => null,
+  );
 
   return summary;
 }

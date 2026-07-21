@@ -23,3 +23,6 @@
 | `20260707140000_app_error_logs.sql` | iOS 앱 런타임 에러/크래시 로그 (anon insert) — Admin `/admin/error-logs` 조회 |
 | `20260707150000_timetable_unmatched_artists.sql` | 타임테이블 임포트 미매칭 아티스트 로그 (서버 전용) — Admin `/admin/timetable-unmatched` 조회 |
 | `20260707160000_event_lineup_tracking.sql` | events 에 `lineup_checked_at`, `lineup_count` — 페스티벌 라인업 수집 추적 |
+| `20260720000000_booking_intents.sql` | iOS "예매하셨나요?" CTA — booking_intents (외부 예매 의사 기록, RLS owner_only) |
+| `20260720130000_event_merge_safety.sql` | events.`merged_into_event_id` + `event_merge_logs`(병합 스냅샷) + `title_keep_verdicts`(제목 판정 캐시). 이벤트 병합 하드삭제 → 소프트 병합 |
+| `20260721000000_pipeline_runs.sql` | 파이프라인 실행 이력 — pipeline_runs (실행 1건당 1행 append, summary JSONB) |

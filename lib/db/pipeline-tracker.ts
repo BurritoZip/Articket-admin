@@ -51,6 +51,54 @@ export async function resetStalePipelineSteps(): Promise<number> {
   return data?.length ?? 0;
 }
 
+// ─── 실행 이력 (pipeline_runs) ──────────────────────────────────────────────
+// pipeline_step_status 가 단계당 1행을 덮어쓰는 것과 달리, 실행 1건당 1행을 append 한다.
+
+/** 실행 시작 — run id 반환. 실패해도 파이프라인은 진행(관측용이라 흐름 안 막음). */
+export async function startPipelineRun(
+  trigger: string,
+): Promise<string | null> {
+  const db = createServiceRoleClient();
+  const { data } = await db
+    .from("pipeline_runs")
+    .insert({ trigger, status: "running" })
+    .select("id")
+    .single();
+  return (data as { id: string } | null)?.id ?? null;
+}
+
+/** 실행 종료 — 단계별 결과·실패 단계·소요시간 기록. */
+export async function finishPipelineRun(
+  runId: string | null,
+  args: {
+    startedAtMs: number;
+    summary: Record<string, unknown>;
+    failedSteps: string[];
+    error?: string;
+  },
+): Promise<void> {
+  if (!runId) return;
+  const db = createServiceRoleClient();
+  // 하나라도 throw 했으면 failed, 아니면 done. (부분 실패는 summary 에 카운트로 남음)
+  const status = args.error
+    ? "failed"
+    : args.failedSteps.length > 0
+      ? "partial"
+      : "done";
+  await db
+    .from("pipeline_runs")
+    .update({
+      status,
+      finished_at: new Date().toISOString(),
+      duration_ms: Date.now() - args.startedAtMs,
+      step_count: Object.keys(args.summary).length,
+      failed_steps: args.failedSteps,
+      summary: args.summary,
+      error: args.error ?? null,
+    })
+    .eq("id", runId);
+}
+
 const STEP_LABEL: Record<PipelineStep, string> = {
   crawl: "크롤링",
   sweep: "상태 업데이트",
