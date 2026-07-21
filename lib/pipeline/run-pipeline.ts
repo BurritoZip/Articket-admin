@@ -151,11 +151,13 @@ export async function runFullPipeline(
           /* 감사 실패는 크롤 자체를 실패로 보지 않는다 */
         }
 
-        const totalErrors = result.errorCount + artistAudit.missingCount;
+        // 크롤 오류 = 스크래퍼 실제 실패(HTTP·파싱)만. 미연결 아티스트 수(artistAudit.missingCount)는
+        // enrich 대기 상태지 오류가 아니다 — 예전엔 이걸 더해 crawl 이 늘 partial 로 떴다.
+        // 미연결 현황은 meta.artistAudit 로 남긴다.
         const status =
           result.eventsUpserted === 0 && result.eventsFound === 0
             ? "failed"
-            : totalErrors > 0
+            : result.errorCount > 0
               ? "partial"
               : "success";
 
@@ -165,17 +167,18 @@ export async function runFullPipeline(
           eventsFound: result.eventsFound,
           eventsUpserted: result.eventsUpserted,
           eventsSkipped: result.eventsSkipped,
-          errorCount: totalErrors,
+          errorCount: result.errorCount,
           meta: { trigger: opts.trigger, artistAudit },
         });
 
         results[source.name] = {
           eventsFound: result.eventsFound,
           eventsUpserted: result.eventsUpserted,
-          errorCount: totalErrors,
+          errorCount: result.errorCount,
+          unlinkedPending: artistAudit.missingCount,
         };
         log(
-          `  ${source.name}: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}, 오류 ${totalErrors}`,
+          `  ${source.name}: 발견 ${result.eventsFound}, 저장 ${result.eventsUpserted}, 오류 ${result.errorCount}, 미연결 ${artistAudit.missingCount}`,
         );
       } catch (e) {
         await finishCrawlerJob(job.id, {
