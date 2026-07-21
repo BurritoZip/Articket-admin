@@ -258,17 +258,18 @@ export async function GET(request: NextRequest) {
 
     const artistMergeR = await track("merge", async () => {
       const nonMusic = await purgeNonMusicArtistEvents(); // 자기치유: 비음악 정리
-      const unlinked = await purgeUnlinkedEvents(); // 아티스트 연결 실패 제거
+      const unlinked = await purgeUnlinkedEvents(); // 아티스트 연결 실패 숨김
       const ai = await aiDedupArtists({ apply: true }); // 음역·오타
       const a = await autoMergeExactArtists();
       const ev = await autoMergeDuplicateEvents(); // 아티스트 병합 후 이벤트 흡수
       return {
         merged: a.merged,
         aiMerged: ai.merged,
-        eventDupsMerged: ev.deleted,
+        eventDupsMerged: ev.merged,
         nonMusicUnlinked: nonMusic.unlinked,
         nonMusicArtistsDeleted: nonMusic.artistsDeleted,
-        unlinkedDeleted: unlinked.deleted,
+        unlinkedHidden: unlinked.hidden,
+        unlinkedRestored: unlinked.unhidden,
       };
     });
     const artistMerge = {

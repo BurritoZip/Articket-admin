@@ -174,10 +174,13 @@ export async function runInterparkScraper(
   const verdicts = await classifyTitlesKeep(
     filtered.map((i) => (i.title ?? i.goodsName)!),
   );
-  const keepItems = filtered.filter((_, i) => verdicts[i] === "keep");
-  stats.eventsSkipped += filtered.length - keepItems.length;
+  // drop 만 제외. unknown(분류 실패)은 숨긴 채 저장하고 재분류가 판정한다.
+  const kept = filtered
+    .map((it, i) => ({ it, held: verdicts[i] === "unknown" }))
+    .filter((_, i) => verdicts[i] !== "drop");
+  stats.eventsSkipped += filtered.length - kept.length;
 
-  for (const item of keepItems.slice(0, maxItems)) {
+  for (const { it: item, held } of kept.slice(0, maxItems)) {
     const sourceUrl = `${GOODS_BASE}${item.goodsCode}`;
     const startDate = parseBannerDate(item.playStartDate);
     const endDate = parseBannerDate(item.playEndDate);
@@ -224,7 +227,9 @@ export async function runInterparkScraper(
         parsedJson: rawInput as Record<string, unknown>,
       });
       const normalized = normalizeEvent(parsed.data);
-      const result = await upsertEvent(normalized, jobId);
+      const result = await upsertEvent(normalized, jobId, {
+        holdForClassification: held,
+      });
       if (rawPayloadId && result.eventId)
         await markRawPayloadProcessed(rawPayloadId, result.eventId);
       result.action === "skipped"

@@ -45,8 +45,13 @@ export type EventRow = {
   is_hidden: boolean;
   /** 숨김 처리 시각 */
   hidden_at: string | null;
-  /** 숨김 사유 (예: "ended_180d") */
+  /** 숨김 사유 (예: "ended_180d", "merged_into:{id}", "unlinked_no_artist") */
   hidden_reason: string | null;
+  /**
+   * 자동 병합으로 흡수된 경우 canonical 이벤트 id. NOT NULL 이면 is_hidden=true.
+   * 하드삭제 대신 이 포인터로 남겨 유저 데이터(FK)와 복구 가능성을 지킨다.
+   */
+  merged_into_event_id: string | null;
 };
 
 export type EventArtistRow = {

@@ -262,7 +262,7 @@ async function main() {
   // merge — 자기치유(비음악 아티스트 이벤트 제거) + AI 아티스트 병합 + 이벤트 중복 병합
   await run("merge", async () => {
     const nonMusic = await purgeNonMusicArtistEvents(); // enrich가 검증한 비음악 정리
-    const unlinked = await purgeUnlinkedEvents(); // 아티스트 연결 실패 이벤트 제거
+    const unlinked = await purgeUnlinkedEvents(); // 아티스트 연결 실패 이벤트 숨김
     const aiArtists = await aiDedupArtists({ apply: true });
     const artists = await autoMergeExactArtists();
     const venues = await autoMergeExactVenues();
@@ -270,11 +270,12 @@ async function main() {
     return {
       nonMusicUnlinked: nonMusic.unlinked,
       nonMusicArtistsDeleted: nonMusic.artistsDeleted,
-      unlinkedDeleted: unlinked.deleted,
+      unlinkedHidden: unlinked.hidden,
+      unlinkedRestored: unlinked.unhidden,
       aiArtistsMerged: aiArtists.merged,
       artists: artists.merged,
       venues: venues.merged,
-      eventDupsMerged: events.deleted,
+      eventDupsMerged: events.merged,
     };
   });
 

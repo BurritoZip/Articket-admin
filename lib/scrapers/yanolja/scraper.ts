@@ -174,10 +174,14 @@ function parseTicketOpen(
   playStart: string | null,
 ): string | null {
   if (!raw) return null;
-  const m = raw.match(/(\d{1,2})[.\-](\d{1,2})(?:\([^)]*\))?\s*(\d{1,2}:\d{2})?/);
+  const m = raw.match(
+    /(\d{1,2})[.\-](\d{1,2})(?:\([^)]*\))?\s*(\d{1,2}:\d{2})?/,
+  );
   if (!m) return null;
   const [, mm, dd, time] = m;
-  const year = playStart ? Number(playStart.slice(0, 4)) : new Date().getFullYear();
+  const year = playStart
+    ? Number(playStart.slice(0, 4))
+    : new Date().getFullYear();
   const hhmm = time ?? "00:00";
   return `${year}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}T${hhmm}:00+09:00`;
 }
@@ -221,10 +225,13 @@ export async function runYanoljaScraper(
 
   // Gemini 분류 — 콘서트/음악 페스티벌이 아닌 것 제외
   const verdicts = await classifyTitlesKeep(allItems.map((i) => i.title));
-  const keepItems = allItems.filter((_, i) => verdicts[i] === "keep");
-  stats.eventsSkipped += allItems.length - keepItems.length;
+  // drop 만 제외. unknown(분류 실패)은 숨긴 채 저장하고 재분류가 판정한다.
+  const kept = allItems
+    .map((it, i) => ({ it, held: verdicts[i] === "unknown" }))
+    .filter((_, i) => verdicts[i] !== "drop");
+  stats.eventsSkipped += allItems.length - kept.length;
 
-  for (const item of keepItems.slice(0, maxItems)) {
+  for (const { it: item, held } of kept.slice(0, maxItems)) {
     let detail: DetailData = {
       playStart: null,
       playEnd: null,
@@ -287,7 +294,9 @@ export async function runYanoljaScraper(
         parsedJson: rawInput as Record<string, unknown>,
       });
       const normalized = normalizeEvent(parsed.data);
-      const result = await upsertEvent(normalized, jobId);
+      const result = await upsertEvent(normalized, jobId, {
+        holdForClassification: held,
+      });
       if (rawPayloadId && result.eventId)
         await markRawPayloadProcessed(rawPayloadId, result.eventId);
       result.action === "skipped"

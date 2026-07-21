@@ -45,6 +45,8 @@ export interface NormalizedEvent {
   endDate: string | null;
   ticketOpenDate: string | null;
   ticketProvider: string | null;
+  /** 예매 페이지 URL → events.booking_url (iOS "예매하기" 버튼) */
+  ticketUrl: string | null;
   sourceUrls: string[];
   sourceName: string;
   artists: string[];
@@ -66,7 +68,11 @@ export interface NormalizedEvent {
 export interface UpsertResult {
   action: "inserted" | "updated" | "skipped";
   eventId: string;
-  changes: Array<{ field: string; oldValue: string | null; newValue: string | null }>;
+  changes: Array<{
+    field: string;
+    oldValue: string | null;
+    newValue: string | null;
+  }>;
 }
 
 export interface IngestionPipelineResult {

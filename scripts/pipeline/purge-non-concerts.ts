@@ -13,7 +13,10 @@
 import { writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { createServiceRoleClient } from "../../lib/supabase/service-role";
-import { classifyTitlesKeep } from "../../lib/data-quality/classify-keep";
+import {
+  classifyTitlesKeep,
+  type KeepVerdict,
+} from "../../lib/data-quality/classify-keep";
 
 const DECISION_FILE = join(process.cwd(), ".cache", "purge-decisions.json");
 
@@ -21,7 +24,8 @@ interface Decision {
   id: string;
   title: string;
   genre: string | null;
-  verdict: "keep" | "drop";
+  // unknown(분류 실패)도 올 수 있다. apply 는 drop 만 삭제하므로 unknown=보존이 되어 안전.
+  verdict: KeepVerdict;
 }
 
 async function classifyAll(): Promise<Decision[]> {

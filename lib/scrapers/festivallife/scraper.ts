@@ -194,10 +194,13 @@ export async function runFestivallifeScraper(
 
   // Gemini 분류 — 상세 페이지 fetch 전에 미리 걸러서 불필요한 요청 줄임
   const verdicts = await classifyTitlesKeep(allItems.map((i) => i.title));
-  const keepItems = allItems.filter((_, i) => verdicts[i] === "keep");
-  stats.eventsSkipped += allItems.length - keepItems.length;
+  // drop 만 제외. unknown(분류 실패)은 숨긴 채 저장하고 재분류가 판정한다.
+  const kept = allItems
+    .map((it, i) => ({ it, held: verdicts[i] === "unknown" }))
+    .filter((_, i) => verdicts[i] !== "drop");
+  stats.eventsSkipped += allItems.length - kept.length;
 
-  for (const item of keepItems.slice(0, maxItems)) {
+  for (const { it: item, held } of kept.slice(0, maxItems)) {
     let detail: DetailData = {
       posterUrl: null,
       venueName: null,
@@ -251,7 +254,9 @@ export async function runFestivallifeScraper(
         parsedJson: rawInput as Record<string, unknown>,
       });
       const normalized = normalizeEvent(parsed.data);
-      const result = await upsertEvent(normalized, jobId);
+      const result = await upsertEvent(normalized, jobId, {
+        holdForClassification: held,
+      });
       if (rawPayloadId && result.eventId)
         await markRawPayloadProcessed(rawPayloadId, result.eventId);
       result.action === "skipped"
