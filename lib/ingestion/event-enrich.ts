@@ -46,8 +46,17 @@ async function attempt<T>(fn: () => Promise<T>): Promise<Attempt<T>> {
  * 재보강 주기 — 마지막 시도(*_checked_at / enrich_attempted_at)가 이만큼 지난 활성 공연은
  * 다시 보강 대상에 넣는다. 한번 시도하면 영원히 제외하던 걸 "주기적 최신화"로 바꾸는 워터마크.
  * 제목만으로 결정되는 장르·연령은 재보강해도 결과가 같아 1회성 유지(토큰 절약).
+ *
+ * 7→14 로 늘림(비용 절감). 이 값이 재보강 grounded 호출 빈도를 직접 결정한다. 아티스트 연결·
+ * 예매일이 2주 안에 크게 바뀌는 일은 드물어, 14일 주기로도 최신성이 충분하다.
  */
-export const REENRICH_STALE_DAYS = 7;
+export const REENRICH_STALE_DAYS = 14;
+
+/**
+ * 예매일 재보강 주기 — 예매 오픈/마감일은 한번 정해지면 거의 안 바뀌고, 미공개 공연은 몇 번을
+ * 물어도 계속 null 이다(그라운딩 낭비). 그래서 일반 재보강보다 훨씬 길게 둔다.
+ */
+const TICKET_REENRICH_STALE_DAYS = 30;
 
 /** "col IS NULL OR col < (now - staleDays)" PostgREST or-필터 문자열 */
 function staleGate(col: string, staleDays = REENRICH_STALE_DAYS): string {
@@ -79,7 +88,8 @@ export async function enrichEventTicketDates(
     .select("id,title,start_date,ticket_provider,venue_id,field_sources")
     .neq("status", "ended")
     .is("ticket_open_date", null)
-    .or(staleGate("ticket_checked_at")) // 미시도 or REENRICH_STALE_DAYS 지난 건 재그라운딩(예매일 갱신)
+    // 미시도 or TICKET_REENRICH_STALE_DAYS(30일) 지난 건만 재그라운딩 — 예매일은 잘 안 바뀌어 길게
+    .or(staleGate("ticket_checked_at", TICKET_REENRICH_STALE_DAYS))
     .order("start_date", { ascending: true })
     .limit(maxItems);
 

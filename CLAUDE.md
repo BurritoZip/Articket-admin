@@ -37,7 +37,7 @@ npx tsx scripts/pipeline/missing-audit.ts # 누락 데이터 감사 (다른 audi
 
 | 순서 | 단계 | 동작 | 주요 모듈 |
 |---|---|---|---|
-| 1 | `crawl` | enabled 크롤러 소스 스크래핑 (현재 stagepick) | `lib/scrapers/`, `lib/crawler/job-manager` |
+| 1 | `crawl` | enabled 크롤러 소스 스크래핑 (yes24·interpark·festivallife·yanolja) | `lib/scrapers/`, `lib/crawler/job-manager` |
 | 2 | `sweep` | end_date 기준 이벤트 상태 일괄 갱신 | `lib/db/status-sweeper` |
 | 3 | `fix` | 이상 필드 자동 수정 | `lib/data-quality/auto-fix` |
 | 4 | `delete` | 불량 데이터 삭제 | `lib/data-quality/auto-delete` |

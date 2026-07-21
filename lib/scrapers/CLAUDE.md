@@ -16,14 +16,21 @@
 ## 활성화 상태
 
 `crawler_sources` 테이블 `enabled` 컬럼으로 제어.
-- `yes24`, `melon`, `interpark`, `festivallife`, `yanolja`, `gemini-search` → **enabled=true**
-- `stagepick` → **enabled=false**
+- **enabled=true**: `yes24`, `interpark`, `festivallife`, `yanolja`
+- **enabled=false**: `stagepick`, `gemini-search`, `melon`
+  - `gemini-search` — LLM 발견 소스. ROI 최악(포스터·예매링크 없는 결손 레코드 양산, 고유 기여 대부분이 예매처에 이미 있는 대형 공연의 표기만 다른 중복)이라 비활성. 대형 공연은 예매처 크롤이, 인디·무료 공연은 festivallife 가 커버.
+  - `stagepick`, `melon` — 비활성 상태.
 
-## 파이프라인 진입점 (3곳 모두 동일 SCRAPER_MAP)
+각 소스 `trust_score`(신뢰도)로 upsert 병합 우선순위 결정: 예매처 70 / stagepick 60 / festivallife 55 / gemini-search 20. enrich(Gemini 보강)는 90.
 
+## 파이프라인 진입점
+
+8단계 로직은 `lib/pipeline/run-pipeline.ts` `runFullPipeline` 한 곳에만 있다. 세 진입점은 얇은 래퍼:
 - `scripts/pipeline/run.ts` — 로컬 cron (npx tsx)
 - `app/api/admin/pipeline/run/route.ts` — 수동 트리거 UI
 - `app/api/admin/crawler/cron/route.ts` — curl/launchd cron
+
+`runFullPipeline` 이 enabled=true 소스만 크롤한다(SCRAPER_MAP 에 있어도 DB 에서 off 면 스킵).
 
 ## 스크래퍼 추가 방법
 
