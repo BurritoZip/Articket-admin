@@ -31,7 +31,7 @@ async function main() {
     evs.push(...(data as { artist_id: string }[]));
     if (data.length < 1000) break;
   }
-  const ids = [...new Set(evs.map((e) => e.artist_id))];
+  const ids = Array.from(new Set(evs.map((e) => e.artist_id)));
 
   // 그중 avatar 없는 것
   const targets: { id: string; name: string }[] = [];
@@ -63,7 +63,8 @@ async function main() {
       /* 개별 실패는 넘어감 */
     }
     done++;
-    if (done % 25 === 0) console.log(`  ${done}/${targets.length} (avatar 채움 ${filled})`);
+    if (done % 25 === 0)
+      console.log(`  ${done}/${targets.length} (avatar 채움 ${filled})`);
   }
   console.log(`\n완료: ${done}명 처리, avatar 채움 ${filled}명`);
 }
