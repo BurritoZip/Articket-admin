@@ -13,11 +13,11 @@
  * canonical: 채워진 필드가 많은(정보량 큰) 행 우선 → 더 서술적인 제목. created_at 은 클러스터
  * 최소값으로 보존(최초 등록일 유지), source_urls 는 합집합.
  *
- * 흡수된 행은 **삭제하지 않는다**. 삭제하면 (a) 그 행에만 있던 poster_url·ticket_* 등이 소실되고
- * (b) events 의 CASCADE 로 user_bookings·user_interested_events·concert_reviews 같은 유저
- * 데이터까지 함께 사라진다. 대신 결손 필드를 canonical 로 이관한 뒤 `merged_into_event_id` +
- * `is_hidden` 으로 소프트 병합하고, 병합 직전 스냅샷을 `event_merge_logs` 에 남긴다.
- * 앱은 is_hidden=false 만 조회하므로 노출 결과는 하드삭제와 같고, 오병합은 되돌릴 수 있다.
+ * 병합 방식(artist 병합과 동일): 결손 필드를 canonical 로 이관하고 흡수 행의 유저 데이터(예매/
+ * 관심/리뷰)를 canonical 로 재지정한 뒤, 병합 직전 스냅샷을 `event_merge_logs` 에 남기고 흡수 행을
+ * **하드삭제**한다. 이렇게 하면 DB 에 중복이 남지 않는다. 예전엔 소프트 병합(is_hidden)으로 남겼으나,
+ * 그러면 iOS 목록 쿼리가 is_hidden 을 안 걸 경우 중복이 그대로 노출됐다 — 근본적으로 삭제가 맞다.
+ * (유저 데이터 CASCADE 손실은 FK 재지정으로 방지 — reassignEventUserData.)
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
@@ -188,8 +188,9 @@ async function mergeCluster(
 
   await db.from("events").update(patch).eq("id", canon.id);
 
-  // 흡수 행: 삭제하지 않고 소프트 병합. FK 가 살아있어 유저 데이터가 보존된다.
-  const now = new Date().toISOString();
+  // 흡수 행: 유저 FK 를 canonical 로 이관한 뒤 하드삭제.
+  // 스냅샷(event_merge_logs)으로 복구 가능하고, crawl 링크(event_artists/venues/timetable)는
+  // canonical 이 자체 보유하므로 CASCADE 삭제해도 무방(venue_id 는 위에서 이관됨).
   let merged = 0;
   for (const o of others) {
     const snapshot = byId.get(o.id);
@@ -201,18 +202,52 @@ async function mergeCluster(
       snapshot,
       transferred_fields: transferred,
     });
-    const { error } = await db
-      .from("events")
-      .update({
-        merged_into_event_id: canon.id,
-        is_hidden: true,
-        hidden_at: now,
-        hidden_reason: `merged_into:${canon.id}`,
-      })
-      .eq("id", o.id);
+    await reassignEventUserData(db, o.id, canon.id);
+    const { error } = await db.from("events").delete().eq("id", o.id);
     if (!error) merged++;
   }
   return merged;
+}
+
+/**
+ * 흡수 이벤트(fromId)의 유저 데이터를 canonical(toId)로 이관.
+ * (user_id, event_id) unique 테이블은 충돌 시 흡수 행 것을 폐기(canonical 것 유지).
+ * crawl 링크(event_artists/venues/timetable/change_logs)는 재지정하지 않는다 —
+ * canonical 이 자체 보유하고, 흡수 행 삭제 시 CASCADE 로 정리된다.
+ */
+export async function reassignEventUserData(
+  db: ReturnType<typeof createServiceRoleClient>,
+  fromId: string,
+  toId: string,
+): Promise<void> {
+  // PK(user_id, event_id) — 충돌 처리 후 재지정
+  for (const table of ["user_interested_events", "booking_intents"]) {
+    const { data: keep } = await db
+      .from(table)
+      .select("user_id")
+      .eq("event_id", toId);
+    const keepUsers = new Set(
+      ((keep as { user_id: string }[]) ?? []).map((r) => r.user_id),
+    );
+    const { data: from } = await db
+      .from(table)
+      .select("user_id")
+      .eq("event_id", fromId);
+    for (const r of (from as { user_id: string }[]) ?? []) {
+      if (keepUsers.has(r.user_id)) {
+        await db
+          .from(table)
+          .delete()
+          .eq("event_id", fromId)
+          .eq("user_id", r.user_id);
+      }
+    }
+    await db.from(table).update({ event_id: toId }).eq("event_id", fromId);
+  }
+  // unique 없음 — 재지정만
+  for (const table of ["user_bookings", "concert_reviews"]) {
+    await db.from(table).update({ event_id: toId }).eq("event_id", fromId);
+  }
 }
 
 export async function autoMergeDuplicateEvents(): Promise<{
