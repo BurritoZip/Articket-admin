@@ -46,8 +46,17 @@ const COUNTRY_MAP: Record<string, string> = {
   캐나다: "CA",
 };
 
-/** 멜론 검색에서 첫 번째 아티스트 ID 추출 */
-async function searchMelonArtistId(query: string): Promise<string | null> {
+/**
+ * 멜론 검색에서 첫 아티스트의 id + avatar 추출.
+ *
+ * 2026-07 사이트 개편으로 검색 결과가 `<a href="artistId=...">` 링크에서
+ * `<a href="javascript:...melon.link.goArtistDetail('261143');" class="thumb">` 로 바뀌어
+ * 옛 셀렉터가 artistId 를 못 뽑아 avatar 보강이 전멸했다(성공률 0). 새 구조 대응 + 검색 결과
+ * 카드에 이미 있는 아티스트 이미지(artistcrop)를 그 자리에서 가져온다(상세 페이지 불필요).
+ */
+async function searchMelonArtist(
+  query: string,
+): Promise<{ artistId: string; avatarUrl?: string } | null> {
   try {
     await rateLimit();
     const url = `${MELON_BASE}/search/artist/index.htm?q=${encodeURIComponent(query)}`;
@@ -60,22 +69,32 @@ async function searchMelonArtistId(query: string): Promise<string | null> {
     const html = await res.text();
     const $ = cheerio.load(html);
 
-    // 첫 번째 아티스트 카드의 링크에서 artistId 추출
-    const href = $("a[href*='artistId=']").first().attr("href") ?? "";
-    const m = href.match(/artistId=(\d+)/);
+    // 새 구조: goArtistDetail('id') 우선, 구 구조: artistId= 폴백
+    const first = $("a[href*='goArtistDetail'], a[href*='artistId=']").first();
+    const href = first.attr("href") ?? "";
+    const m =
+      href.match(/goArtistDetail\('(\d+)'\)/) ?? href.match(/artistId=(\d+)/);
     if (!m) return null;
+    const artistId = m[1];
 
-    // 검색 결과 이름이 쿼리와 유사한지 확인 (false positive 방지)
-    const resultName = $("a[href*='artistId=']").first().text().trim();
+    // 이름 유사도 확인 (false positive 방지) — title="아이유 - 페이지 이동"
+    const resultName = (first.attr("title") ?? first.text())
+      .replace(/\s*-\s*페이지.*$/, "")
+      .trim();
     if (resultName) {
       const qNorm = query.toLowerCase().replace(/\s/g, "");
       const rNorm = resultName.toLowerCase().replace(/\s/g, "");
-      if (!qNorm.includes(rNorm) && !rNorm.includes(qNorm)) {
-        return null; // 이름이 너무 다르면 건너뜀
-      }
+      if (!qNorm.includes(rNorm) && !rNorm.includes(qNorm)) return null;
     }
 
-    return m[1];
+    // 검색 카드 이미지 = avatar (artistcrop, default 제외)
+    let avatarUrl: string | undefined;
+    const img = first.find("img").attr("src");
+    if (img && /artistcrop/i.test(img) && !/default/i.test(img)) {
+      avatarUrl = img.startsWith("//") ? `https:${img}` : img;
+    }
+
+    return { artistId, avatarUrl };
   } catch {
     return null;
   }
@@ -148,9 +167,21 @@ export async function fetchMelonProfile(
   query: string,
 ): Promise<MelonProfile | null> {
   try {
-    const artistId = await searchMelonArtistId(query);
-    if (!artistId) return null;
-    return await fetchMelonDetail(artistId);
+    const found = await searchMelonArtist(query);
+    if (!found) return null;
+    const detail = await fetchMelonDetail(found.artistId);
+    // 검색 카드에서 얻은 avatar 를 상세가 못 채웠으면 사용(상세 페이지 셀렉터도 개편 취약)
+    if (found.avatarUrl) {
+      if (detail) {
+        if (!detail.avatar_url) detail.avatar_url = found.avatarUrl;
+        return detail;
+      }
+      return {
+        avatar_url: found.avatarUrl,
+        source_url: `${MELON_BASE}/artist/detail.htm?artistId=${found.artistId}`,
+      } as MelonProfile;
+    }
+    return detail;
   } catch {
     return null;
   }
