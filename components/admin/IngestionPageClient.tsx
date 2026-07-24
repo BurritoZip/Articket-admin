@@ -371,13 +371,16 @@ function AIQueueTab() {
         processed?: number;
         succeeded?: number;
         failed?: number;
+        error?: string;
       };
+      // res.ok 검사 — 500 응답도 성공 토스트로 뜨던 오도 수정
+      if (!res.ok) throw new Error(json.error ?? "워커 실행 실패");
       toast.success(
-        `워커 실행 완료: ${json.processed ?? 0}건 처리, 성공 ${json.succeeded ?? 0}건`,
+        `아티스트 보강 큐 ${json.processed ?? 0}건 처리 (성공 ${json.succeeded ?? 0}, 실패 ${json.failed ?? 0})`,
       );
       void queryClient.invalidateQueries({ queryKey: ["ai-queue"] });
-    } catch {
-      toast.error("워커 실행 실패");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "워커 실행 실패");
     } finally {
       setRunningWorker(false);
     }
@@ -411,7 +414,7 @@ function AIQueueTab() {
               onClick={() => void runWorker()}
             >
               <Play className="mr-1 h-3 w-3" />
-              워커 실행 (20건)
+              아티스트 큐 처리 (20건)
             </Button>
             {byStatus["done"] > 0 && (
               <Button

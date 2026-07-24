@@ -12,7 +12,6 @@ import {
   Loader2,
   Database,
   CalendarClock,
-  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/Button";
@@ -77,31 +76,6 @@ function formatDuration(start: string | null, end: string | null): string {
   const secs = Math.round((e.getTime() - s.getTime()) / 1000);
   if (secs < 60) return `${secs}s`;
   return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-}
-
-/** 다음 정각 실행 시간을 KST로 표시 */
-function NextCronTime() {
-  const [nextRun, setNextRun] = React.useState("");
-
-  React.useEffect(() => {
-    const calc = () => {
-      const now = new Date();
-      const next = new Date(now);
-      next.setHours(now.getHours() + 1, 0, 0, 0);
-      setNextRun(
-        next.toLocaleTimeString("ko-KR", {
-          hour: "2-digit",
-          minute: "2-digit",
-          timeZone: "Asia/Seoul",
-        }) + " KST",
-      );
-    };
-    calc();
-    const id = setInterval(calc, 60_000);
-    return () => clearInterval(id);
-  }, []);
-
-  return <span className="font-medium text-text-primary">{nextRun}</span>;
 }
 
 export function CrawlerPageClient() {
@@ -196,20 +170,9 @@ export function CrawlerPageClient() {
                   자동 크롤링 스케줄
                 </p>
                 <p className="text-caption text-text-tertiary">
-                  매시간 정각 (Vercel Cron) · 다음 실행:{" "}
-                  <NextCronTime />
+                  로컬 launchd cron · 하루 2회 06:00 / 18:00 KST
                 </p>
               </div>
-              <Button variant="outline" size="sm" className="shrink-0 gap-1.5" asChild>
-                <a
-                  href="https://vercel.com/dashboard"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  설정 보기
-                </a>
-              </Button>
             </CardContent>
           </Card>
 
@@ -221,7 +184,10 @@ export function CrawlerPageClient() {
             <CardContent className="flex flex-wrap items-end gap-4">
               <div className="space-y-1">
                 <p className="text-label text-text-secondary">소스</p>
-                <Select value={selectedSource} onValueChange={setSelectedSource}>
+                <Select
+                  value={selectedSource}
+                  onValueChange={setSelectedSource}
+                >
                   <SelectTrigger className="w-40">
                     <SelectValue />
                   </SelectTrigger>
