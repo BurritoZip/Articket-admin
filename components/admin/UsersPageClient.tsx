@@ -147,9 +147,13 @@ export function UsersPageClient() {
   const [search, setSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
-  const [rowSelection, setRowSelection] = React.useState<Record<string, boolean>>({});
+  const [rowSelection, setRowSelection] = React.useState<
+    Record<string, boolean>
+  >({});
   const [page, setPage] = React.useState(1);
-  const [pageSize, setPageSize] = React.useState<AdminPageSize>(DEFAULT_ADMIN_PAGE_SIZE);
+  const [pageSize, setPageSize] = React.useState<AdminPageSize>(
+    DEFAULT_ADMIN_PAGE_SIZE,
+  );
 
   const [sheetUser, setSheetUser] = React.useState<AdminUserRow | null>(null);
   const [editName, setEditName] = React.useState("");
@@ -163,7 +167,9 @@ export function UsersPageClient() {
   });
   const [addLoading, setAddLoading] = React.useState(false);
 
-  const [deleteTarget, setDeleteTarget] = React.useState<AdminUserRow | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<AdminUserRow | null>(
+    null,
+  );
   const [deleteConfirm, setDeleteConfirm] = React.useState("");
 
   React.useEffect(() => {
@@ -194,7 +200,9 @@ export function UsersPageClient() {
       const res = await fetch(`/api/admin/users?${q}`, { cache: "no-store" });
       if (!res.ok) {
         const err = (await res.json()) as { detail?: string; error?: string };
-        throw new Error(err.detail ?? err.error ?? "사용자 목록을 불러오지 못했습니다.");
+        throw new Error(
+          err.detail ?? err.error ?? "사용자 목록을 불러오지 못했습니다.",
+        );
       }
       const json = (await res.json()) as {
         rows: AdminUserRow[];
@@ -231,7 +239,10 @@ export function UsersPageClient() {
     staleTime: 60_000,
   });
 
-  const pageUserRows = React.useMemo(() => usersPayload?.rows ?? [], [usersPayload?.rows]);
+  const pageUserRows = React.useMemo(
+    () => usersPayload?.rows ?? [],
+    [usersPayload?.rows],
+  );
   const listTotal = usersPayload?.total ?? 0;
   const listTotalPages = usersPayload?.totalPages ?? 1;
 
@@ -314,7 +325,9 @@ export function UsersPageClient() {
         accessorKey: "role",
         header: "역할",
         cell: ({ row }) => (
-          <Badge variant={row.original.role === "admin" ? "default" : "outline"}>
+          <Badge
+            variant={row.original.role === "admin" ? "default" : "outline"}
+          >
             {row.original.role === "admin" ? "관리자" : "사용자"}
           </Badge>
         ),
@@ -373,9 +386,6 @@ export function UsersPageClient() {
               <DropdownMenuContent align="end">
                 <DropdownMenuLabel>행 작업</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => setSheetUser(row.original)}>
-                  프로필 편집
-                </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
                     setDeleteTarget(row.original);
@@ -428,14 +438,19 @@ export function UsersPageClient() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { label: "전체 사용자", value: metrics.total },
-          { label: "승인 대기", value: metrics.pending, warn: metrics.pending > 0 },
+          {
+            label: "승인 대기",
+            value: metrics.pending,
+            warn: metrics.pending > 0,
+          },
           { label: "정지 계정", value: metrics.suspended },
           { label: "최근 7일 활동", value: metrics.recent },
         ].map((card) => (
           <Card
             key={card.label}
             className={cn(
-              card.warn && "border-warning/40 bg-warning-weak/30 dark:bg-warning-weak/10",
+              card.warn &&
+                "border-warning/40 bg-warning-weak/30 dark:bg-warning-weak/10",
             )}
           >
             <CardHeader className="pb-2">
@@ -497,7 +512,8 @@ export function UsersPageClient() {
           </div>
           {statusFilter !== "all" && (
             <p className="text-caption text-text-tertiary">
-              상태 필터는 현재 페이지 데이터 기준입니다. 전체 검색은 이름 검색창을 이용하세요.
+              상태 필터는 현재 페이지 데이터 기준입니다. 전체 검색은 이름
+              검색창을 이용하세요.
             </p>
           )}
 
@@ -555,7 +571,10 @@ export function UsersPageClient() {
                                 ) : header.column.getIsSorted() === "asc" ? (
                                   <ArrowUp className="h-4 w-4" aria-hidden />
                                 ) : (
-                                  <ArrowUpDown className="h-4 w-4 opacity-50" aria-hidden />
+                                  <ArrowUpDown
+                                    className="h-4 w-4 opacity-50"
+                                    aria-hidden
+                                  />
                                 )
                               ) : null}
                             </button>
@@ -573,7 +592,10 @@ export function UsersPageClient() {
                     >
                       {row.getVisibleCells().map((cell) => (
                         <TableCell key={cell.id}>
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                          {flexRender(
+                            cell.column.columnDef.cell,
+                            cell.getContext(),
+                          )}
                         </TableCell>
                       ))}
                     </TableRow>
@@ -612,7 +634,9 @@ export function UsersPageClient() {
               <Input
                 id="add-name"
                 value={addForm.displayName}
-                onChange={(e) => setAddForm((s) => ({ ...s, displayName: e.target.value }))}
+                onChange={(e) =>
+                  setAddForm((s) => ({ ...s, displayName: e.target.value }))
+                }
               />
             </div>
             <div className="space-y-2">
@@ -623,7 +647,9 @@ export function UsersPageClient() {
                 id="add-email"
                 type="email"
                 value={addForm.email}
-                onChange={(e) => setAddForm((s) => ({ ...s, email: e.target.value }))}
+                onChange={(e) =>
+                  setAddForm((s) => ({ ...s, email: e.target.value }))
+                }
               />
             </div>
             <div className="space-y-2">
@@ -645,7 +671,11 @@ export function UsersPageClient() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" type="button" onClick={() => setAddOpen(false)}>
+            <Button
+              variant="outline"
+              type="button"
+              onClick={() => setAddOpen(false)}
+            >
               취소
             </Button>
             <Button
@@ -680,7 +710,9 @@ export function UsersPageClient() {
                 } catch (error) {
                   toast.error("초대 실패", {
                     description:
-                      error instanceof Error ? error.message : "알 수 없는 오류",
+                      error instanceof Error
+                        ? error.message
+                        : "알 수 없는 오류",
                   });
                 } finally {
                   setAddLoading(false);
@@ -733,15 +765,20 @@ export function UsersPageClient() {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="rounded-md border border-border p-3 text-center">
                     <p className="text-caption text-text-tertiary">예매</p>
-                    <p className="mt-1 text-xl font-bold">{sheetUser.bookingCount}</p>
+                    <p className="mt-1 text-xl font-bold">
+                      {sheetUser.bookingCount}
+                    </p>
                   </div>
                   <div className="rounded-md border border-border p-3 text-center">
                     <p className="text-caption text-text-tertiary">팔로잉</p>
-                    <p className="mt-1 text-xl font-bold">{sheetUser.followingCount}</p>
+                    <p className="mt-1 text-xl font-bold">
+                      {sheetUser.followingCount}
+                    </p>
                   </div>
                 </div>
                 <div className="rounded-md border border-border bg-surface-muted/30 p-3 text-body-sm text-text-secondary">
-                  예매·팔로우 상세 내역은 예매 관리 페이지에서 해당 사용자로 검색하세요.
+                  예매·팔로우 상세 내역은 예매 관리 페이지에서 해당 사용자로
+                  검색하세요.
                 </div>
               </div>
               <SheetFooter className="gap-2 border-t border-border pt-4 sm:justify-between">
@@ -767,16 +804,21 @@ export function UsersPageClient() {
                     type="button"
                     onClick={async () => {
                       try {
-                        const res = await fetch(`/api/admin/users/${sheetUser.id}`, {
-                          method: "PATCH",
-                          headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({
-                            displayName: editName,
-                            role: editAdmin ? "admin" : "user",
-                          }),
-                        });
+                        const res = await fetch(
+                          `/api/admin/users/${sheetUser.id}`,
+                          {
+                            method: "PATCH",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              displayName: editName,
+                              role: editAdmin ? "admin" : "user",
+                            }),
+                          },
+                        );
                         if (!res.ok) {
-                          const errorJson = (await res.json()) as { detail?: string };
+                          const errorJson = (await res.json()) as {
+                            detail?: string;
+                          };
                           throw new Error(errorJson.detail ?? "저장 실패");
                         }
                         invalidateUserQueries();
@@ -785,7 +827,9 @@ export function UsersPageClient() {
                       } catch (error) {
                         toast.error("저장 실패", {
                           description:
-                            error instanceof Error ? error.message : "알 수 없는 오류",
+                            error instanceof Error
+                              ? error.message
+                              : "알 수 없는 오류",
                         });
                       }
                     }}
@@ -827,9 +871,12 @@ export function UsersPageClient() {
               onClick={async () => {
                 if (!deleteTarget) return;
                 try {
-                  const res = await fetch(`/api/admin/users/${deleteTarget.id}`, {
-                    method: "DELETE",
-                  });
+                  const res = await fetch(
+                    `/api/admin/users/${deleteTarget.id}`,
+                    {
+                      method: "DELETE",
+                    },
+                  );
                   if (!res.ok) {
                     const errorJson = (await res.json()) as { detail?: string };
                     throw new Error(errorJson.detail ?? "삭제 실패");
@@ -841,7 +888,9 @@ export function UsersPageClient() {
                 } catch (error) {
                   toast.error("삭제 실패", {
                     description:
-                      error instanceof Error ? error.message : "알 수 없는 오류",
+                      error instanceof Error
+                        ? error.message
+                        : "알 수 없는 오류",
                   });
                 }
               }}

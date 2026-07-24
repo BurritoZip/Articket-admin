@@ -523,33 +523,55 @@ export function EventsPageClient() {
     }
   };
 
-  const patchStatus = async (id: string, status: string) => {
-    const res = await fetch(`/api/admin/events/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+  /** 낙관적 업데이트 — 활성 admin-events 캐시들의 해당 행을 즉시 patch. 롤백용 이전 스냅샷 반환 */
+  const optimisticPatchRow = (id: string, patch: Partial<EventRow>) => {
+    const prev = queryClient.getQueriesData<EventQueryResponse>({
+      queryKey: ["admin-events"],
     });
-    if (!res.ok) {
-      toast.error("상태 변경 실패");
-      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
-      return;
-    }
-    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    queryClient.setQueriesData<EventQueryResponse>(
+      { queryKey: ["admin-events"] },
+      (old) =>
+        old
+          ? {
+              ...old,
+              rows: old.rows.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+            }
+          : old,
+    );
+    return prev;
   };
 
-  const patchBanner = async (id: string, is_banner: boolean) => {
-    const res = await fetch(`/api/admin/events/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ is_banner }),
-    });
-    if (!res.ok) {
-      toast.error("배너 설정 실패");
+  const patchEventField = async (
+    id: string,
+    patch: Partial<EventRow>,
+    errorLabel: string,
+  ) => {
+    const prev = optimisticPatchRow(id, patch); // 즉시 반영
+    try {
+      const res = await fetch(`/api/admin/events/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!res.ok) throw new Error(errorLabel);
+    } catch {
+      // 실패 → 스냅샷 롤백
+      for (const [key, data] of prev) queryClient.setQueryData(key, data);
+      toast.error(errorLabel);
+    } finally {
       void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
-      return;
     }
-    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
+
+  const patchStatus = (id: string, status: string) =>
+    patchEventField(
+      id,
+      { status: status as EventRow["status"] },
+      "상태 변경 실패",
+    );
+
+  const patchBanner = (id: string, is_banner: boolean) =>
+    patchEventField(id, { is_banner }, "배너 설정 실패");
 
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => {
@@ -680,8 +702,14 @@ export function EventsPageClient() {
             statsLoading={statsLoading}
             missingFilter={missingFilter}
             duplicatesFilter={duplicatesFilter}
-            onMissingFilter={setMissingFilter}
-            onDuplicatesFilter={setDuplicatesFilter}
+            onMissingFilter={(v) => {
+              setMissingFilter(v);
+              setNoArtistLinkFilter(false); // 완성도/미연결 필터 상호배타
+            }}
+            onDuplicatesFilter={(v) => {
+              setDuplicatesFilter(v);
+              setNoArtistLinkFilter(false);
+            }}
           />
           {/* 아티스트 미연결 빠른 필터 */}
           <div className="flex items-center gap-2">
