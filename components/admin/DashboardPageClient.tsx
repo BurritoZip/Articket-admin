@@ -666,10 +666,11 @@ export function DashboardPageClient() {
                 {data.queue.pending > 0 && (
                   <Button
                     size="sm"
+                    variant="outline"
                     className="mt-2 w-full"
                     onClick={() => router.push("/admin/ingestion")}
                   >
-                    큐 전체 처리하기
+                    인제스천에서 큐 관리 →
                   </Button>
                 )}
               </>
