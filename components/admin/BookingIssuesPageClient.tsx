@@ -1,8 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import {
   Select,
@@ -45,7 +47,84 @@ interface IssuesResponse {
   meta: PaginationMeta;
 }
 
+/**
+ * 예매 URL 연결 액션 — 이슈의 공연에 booking_url 을 직접 채워 해결한다.
+ * events/[id] PATCH 가 booking_url 을 locked_fields 에 넣어 이후 크롤이 덮지 않는다.
+ * resolved 는 booking_url 유무로 자동 판정되므로 별도 상태 토글이 불필요.
+ */
+function ResolveAction({
+  eventId,
+  resolved,
+  bookingUrl,
+  onResolved,
+}: {
+  eventId: string | null;
+  resolved: boolean;
+  bookingUrl: string | null;
+  onResolved: () => void;
+}) {
+  const [url, setUrl] = React.useState("");
+  const [saving, setSaving] = React.useState(false);
+
+  if (resolved) {
+    return bookingUrl ? (
+      <a
+        href={bookingUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-caption text-primary underline underline-offset-2"
+      >
+        예매 링크 ↗
+      </a>
+    ) : (
+      <span className="text-caption text-text-tertiary">-</span>
+    );
+  }
+
+  if (!eventId) {
+    return <span className="text-caption text-text-tertiary">공연 없음</span>;
+  }
+
+  const save = async () => {
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      toast.error("http(s):// 로 시작하는 URL 을 입력하세요");
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/admin/events/${eventId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ booking_url: trimmed }),
+      });
+      if (!res.ok) throw new Error("연결 실패");
+      toast.success("예매 링크를 연결했어요");
+      onResolved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "연결 실패");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <Input
+        placeholder="예매 URL"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        className="h-8 w-[200px] text-caption"
+      />
+      <Button size="sm" onClick={() => void save()} loading={saving}>
+        연결
+      </Button>
+    </div>
+  );
+}
+
 export function BookingIssuesPageClient() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = React.useState("");
   const [debouncedSearch, setDebouncedSearch] = React.useState("");
   const [filter, setFilter] = React.useState("all");
@@ -131,6 +210,7 @@ export function BookingIssuesPageClient() {
                 <TableHead>플랫폼</TableHead>
                 <TableHead>상태</TableHead>
                 <TableHead>발생 시각</TableHead>
+                <TableHead>예매 링크 연결</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -151,6 +231,18 @@ export function BookingIssuesPageClient() {
                     </Badge>
                   </TableCell>
                   <TableCell>{formatKst(row.created_at)}</TableCell>
+                  <TableCell>
+                    <ResolveAction
+                      eventId={row.event_id}
+                      resolved={row.resolved}
+                      bookingUrl={row.events?.booking_url ?? null}
+                      onResolved={() =>
+                        void queryClient.invalidateQueries({
+                          queryKey: ["admin-booking-issues"],
+                        })
+                      }
+                    />
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
