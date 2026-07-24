@@ -203,32 +203,23 @@ export function ReviewsPageClient() {
                         {new Date(row.created_at).toLocaleDateString("ko-KR")}
                       </TableCell>
                       <TableCell>
-                        <div
-                          className="flex items-center gap-1"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="text-text-tertiary hover:text-text-primary"
-                            onClick={() =>
-                              setExpandedId((prev) =>
-                                prev === row.id ? null : row.id,
-                              )
-                            }
-                            title="내용 펼치기"
-                          >
+                        <div className="flex items-center gap-1">
+                          {/* 펼침 상태 표시(어포던스). 토글은 행 클릭이 담당 */}
+                          <span className="text-text-tertiary" aria-hidden>
                             {expandedId === row.id ? (
                               <ChevronUp className="h-4 w-4" />
                             ) : (
                               <ChevronDown className="h-4 w-4" />
                             )}
-                          </Button>
+                          </span>
                           <Button
                             size="icon"
                             variant="ghost"
                             className="text-destructive hover:bg-destructive/10"
-                            onClick={() => setDeleteId(row.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeleteId(row.id);
+                            }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
