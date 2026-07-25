@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import { validateArtist } from "@/lib/ingestion/schemas";
+import { validateArtist, emptyToNull } from "@/lib/ingestion/schemas";
 import type { ArtistRow } from "@/types/artist";
 import {
   buildPaginationMeta,
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
   const supabase = createServiceRoleClient();
   const { error } = await supabase.from("artists").insert({
     name: validation.data.name.trim(),
-    avatar_url: body.avatar_url ?? null,
+    avatar_url: emptyToNull(body.avatar_url ?? null),
     followers_count: body.followers_count ?? 0,
     upcoming_event_count: body.upcoming_event_count ?? 0,
     occupation: body.occupation ?? null,
