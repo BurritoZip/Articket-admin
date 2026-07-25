@@ -168,7 +168,19 @@ export async function geminiEnrichArtists(opts?: {
       }
       if (Object.keys(patch).length > 1) filled++;
     }
-    await db.from("artists").update(patch).eq("id", a.id);
+    let upd = await db.from("artists").update(patch).eq("id", a.id);
+    // 자동 rename 이 기존 아티스트 이름과 충돌(UNIQUE) → 사실상 중복.
+    // 이름만 건드리지 말고 나머지 보강은 저장한다(alias 는 아래서 채워지므로 merge 단계가 중복을 잡음).
+    // 이렇게 안 하면 update 전체가 거부돼 gemini_checked_at 도 안 찍혀 같은 건이 영원히 재선택된다.
+    if (
+      upd.error &&
+      (upd.error as { code?: string }).code === "23505" &&
+      "name" in patch
+    ) {
+      delete patch.name;
+      delete patch.normalized_name;
+      upd = await db.from("artists").update(patch).eq("id", a.id);
+    }
 
     // 알려진 모든 표기를 alias 로 — 자동교체 시 옛 이름 포함(매칭 무손실)
     if (info) {

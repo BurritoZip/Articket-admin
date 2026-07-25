@@ -191,6 +191,27 @@ export async function matchOrCreateArtist(
     .single();
 
   if (error) {
+    // 구조화된 displayName 이 기존 아티스트 이름과 충돌(UNIQUE) → 사실상 같은 아티스트.
+    // 드롭하지 말고 기존 아티스트에 연결하고 원본 표기를 alias 로 남긴다.
+    if ((error as { code?: string }).code === "23505") {
+      const { data: existing } = await db
+        .from("artists")
+        .select("id")
+        .ilike("name", structured.displayName)
+        .limit(1)
+        .maybeSingle();
+      if (existing) {
+        const existingId = (existing as { id: string }).id;
+        await addArtistAliases(
+          db,
+          existingId,
+          [rawName, ...structured.aliases],
+          "ingest",
+        );
+        await fillMissingArtistProfile(existingId, profile);
+        return existingId;
+      }
+    }
     console.warn(
       `[ArtistMatcher] Failed to create artist "${rawName}": ${error.message}`,
     );
