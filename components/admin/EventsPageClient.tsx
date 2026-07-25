@@ -573,6 +573,23 @@ export function EventsPageClient() {
   const patchBanner = (id: string, is_banner: boolean) =>
     patchEventField(id, { is_banner }, "배너 설정 실패");
 
+  // 상태 고정(pin) 해제 → sweeper 가 다시 날짜 기준으로 관리.
+  const unpinStatus = async (id: string) => {
+    try {
+      const res = await fetch(`/api/admin/events/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unlock_status: true }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success("상태 고정 해제 — 이제 sweeper 가 관리");
+    } catch {
+      toast.error("고정 해제 실패");
+    } finally {
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    }
+  };
+
   const toggleSelect = (id: string) =>
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -865,20 +882,32 @@ export function EventsPageClient() {
                         <TicketOpenBadge date={row.ticket_open_date} />
                       </TableCell>
                       <TableCell>
-                        <Select
-                          value={row.status}
-                          onValueChange={(v) => void patchStatus(row.id, v)}
-                        >
-                          <SelectTrigger className="h-7 w-24 text-xs">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="upcoming">예정</SelectItem>
-                            <SelectItem value="on_sale">예매중</SelectItem>
-                            <SelectItem value="ongoing">진행중</SelectItem>
-                            <SelectItem value="ended">종료</SelectItem>
-                          </SelectContent>
-                        </Select>
+                        <div className="flex items-center gap-1">
+                          <Select
+                            value={row.status}
+                            onValueChange={(v) => void patchStatus(row.id, v)}
+                          >
+                            <SelectTrigger className="h-7 w-24 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="upcoming">예정</SelectItem>
+                              <SelectItem value="on_sale">예매중</SelectItem>
+                              <SelectItem value="ongoing">진행중</SelectItem>
+                              <SelectItem value="ended">종료</SelectItem>
+                            </SelectContent>
+                          </Select>
+                          {(row.locked_fields ?? []).includes("status") && (
+                            <button
+                              type="button"
+                              title="상태 고정됨 — 자동 sweeper 가 되돌리지 않음. 클릭해 해제"
+                              className="text-xs"
+                              onClick={() => void unpinStatus(row.id)}
+                            >
+                              🔒
+                            </button>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell>
                         <MissingFieldChips

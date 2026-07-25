@@ -5,6 +5,7 @@ import { requireAdmin } from "@/lib/supabase/require-admin";
 import { normalizeTitle, normalizeVenueName } from "@/lib/ingestion/normalize";
 import { generateDedupKey } from "@/lib/ingestion/dedup";
 import { URL_RE } from "@/lib/data-quality/patterns";
+import { recomputeUpcomingCount } from "@/lib/db/recompute-upcoming";
 import type { EventRow, OptionItem } from "@/types/event";
 import {
   buildPaginationMeta,
@@ -60,7 +61,7 @@ export async function GET(request: Request) {
   let eventsQuery = supabase
     .from("events")
     .select(
-      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, booking_url, notice_text, is_banner, has_timetable",
+      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, booking_url, notice_text, is_banner, has_timetable, locked_fields",
       { count: "exact" },
     )
     .order(sortBy, { ascending: sortDir });
@@ -292,18 +293,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // Fetch artist names for event_artists
-  const { data: artistRows } = await supabase
-    .from("artists")
-    .select("id, name")
-    .in("id", artistIds);
-  const artistNameMap = new Map(
-    ((artistRows as { id: string; name: string }[] | null) ?? []).map((a) => [
-      a.id,
-      a.name,
-    ]),
-  );
-
   const { data: insertedEvent, error } = await supabase
     .from("events")
     .insert({
@@ -337,40 +326,14 @@ export async function POST(request: Request) {
 
   const newEventId = (insertedEvent as { id: string }).id;
 
-  // Insert event_artists
-  await supabase.from("event_artists").insert(
-    artistIds.map((aid, i) => ({
-      event_id: newEventId,
-      artist_id: aid,
-      artist_name: artistNameMap.get(aid) ?? "",
-      role: "lineup",
-      display_order: i,
-    })),
-  );
-
-  // Insert event_venues
-  await supabase.from("event_venues").insert(
-    venueIds.map((vid, i) => ({
-      event_id: newEventId,
-      venue_id: vid,
-      display_order: i,
-    })),
-  );
+  // 연결도 트랜잭션 RPC 로 — 부분 실패 시 소실 방지.
+  await supabase.rpc("replace_event_links", {
+    p_event_id: newEventId,
+    p_artist_ids: artistIds,
+    p_venue_ids: venueIds,
+  });
 
   await Promise.all(artistIds.map(recomputeUpcomingCount));
 
   return NextResponse.json({ ok: true });
-}
-
-async function recomputeUpcomingCount(artistId: string) {
-  const supabase = createServiceRoleClient();
-  const { count } = await supabase
-    .from("events")
-    .select("id", { count: "exact", head: true })
-    .eq("artist_id", artistId)
-    .not("status", "in", "(ended,cancelled)");
-  await supabase
-    .from("artists")
-    .update({ upcoming_event_count: count ?? 0 })
-    .eq("id", artistId);
 }

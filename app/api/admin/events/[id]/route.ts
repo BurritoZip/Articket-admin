@@ -4,20 +4,41 @@ import { requireAdmin } from "@/lib/supabase/require-admin";
 import { normalizeTitle, normalizeVenueName } from "@/lib/ingestion/normalize";
 import { generateDedupKey } from "@/lib/ingestion/dedup";
 import { URL_RE } from "@/lib/data-quality/patterns";
+import { emptyToNull } from "@/lib/ingestion/schemas";
+import { recomputeUpcomingCount } from "@/lib/db/recompute-upcoming";
 import type { EventRow } from "@/types/event";
 
-async function recomputeUpcomingCount(artistId: string) {
-  const supabase = createServiceRoleClient();
-  const { count } = await supabase
-    .from("events")
-    .select("id", { count: "exact", head: true })
-    .eq("artist_id", artistId)
-    .not("status", "in", "(ended,cancelled)");
-  await supabase
-    .from("artists")
-    .update({ upcoming_event_count: count ?? 0 })
-    .eq("id", artistId);
-}
+// 편집 폼이 만질 수 있는 이벤트 컬럼(화이트리스트). normalized_title·dedup_key·locked_fields·
+// artist_id·venue_id 는 라우트가 파생/관리하므로 폼에서 받지 않는다.
+const EVENT_EDITABLE = [
+  "title",
+  "poster_url",
+  "start_date",
+  "end_date",
+  "ticket_open_date",
+  "ticket_close_date",
+  "ticket_provider",
+  "booking_url",
+  "status",
+  "genre",
+  "duration",
+  "age_restriction",
+  "notice_text",
+  "is_banner",
+] as const;
+
+// 운영자가 수정하면 잠그는 필드 — 다음 크롤 upsert 가 덮지 못하게. status 는 pin(sweeper 되돌림 방지).
+const LOCKABLE = [
+  "title",
+  "poster_url",
+  "start_date",
+  "end_date",
+  "ticket_open_date",
+  "ticket_provider",
+  "booking_url",
+  "genre",
+  "status",
+] as const;
 
 export async function PATCH(
   request: Request,
@@ -29,7 +50,27 @@ export async function PATCH(
   const body = (await request.json()) as Partial<EventRow> & {
     artist_ids?: string[];
     venue_ids?: string[];
+    unlock_status?: boolean;
   };
+
+  const supabaseSR = createServiceRoleClient();
+
+  // status pin 해제 — locked_fields 에서 'status' 제거 → sweeper 가 다시 관리.
+  if (body.unlock_status) {
+    const { data: cur } = await supabaseSR
+      .from("events")
+      .select("locked_fields")
+      .eq("id", params.id)
+      .single();
+    const nf = (
+      (cur as { locked_fields: string[] | null } | null)?.locked_fields ?? []
+    ).filter((f) => f !== "status");
+    await supabaseSR
+      .from("events")
+      .update({ locked_fields: nf })
+      .eq("id", params.id);
+    return NextResponse.json({ ok: true, unlocked: true });
+  }
 
   if (body.title !== undefined) {
     const t = body.title?.trim() ?? "";
@@ -65,23 +106,18 @@ export async function PATCH(
     );
   }
 
-  const { artist_ids, venue_ids, ...eventFields } = body;
-  const payload: Partial<EventRow> = { ...eventFields };
+  const { artist_ids, venue_ids } = body;
+
+  // 화이트리스트: 편집 가능한 컬럼만, 빈 문자열은 null 로 좌표. 폼이 실어보내는
+  // normalized_title·dedup_key·has_timetable 등 내부 컬럼 통째 왕복을 차단한다.
+  const payload: Record<string, unknown> = {};
+  for (const key of EVENT_EDITABLE) {
+    if (key in body)
+      payload[key] = emptyToNull((body as Record<string, unknown>)[key]);
+  }
   if (typeof payload.title === "string") payload.title = payload.title.trim();
 
-  // 운영자가 수정한 크롤 관리 필드는 잠근다 → 다음 크롤 upsert 가 덮어쓰지 못한다.
-  // (status 는 sweeper 가 관리하므로 잠금 대상에서 제외)
-  const LOCKABLE = [
-    "title",
-    "poster_url",
-    "start_date",
-    "end_date",
-    "ticket_open_date",
-    "ticket_provider",
-    "booking_url",
-    "genre",
-  ] as const;
-  const editedLockable = LOCKABLE.filter((f) => f in eventFields);
+  const editedLockable = LOCKABLE.filter((f) => f in payload);
 
   // If artist_ids provided, set artist_id to first
   if (artist_ids && artist_ids.length > 0) {
@@ -92,7 +128,7 @@ export async function PATCH(
     payload.venue_id = venue_ids[0];
   }
 
-  const supabase = createServiceRoleClient();
+  const supabase = supabaseSR;
 
   // Recompute dedup fields if relevant columns changed
   const needsDedup = payload.title || payload.venue_id || payload.start_date;
@@ -107,7 +143,8 @@ export async function PATCH(
       venue_id: string | null;
       start_date: string;
     } | null;
-    const resolvedTitle = payload.title ?? cur?.title ?? "";
+    const resolvedTitle =
+      (payload.title as string | undefined) ?? cur?.title ?? "";
     const resolvedVenueId =
       (payload.venue_id as string | undefined) ?? cur?.venue_id ?? null;
     const resolvedStart = (
@@ -177,41 +214,17 @@ export async function PATCH(
     );
   }
 
-  // Update event_artists if artist_ids provided
-  if (artist_ids !== undefined) {
-    await supabase.from("event_artists").delete().eq("event_id", params.id);
-    if (artist_ids.length > 0) {
-      const { data: artistRows } = await supabase
-        .from("artists")
-        .select("id, name")
-        .in("id", artist_ids);
-      const artistNameMap = new Map(
-        ((artistRows as { id: string; name: string }[] | null) ?? []).map(
-          (a) => [a.id, a.name],
-        ),
-      );
-      await supabase.from("event_artists").insert(
-        artist_ids.map((aid, i) => ({
-          event_id: params.id,
-          artist_id: aid,
-          artist_name: artistNameMap.get(aid) ?? "",
-          role: "lineup",
-          display_order: i,
-        })),
-      );
-    }
-  }
-
-  // Update event_venues if venue_ids provided
-  if (venue_ids !== undefined) {
-    await supabase.from("event_venues").delete().eq("event_id", params.id);
-    if (venue_ids.length > 0) {
-      await supabase.from("event_venues").insert(
-        venue_ids.map((vid, i) => ({
-          event_id: params.id,
-          venue_id: vid,
-          display_order: i,
-        })),
+  // 아티스트/공연장 연결을 트랜잭션 RPC 로 교체 — 중간 실패 시 연결 소실 방지.
+  if (artist_ids !== undefined || venue_ids !== undefined) {
+    const { error: linkErr } = await supabase.rpc("replace_event_links", {
+      p_event_id: params.id,
+      p_artist_ids: artist_ids ?? null,
+      p_venue_ids: venue_ids ?? null,
+    });
+    if (linkErr) {
+      return NextResponse.json(
+        { error: "links_failed", detail: linkErr.message },
+        { status: 400 },
       );
     }
   }
