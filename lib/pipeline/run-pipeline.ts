@@ -86,43 +86,32 @@ export interface PipelineOptions {
 
 export type PipelineSummary = Record<PipelineStep, unknown>;
 
-/** 8단계 전체 실행. 각 단계는 실패해도 다음 단계로 진행하고 결과를 summary 에 담는다. */
-export async function runFullPipeline(
-  opts: PipelineOptions,
-): Promise<PipelineSummary> {
-  const db = createServiceRoleClient();
-  const log = opts.log ?? (() => {});
-  const enrichBudgetMs = opts.enrichBudgetMs ?? 180_000;
-  const summary = {} as PipelineSummary;
-  const failedSteps: string[] = [];
-  const startedAtMs = Date.now();
-  const runId = await startPipelineRun(opts.trigger).catch(() => null);
+/** 파이프라인 실행 순서 (SINGLE SOURCE OF TRUTH). */
+export const STEP_SEQUENCE: PipelineStep[] = [
+  "crawl",
+  "sweep",
+  "fix",
+  "delete",
+  "enrich",
+  "merge",
+  "score",
+  "purge",
+];
 
-  const run = async <T>(step: PipelineStep, fn: () => Promise<T>) => {
-    log(`▶ ${step} 시작`);
-    await stepStart(step).catch(() => null);
-    try {
-      const result = await fn();
-      await stepDone(step, result as Record<string, unknown>).catch(() => null);
-      summary[step] = result;
-      log(`✓ ${step} 완료`);
-      return result;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      await stepFailed(step, msg).catch(() => null);
-      summary[step] = { error: msg };
-      failedSteps.push(step);
-      log(`✗ ${step} 실패: ${msg}`);
-      return null;
-    }
-  };
+interface StepCtx {
+  db: ReturnType<typeof createServiceRoleClient>;
+  log: (msg: string) => void;
+  enrichBudgetMs: number;
+  trigger: PipelineOptions["trigger"];
+}
 
-  // 지난 실행이 죽어 남긴 좀비 running 단계 정리(새 실행이 뒤엉키지 않게) → 자가치유
-  const staleReset = await resetStalePipelineSteps().catch(() => 0);
-  if (staleReset > 0) log(`⚠ 좀비 running 단계 ${staleReset}개 정리 후 시작`);
-
+/**
+ * 단계별 본문 (단일 정의). runFullPipeline 은 STEP_SEQUENCE 순서로 이걸 호출하고,
+ * runSingleStep 은 하나만 호출한다 — 로직 복붙 없음.
+ */
+const STEP_FNS: Record<PipelineStep, (ctx: StepCtx) => Promise<unknown>> = {
   // 1) crawl — enabled sources
-  await run("crawl", async () => {
+  crawl: async ({ db, log, trigger }) => {
     const { data: sources } = await db
       .from("crawler_sources")
       .select("name")
@@ -168,7 +157,7 @@ export async function runFullPipeline(
           eventsUpserted: result.eventsUpserted,
           eventsSkipped: result.eventsSkipped,
           errorCount: result.errorCount,
-          meta: { trigger: opts.trigger, artistAudit },
+          meta: { trigger, artistAudit },
         });
 
         results[source.name] = {
@@ -195,16 +184,16 @@ export async function runFullPipeline(
       }
     }
     return results;
-  });
+  },
 
   // 2) sweep — end_date 기준 상태 갱신
-  await run("sweep", () => sweepEventStatuses());
+  sweep: () => sweepEventStatuses(),
 
   // 3) fix — 이상 필드 자동 수정(전량 재검사)
-  await run("fix", () => runDataQualityAutoFix({ scope: "all" }));
+  fix: () => runDataQualityAutoFix({ scope: "all" }),
 
   // 4) delete — 불량행 삭제 + 비콘서트 정리
-  await run("delete", async () => {
+  delete: async () => {
     const dq = await runDataQualityAutoDelete({});
     const nc = await autoPurgeNonConcerts({ maxItems: 300 });
     return {
@@ -214,10 +203,10 @@ export async function runFullPipeline(
       heldRestored: nc.restored,
       heldStill: nc.stillHeld,
     };
-  });
+  },
 
   // 5) enrich — 직접 보강(큐 우회) + 아티스트 큐 드레인
-  await run("enrich", async () => {
+  enrich: async ({ db, enrichBudgetMs }) => {
     await runArtistBackfill({ limit: 500, dryRun: false });
 
     const [artistR, genreR, ageR, venueR, ticketR, descR, posterR, artistQ] =
@@ -276,10 +265,10 @@ export async function runFullPipeline(
       artist_failed: failed,
       processed,
     };
-  });
+  },
 
   // 6) merge — 자기치유 + 아티스트/공연장/이벤트 병합
-  await run("merge", async () => {
+  merge: async () => {
     const nonMusic = await purgeNonMusicArtistEvents();
     const unlinked = await purgeUnlinkedEvents();
     const aiArtists = await aiDedupArtists({ apply: true });
@@ -296,17 +285,82 @@ export async function runFullPipeline(
       venues: venues.merged,
       eventDupsMerged: events.merged,
     };
-  });
+  },
 
   // 7) score
-  await run("score", () => runScoring());
+  score: () => runScoring(),
 
   // 8) purge — 오래된 종료 공연 소프트 숨김
-  await run("purge", () => purgeOldEvents());
+  purge: () => purgeOldEvents(),
+};
+
+function buildCtx(opts: PipelineOptions): StepCtx {
+  return {
+    db: createServiceRoleClient(),
+    log: opts.log ?? (() => {}),
+    enrichBudgetMs: opts.enrichBudgetMs ?? 180_000,
+    trigger: opts.trigger,
+  };
+}
+
+/** 8단계 전체 실행. 각 단계는 실패해도 다음 단계로 진행하고 결과를 summary 에 담는다. */
+export async function runFullPipeline(
+  opts: PipelineOptions,
+): Promise<PipelineSummary> {
+  const ctx = buildCtx(opts);
+  const { log } = ctx;
+  const summary = {} as PipelineSummary;
+  const failedSteps: string[] = [];
+  const startedAtMs = Date.now();
+  const runId = await startPipelineRun(opts.trigger).catch(() => null);
+
+  const run = async (step: PipelineStep) => {
+    log(`▶ ${step} 시작`);
+    await stepStart(step).catch(() => null);
+    try {
+      const result = await STEP_FNS[step](ctx);
+      await stepDone(step, result as Record<string, unknown>).catch(() => null);
+      summary[step] = result;
+      log(`✓ ${step} 완료`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await stepFailed(step, msg).catch(() => null);
+      summary[step] = { error: msg };
+      failedSteps.push(step);
+      log(`✗ ${step} 실패: ${msg}`);
+    }
+  };
+
+  // 지난 실행이 죽어 남긴 좀비 running 단계 정리(새 실행이 뒤엉키지 않게) → 자가치유
+  const staleReset = await resetStalePipelineSteps().catch(() => 0);
+  if (staleReset > 0) log(`⚠ 좀비 running 단계 ${staleReset}개 정리 후 시작`);
+
+  for (const step of STEP_SEQUENCE) await run(step);
 
   await finishPipelineRun(runId, { startedAtMs, summary, failedSteps }).catch(
     () => null,
   );
 
   return summary;
+}
+
+/**
+ * 단일 단계만 재실행 (운영자 triage 루프용). pipeline_step_status 만 갱신하고
+ * pipeline_runs 이력은 남기지 않는다(전체 실행이 아니므로). 실패 시 throw.
+ */
+export async function runSingleStep(
+  step: PipelineStep,
+  opts: PipelineOptions,
+): Promise<unknown> {
+  const ctx = buildCtx(opts);
+  await stepStart(step).catch(() => null);
+  try {
+    const result = await STEP_FNS[step](ctx);
+    await stepDone(step, result as Record<string, unknown>).catch(() => null);
+    return result;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await stepFailed(step, msg).catch(() => null);
+    throw new Error(msg);
+  }
 }
