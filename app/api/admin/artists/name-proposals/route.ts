@@ -81,6 +81,16 @@ export async function POST(request: Request) {
     })
     .eq("id", id);
   if (error) {
+    // 제안명이 기존 아티스트와 겹침(UNIQUE) → 중복이므로 이름 교체가 아니라 병합 대상.
+    if ((error as { code?: string }).code === "23505") {
+      return NextResponse.json(
+        {
+          error: "name_conflict",
+          detail: `"${newName}" 이름의 아티스트가 이미 있습니다 — 중복 검토(병합)에서 처리하세요.`,
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json(
       { error: "approve_failed", detail: error.message },
       { status: 400 },
