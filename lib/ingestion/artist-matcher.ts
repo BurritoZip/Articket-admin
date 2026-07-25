@@ -1,6 +1,9 @@
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { validateArtist, validateVenue } from "./schemas";
 import { normalizeVenueName } from "./normalize";
+import { normalizeKey } from "@/lib/artists/normalize";
+import { structureArtistName } from "@/lib/artists/canonical";
+import { addArtistAliases } from "@/lib/artists/aliases";
 
 export type ArtistProfileInput = {
   name: string;
@@ -13,8 +16,10 @@ export type ArtistProfileInput = {
   metadata?: Record<string, unknown>;
 };
 
+// 강한 정규화 키로 통일 — 예전 toLowerCase+trim 은 한/영 혼종·구두점을 구분 못 해
+// dedup 함수(normalizeKey)와 어긋났다. 이제 write·match·dedup 이 같은 키를 쓴다.
 function normalizeArtistName(name: string): string {
-  return name.toLowerCase().replace(/\s+/g, " ").trim();
+  return normalizeKey(name);
 }
 
 function buildArtistPatch(
@@ -158,9 +163,11 @@ export async function matchOrCreateArtist(
     return id;
   }
 
-  // 4. 매칭 실패 시 새 아티스트 생성 — 검증 먼저
+  // 4. 매칭 실패 시 새 아티스트 생성 — "틀"에 맞춰 구조화 후 저장.
+  //    통짜 `한글(영문)` 분리 + 강한 정규화 키. enrich(Gemini)가 언어·공식명 최종 교정.
+  const structured = structureArtistName(rawName);
   const artistValidation = validateArtist({
-    name: rawName.trim(),
+    name: structured.displayName,
     avatar_url: profile?.avatarUrl,
   });
   if (!artistValidation.ok) {
@@ -173,11 +180,12 @@ export async function matchOrCreateArtist(
   const { data: created, error } = await db
     .from("artists")
     .insert({
-      name: rawName.trim(),
-      normalized_name: normalized,
+      name: structured.displayName,
+      normalized_name: structured.normalizedKey,
+      name_en: structured.nameEn,
       upcoming_event_count: 0,
       followers_count: 0,
-      ...buildArtistPatch(profile ?? { name: rawName.trim() }),
+      ...buildArtistPatch(profile ?? { name: structured.displayName }),
     })
     .select("id")
     .single();
@@ -188,7 +196,10 @@ export async function matchOrCreateArtist(
     );
     return null;
   }
-  return (created as { id: string }).id;
+  const id = (created as { id: string }).id;
+  // 원본 raw + 분리된 표기들을 alias 로 보존 → 이후 크롤에서 어떤 표기로 와도 매칭
+  await addArtistAliases(db, id, [rawName, ...structured.aliases], "ingest");
+  return id;
 }
 
 export async function matchOrCreateArtists(

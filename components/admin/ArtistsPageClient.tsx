@@ -66,6 +66,7 @@ import {
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { ARTIST_FIELDS } from "@/lib/completeness";
 import { ArtistDedupSheet } from "@/components/admin/ArtistDedupSheet";
+import { ArtistNameProposalSheet } from "@/components/admin/ArtistNameProposalSheet";
 import {
   SortableTableHead,
   type SortDir,
@@ -125,6 +126,16 @@ export function ArtistsPageClient() {
     React.useState(false);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const [dedupOpen, setDedupOpen] = React.useState(false);
+  const [proposalOpen, setProposalOpen] = React.useState(false);
+  const { data: proposalData } = useQuery({
+    queryKey: ["artist-name-proposals"],
+    queryFn: async () => {
+      const res = await fetch("/api/admin/artists/name-proposals");
+      if (!res.ok) throw new Error("제안 조회 실패");
+      return res.json() as Promise<{ rows: unknown[]; total: number }>;
+    },
+  });
+  const proposalCount = proposalData?.total ?? 0;
   const [enriching, setEnriching] = React.useState(false);
   const [sortBy, setSortBy] = React.useState("name");
   const [sortDir, setSortDir] = React.useState<SortDir>("asc");
@@ -470,14 +481,28 @@ export function ArtistsPageClient() {
               🔀 중복 검토
               {(
                 stats as
-                  | (CompletenessStats & { duplicateCount?: number })
-                  | null
+                  (CompletenessStats & { duplicateCount?: number }) | null
               )?.duplicateCount ? (
                 <Badge variant="danger" className="ml-1.5 h-4 px-1 text-[10px]">
                   {
                     (stats as CompletenessStats & { duplicateCount: number })
                       .duplicateCount
                   }
+                </Badge>
+              ) : null}
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setProposalOpen(true)}
+            >
+              ✏️ 이름 제안
+              {proposalCount ? (
+                <Badge
+                  variant="warning"
+                  className="ml-1.5 h-4 px-1 text-[10px]"
+                >
+                  {proposalCount}
                 </Badge>
               ) : null}
             </Button>
@@ -1074,6 +1099,11 @@ export function ArtistsPageClient() {
 
       {/* 중복 검토 Sheet */}
       <ArtistDedupSheet open={dedupOpen} onClose={() => setDedupOpen(false)} />
+      {/* 이름 교정 제안 Sheet */}
+      <ArtistNameProposalSheet
+        open={proposalOpen}
+        onClose={() => setProposalOpen(false)}
+      />
     </div>
   );
 }
