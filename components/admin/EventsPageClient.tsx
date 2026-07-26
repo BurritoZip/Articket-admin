@@ -66,6 +66,7 @@ import {
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { EVENT_FIELDS } from "@/lib/completeness";
 import { TimetableSheet } from "@/components/admin/TimetableSheet";
+import { EventDedupSheet } from "@/components/admin/EventDedupSheet";
 import {
   SortableTableHead,
   type SortDir,
@@ -130,6 +131,7 @@ export function EventsPageClient() {
   const [timetableOpen, setTimetableOpen] = React.useState(false);
   const [submitting, setSubmitting] = React.useState(false);
   const [fromUrlOpen, setFromUrlOpen] = React.useState(false);
+  const [dedupOpen, setDedupOpen] = React.useState(false);
   const [fromUrlInput, setFromUrlInput] = React.useState("");
   const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
@@ -697,6 +699,9 @@ export function EventsPageClient() {
         description="공연 정보를 조회/생성/수정/삭제하고 상태를 관리합니다."
         action={
           <div className="flex gap-2">
+            <Button variant="secondary" onClick={() => setDedupOpen(true)}>
+              🔀 중복 검토
+            </Button>
             <Button
               variant="secondary"
               onClick={() => {
@@ -1264,6 +1269,8 @@ export function EventsPageClient() {
         onOpenChange={setTimetableOpen}
         onHasTimetableChange={() => void handleTimetableAdded()}
       />
+
+      <EventDedupSheet open={dedupOpen} onClose={() => setDedupOpen(false)} />
 
       {/* 단건 삭제 확인 */}
       <AlertDialog
