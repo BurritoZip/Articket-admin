@@ -24,6 +24,8 @@ export async function GET(request: Request) {
   const missingField = url.searchParams.get("missing")?.trim();
   const duplicatesOnly = url.searchParams.get("duplicates") === "true";
   const noArtistLink = url.searchParams.get("no_artist_link") === "true";
+  // hidden=true → 숨긴 이벤트만(관리/복원용). 기본은 숨김 제외(관리자 목록 ≈ 앱 노출).
+  const hiddenOnly = url.searchParams.get("hidden") === "true";
   // 끝난 공연(ended)은 기본 숨김 — 데이터는 보존(아티스트 과거공연 이력),
   // 목록엔 최신만 노출. include_ended=true 또는 status=ended 명시 시 표시.
   const includeEnded = url.searchParams.get("include_ended") === "true";
@@ -61,10 +63,17 @@ export async function GET(request: Request) {
   let eventsQuery = supabase
     .from("events")
     .select(
-      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, booking_url, notice_text, is_banner, has_timetable, locked_fields",
+      "id, title, artist_id, venue_id, poster_url, start_date, end_date, status, genre, duration, age_restriction, ticket_open_date, ticket_provider, booking_url, notice_text, is_banner, has_timetable, locked_fields, is_hidden, hidden_at, hidden_reason",
       { count: "exact" },
     )
     .order(sortBy, { ascending: sortDir });
+
+  // 숨김 필터: hidden=true 면 숨긴 것만, 아니면 숨김 제외(is_hidden null 도 노출)
+  if (hiddenOnly) {
+    eventsQuery = eventsQuery.eq("is_hidden", true);
+  } else {
+    eventsQuery = eventsQuery.or("is_hidden.is.null,is_hidden.eq.false");
+  }
 
   if (search) eventsQuery = eventsQuery.ilike("title", `%${search}%`);
   if (status && VALID_STATUSES.includes(status)) {

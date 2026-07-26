@@ -164,6 +164,7 @@ export function EventsPageClient() {
   const [missingFilter, setMissingFilter] = React.useState<string | null>(null);
   const [duplicatesFilter, setDuplicatesFilter] = React.useState(false);
   const [noArtistLinkFilter, setNoArtistLinkFilter] = React.useState(false);
+  const [hiddenFilter, setHiddenFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const [sortBy, setSortBy] = React.useState("start_date");
@@ -189,7 +190,13 @@ export function EventsPageClient() {
 
   React.useEffect(() => {
     setPage(1);
-  }, [statusFilter, missingFilter, duplicatesFilter, noArtistLinkFilter]);
+  }, [
+    statusFilter,
+    missingFilter,
+    duplicatesFilter,
+    noArtistLinkFilter,
+    hiddenFilter,
+  ]);
 
   const { data, isLoading, refetch } = useQuery({
     queryKey: [
@@ -201,6 +208,7 @@ export function EventsPageClient() {
       missingFilter,
       duplicatesFilter,
       noArtistLinkFilter,
+      hiddenFilter,
       sortBy,
       sortDir,
     ],
@@ -215,6 +223,7 @@ export function EventsPageClient() {
       if (missingFilter) q.set("missing", missingFilter);
       if (duplicatesFilter) q.set("duplicates", "true");
       if (noArtistLinkFilter) q.set("no_artist_link", "true");
+      if (hiddenFilter) q.set("hidden", "true");
 
       const res = await fetch(`/api/admin/events?${q.toString()}`, {
         cache: "no-store",
@@ -573,6 +582,23 @@ export function EventsPageClient() {
   const patchBanner = (id: string, is_banner: boolean) =>
     patchEventField(id, { is_banner }, "배너 설정 실패");
 
+  // 숨김 복원 / 수동 숨기기(소프트) — 하드삭제 대신.
+  const toggleHide = async (id: string, hide: boolean) => {
+    try {
+      const res = await fetch(`/api/admin/events/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(hide ? { hide: true } : { restore: true }),
+      });
+      if (!res.ok) throw new Error();
+      toast.success(hide ? "숨김 처리됨" : "복원됨");
+    } catch {
+      toast.error(hide ? "숨기기 실패" : "복원 실패");
+    } finally {
+      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
+    }
+  };
+
   // 상태 고정(pin) 해제 → sweeper 가 다시 날짜 기준으로 관리.
   const unpinStatus = async (id: string) => {
     try {
@@ -746,6 +772,19 @@ export function EventsPageClient() {
               <span className="h-1.5 w-1.5 rounded-full bg-current" />
               아티스트 미연결
             </button>
+            {/* 숨긴 이벤트 보기 (purge 소프트숨김 감사·복원) */}
+            <button
+              onClick={() => setHiddenFilter((prev) => !prev)}
+              className={[
+                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-caption font-medium transition-colors",
+                hiddenFilter
+                  ? "border-brand bg-brand/10 text-brand"
+                  : "border-border bg-surface text-text-secondary hover:border-brand/60 hover:text-brand",
+              ].join(" ")}
+            >
+              <span className="h-1.5 w-1.5 rounded-full bg-current" />
+              숨긴 이벤트
+            </button>
           </div>
 
           {selectedIds.size > 0 && (
@@ -858,7 +897,19 @@ export function EventsPageClient() {
                           onChange={() => toggleSelect(row.id)}
                         />
                       </TableCell>
-                      <TableCell className="font-medium">{row.title}</TableCell>
+                      <TableCell className="font-medium">
+                        {row.title}
+                        {row.is_hidden && (
+                          <Badge
+                            variant="outline"
+                            className="ml-2 text-[10px] text-muted-foreground"
+                            title={row.hidden_reason ?? undefined}
+                          >
+                            숨김
+                            {row.hidden_reason ? `: ${row.hidden_reason}` : ""}
+                          </Badge>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <ArtistLinkBadges
                           eventId={row.id}
@@ -963,6 +1014,19 @@ export function EventsPageClient() {
                               편집
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
+                            {row.is_hidden ? (
+                              <DropdownMenuItem
+                                onClick={() => void toggleHide(row.id, false)}
+                              >
+                                복원 (숨김 해제)
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                onClick={() => void toggleHide(row.id, true)}
+                              >
+                                숨기기 (소프트)
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               className="text-red-500 focus:text-red-500"
                               onClick={() => void removeEvent(row.id)}

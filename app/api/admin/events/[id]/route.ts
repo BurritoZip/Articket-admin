@@ -51,9 +51,34 @@ export async function PATCH(
     artist_ids?: string[];
     venue_ids?: string[];
     unlock_status?: boolean;
+    restore?: boolean;
+    hide?: boolean;
+    hide_reason?: string;
   };
 
   const supabaseSR = createServiceRoleClient();
+
+  // 숨김 복원 / 수동 숨기기 (하드삭제 대신 소프트 숨김)
+  if (body.restore || body.hide) {
+    const patch = body.restore
+      ? { is_hidden: false, hidden_at: null, hidden_reason: null }
+      : {
+          is_hidden: true,
+          hidden_at: new Date().toISOString(),
+          hidden_reason: body.hide_reason ?? "수동 숨김",
+        };
+    const { error } = await supabaseSR
+      .from("events")
+      .update(patch)
+      .eq("id", params.id);
+    if (error) {
+      return NextResponse.json(
+        { error: "hide_toggle_failed", detail: error.message },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json({ ok: true, is_hidden: !body.restore });
+  }
 
   // status pin 해제 — locked_fields 에서 'status' 제거 → sweeper 가 다시 관리.
   if (body.unlock_status) {
