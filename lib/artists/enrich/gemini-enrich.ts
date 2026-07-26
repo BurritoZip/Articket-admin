@@ -10,11 +10,14 @@
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { geminiTextGrounded, GeminiQuotaError } from "@/lib/gemini";
+import { decideArtistName } from "@/lib/artists/canonical";
+import { addArtistAliases } from "@/lib/artists/aliases";
 
 interface GeminiArtistInfo {
   is_music_artist: boolean | null;
-  canonical: string | null; // 표준 영문명(원문)
+  display_name: string | null; // 규칙대로 고른 공식 표시명 (한국=한글, 해외/영문팀=원어)
   name_en: string | null;
+  aliases: string[];
   occupation: string | null;
   country: string | null;
   description: string | null;
@@ -37,11 +40,16 @@ function parse(raw: string): GeminiArtistInfo | null {
       typeof v === "string" && v.trim() && !/^null$/i.test(v.trim())
         ? v.trim()
         : null;
+    const arr = (v: unknown) =>
+      Array.isArray(v)
+        ? v.filter((x): x is string => typeof x === "string" && !!x.trim())
+        : [];
     return {
       is_music_artist:
         typeof o.is_music_artist === "boolean" ? o.is_music_artist : null,
-      canonical: str(o.canonical_name),
+      display_name: str(o.display_name),
       name_en: str(o.name_en),
+      aliases: arr(o.aliases),
       occupation: str(o.occupation),
       country: str(o.country),
       description: str(o.description),
@@ -55,8 +63,9 @@ async function fetchOne(name: string): Promise<GeminiArtistInfo | null> {
   const prompt = `대중음악 아티스트 "${name}" 정보를 웹에서 찾아 JSON으로만 답하라.
 {
   "is_music_artist": true/false,   // 가수·밴드·래퍼·아이돌·싱어송라이터면 true. 화가·배우·전시·작가 등이면 false
-  "canonical_name": "표준 영문(로마자) 이름 — 같은 아티스트면 항상 동일하게(예: 찰리 푸스/Chalie Puth → Charlie Puth)",
-  "name_en": "영문 표기 또는 null",
+  "display_name": "공식 표시명. 국내(한국) 아티스트는 한글 이름, 해외 아티스트나 공식명이 영문·숫자인 팀은 그 원어 이름. 예: 아이유, 방탄소년단, 10CM, DAY6, Charlie Puth. 확실치 않으면 null",
+  "name_en": "로마자/영문 표기 또는 null (예: IU, BTS)",
+  "aliases": ["같은 아티스트의 다른 표기·별명·약칭 배열, 없으면 []"],
   "occupation": "가수|밴드|래퍼|아이돌|싱어송라이터|DJ 중 하나 또는 null",
   "country": "국적(예: 대한민국, 미국, 일본) 또는 null",
   "description": "한국어 한 줄 소개(40자 이내, 예: '솔로 발라드 가수') 또는 null"
@@ -70,13 +79,19 @@ async function fetchOne(name: string): Promise<GeminiArtistInfo | null> {
 export async function geminiEnrichArtists(opts?: {
   maxItems?: number;
   force?: boolean;
+  ids?: string[]; // 지정 시 해당 아티스트만 (활성 필터 무시) — 백필·타깃 재보강용
 }): Promise<{ checked: number; filled: number; notMusic: number }> {
   const maxItems = opts?.maxItems ?? 60;
   const force = opts?.force ?? false;
+  const ids = opts?.ids;
   const db = createServiceRoleClient();
 
-  // 이벤트 보유(활성) 아티스트 우선
+  // 이벤트 보유(활성) 아티스트 우선 — primary(events.artist_id) + lineup(event_artists) 둘 다.
+  // (예전엔 events.artist_id 만 세서 라인업으로만 연결된 아티스트가 통째 보강에서 빠졌다.)
   const counts = new Map<string, number>();
+  const tally = (id: string | null) => {
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  };
   for (let f = 0; ; f += 1000) {
     const { data } = await db
       .from("events")
@@ -84,20 +99,31 @@ export async function geminiEnrichArtists(opts?: {
       .not("artist_id", "is", null)
       .range(f, f + 999);
     if (!data?.length) break;
-    for (const e of data as { artist_id: string }[])
-      counts.set(e.artist_id, (counts.get(e.artist_id) ?? 0) + 1);
+    for (const e of data as { artist_id: string }[]) tally(e.artist_id);
+    if (data.length < 1000) break;
+  }
+  for (let f = 0; ; f += 1000) {
+    const { data } = await db
+      .from("event_artists")
+      .select("artist_id")
+      .range(f, f + 999);
+    if (!data?.length) break;
+    for (const e of data as { artist_id: string }[]) tally(e.artist_id);
     if (data.length < 1000) break;
   }
 
   let q = db.from("artists").select("id,name,name_en,occupation,country");
-  if (!force) q = q.is("gemini_checked_at", null); // 한 번만 — 재호출 방지(토큰 절약)
+  if (ids?.length) q = q.in("id", ids);
+  else if (!force) q = q.is("gemini_checked_at", null); // 한 번만 — 재호출 방지(토큰 절약)
   const { data: artists } = await q.limit(2000);
   if (!artists?.length) return { checked: 0, filled: 0, notMusic: 0 };
 
-  // 활성(이벤트 보유) 아티스트만 — 비활성(0건)은 노출 안 되니 토큰 낭비 방지
-  const sorted = artists
-    .filter((a) => (counts.get(a.id) ?? 0) > 0)
-    .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0));
+  // ids 지정 시 그대로, 아니면 활성(이벤트 보유) 아티스트만 우선
+  const sorted = ids?.length
+    ? artists
+    : artists
+        .filter((a) => (counts.get(a.id) ?? 0) > 0)
+        .sort((a, b) => (counts.get(b.id) ?? 0) - (counts.get(a.id) ?? 0));
   const target = sorted.slice(0, maxItems);
 
   const now = new Date().toISOString();
@@ -115,20 +141,68 @@ export async function geminiEnrichArtists(opts?: {
     }
     checked++;
     // 모델이 답했으면(정보 없음 포함) 시도 기록 — 재호출 안 함
-    const patch: Record<string, string | boolean> = { gemini_checked_at: now };
+    const patch: Record<string, unknown> = { gemini_checked_at: now };
     if (info) {
       if (info.is_music_artist !== null)
         patch.is_music_artist = info.is_music_artist;
       if (info.is_music_artist === false) notMusic++;
-      if (info.canonical) patch.gemini_canon = canonKey(info.canonical);
+      // dedup 그룹핑 키: 영문표기 우선, 없으면 표시명
+      const canonSrc = info.name_en ?? info.display_name;
+      if (canonSrc) patch.gemini_canon = canonKey(canonSrc);
       if (info.description) patch.description = info.description;
       if (info.occupation && (force || !a.occupation))
         patch.occupation = info.occupation;
       if (info.country && (force || !a.country)) patch.country = info.country;
       if (info.name_en && (force || !a.name_en)) patch.name_en = info.name_en;
+
+      // ── 이름 canonical 결정 ────────────────────────────────────────
+      // 제안명이 현재 name 의 조각이면(통짜 분리 등) 자동 교체, 새 텍스트면 검토큐로.
+      const decision = decideArtistName(
+        a.name,
+        info.display_name,
+        info.is_music_artist,
+      );
+      if (decision.kind === "auto") {
+        patch.name = decision.name;
+        patch.normalized_name = decision.normalizedKey;
+        patch.name_proposal = null;
+        patch.name_proposal_meta = null;
+      } else if (decision.kind === "propose") {
+        patch.name_proposal = decision.name;
+        patch.name_proposal_meta = {
+          name_en: info.name_en,
+          aliases: info.aliases,
+          country: info.country,
+          reason: "gemini canonical",
+          source: "gemini",
+          proposed_at: now,
+        };
+      }
       if (Object.keys(patch).length > 1) filled++;
     }
-    await db.from("artists").update(patch).eq("id", a.id);
+    let upd = await db.from("artists").update(patch).eq("id", a.id);
+    // 자동 rename 이 기존 아티스트 이름과 충돌(UNIQUE) → 사실상 중복.
+    // 이름만 건드리지 말고 나머지 보강은 저장한다(alias 는 아래서 채워지므로 merge 단계가 중복을 잡음).
+    // 이렇게 안 하면 update 전체가 거부돼 gemini_checked_at 도 안 찍혀 같은 건이 영원히 재선택된다.
+    if (
+      upd.error &&
+      (upd.error as { code?: string }).code === "23505" &&
+      "name" in patch
+    ) {
+      delete patch.name;
+      delete patch.normalized_name;
+      upd = await db.from("artists").update(patch).eq("id", a.id);
+    }
+
+    // 알려진 모든 표기를 alias 로 — 자동교체 시 옛 이름 포함(매칭 무손실)
+    if (info) {
+      await addArtistAliases(
+        db,
+        a.id,
+        [a.name, info.name_en, ...info.aliases],
+        "gemini",
+      );
+    }
   }
   return { checked, filled, notMusic };
 }

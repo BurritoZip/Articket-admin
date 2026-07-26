@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 import { requireAdmin } from "@/lib/supabase/require-admin";
-import { ArtistIngestionSchema } from "@/lib/ingestion/schemas";
+import { ArtistIngestionSchema, emptyToNull } from "@/lib/ingestion/schemas";
 import type { AlbumRow, ArtistRow, MusicVideoRow } from "@/types/artist";
 
 export async function GET(
@@ -22,12 +22,12 @@ export async function GET(
       .eq("id", params.id)
       .maybeSingle(),
     supabase
-      .from("albums")
+      .from("artist_albums")
       .select("id, artist_id, title, cover_url, released_year")
       .eq("artist_id", params.id)
       .order("released_year", { ascending: false }),
     supabase
-      .from("music_videos")
+      .from("artist_music_videos")
       .select(
         "id, artist_id, title, thumbnail_url, view_count, like_count, uploaded_at",
       )
@@ -80,83 +80,78 @@ export async function PATCH(
 
   const supabase = createServiceRoleClient();
 
+  // 편집 가능한 컬럼만 화이트리스트. id(PK)·followers_count·upcoming_event_count
+  // (트리거 관리 카운터)는 폼이 스테일 값으로 실어보내므로 제외한다.
+  const ARTIST_EDITABLE = [
+    "name",
+    "avatar_url",
+    "occupation",
+    "birth_date",
+    "birth_place",
+    "related",
+    "label",
+    "country",
+    "sns_links",
+  ] as const;
+
   if (body.artist) {
-    const { error } = await supabase
-      .from("artists")
-      .update(body.artist)
-      .eq("id", params.id);
+    const patch: Record<string, unknown> = {};
+    for (const key of ARTIST_EDITABLE) {
+      if (key in body.artist) {
+        patch[key] = emptyToNull((body.artist as Record<string, unknown>)[key]);
+      }
+    }
+    if (Object.keys(patch).length > 0) {
+      const { error } = await supabase
+        .from("artists")
+        .update(patch)
+        .eq("id", params.id);
+      if (error) {
+        return NextResponse.json(
+          { error: "artist_update_failed", detail: error.message },
+          { status: 400 },
+        );
+      }
+    }
+  }
+
+  // albums/videos 는 replace_artist_children RPC 로 트랜잭션 안에서 교체한다.
+  // (기존엔 DELETE 후 INSERT 를 비트랜잭션으로 해서, INSERT 실패 시 자식행이 영구 소실됐다.)
+  // undefined = 해당 종류 미전송 → 건드리지 않음. 빈 배열 = 전부 비움.
+  if (body.albums !== undefined || body.videos !== undefined) {
+    const albums =
+      body.albums === undefined
+        ? null
+        : body.albums
+            .filter((a) => a.title && a.title.trim())
+            .map((a) => ({
+              title: a.title!.trim(),
+              cover_url: emptyToNull(a.cover_url ?? null),
+              released_year: emptyToNull(a.released_year ?? null),
+            }));
+    const videos =
+      body.videos === undefined
+        ? null
+        : body.videos
+            .filter((v) => v.title && v.title.trim())
+            .map((v) => ({
+              title: v.title!.trim(),
+              thumbnail_url: emptyToNull(v.thumbnail_url ?? null),
+              view_count: v.view_count ?? null,
+              like_count: v.like_count ?? null,
+              uploaded_at: emptyToNull(v.uploaded_at ?? null),
+            }));
+
+    const { error } = await supabase.rpc("replace_artist_children", {
+      p_artist_id: params.id,
+      p_albums: albums,
+      p_videos: videos,
+    });
     if (error) {
       return NextResponse.json(
-        { error: "artist_update_failed", detail: error.message },
+        { error: "children_save_failed", detail: error.message },
         { status: 400 },
       );
-    }
-  }
-
-  if (body.albums) {
-    // 단순 전략: 기존 앨범 삭제 후 재삽입
-    const del = await supabase
-      .from("albums")
-      .delete()
-      .eq("artist_id", params.id);
-    if (del.error) {
-      return NextResponse.json(
-        { error: "albums_delete_failed", detail: del.error.message },
-        { status: 400 },
-      );
-    }
-
-    const insertRows = body.albums
-      .filter((a) => a.title && a.title.trim())
-      .map((a) => ({
-        artist_id: params.id,
-        title: a.title?.trim() ?? "",
-        cover_url: a.cover_url ?? null,
-        released_year: a.released_year ?? null,
-      }));
-
-    if (insertRows.length > 0) {
-      const ins = await supabase.from("albums").insert(insertRows);
-      if (ins.error) {
-        return NextResponse.json(
-          { error: "albums_insert_failed", detail: ins.error.message },
-          { status: 400 },
-        );
-      }
-    }
-  }
-
-  if (body.videos) {
-    const del = await supabase
-      .from("music_videos")
-      .delete()
-      .eq("artist_id", params.id);
-    if (del.error) {
-      return NextResponse.json(
-        { error: "videos_delete_failed", detail: del.error.message },
-        { status: 400 },
-      );
-    }
-
-    const insertRows = body.videos
-      .filter((v) => v.title && v.title.trim())
-      .map((v) => ({
-        artist_id: params.id,
-        title: v.title?.trim() ?? "",
-        thumbnail_url: v.thumbnail_url ?? null,
-        view_count: v.view_count ?? null,
-        like_count: v.like_count ?? null,
-        uploaded_at: v.uploaded_at ?? null,
-      }));
-
-    if (insertRows.length > 0) {
-      const ins = await supabase.from("music_videos").insert(insertRows);
-      if (ins.error) {
-        return NextResponse.json(
-          { error: "videos_insert_failed", detail: ins.error.message },
-          { status: 400 },
-        );
-      }
     }
   }
 

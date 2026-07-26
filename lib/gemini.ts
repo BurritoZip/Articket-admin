@@ -49,6 +49,10 @@ async function runModel(prompt: string, grounded: boolean, model: string) {
       ? // @google/generative-ai 타입에 googleSearch 툴이 아직 없어 캐스팅.
         { model, tools: [{ googleSearch: {} }] as unknown as never }
       : { model },
+    // 타임아웃 없으면 단일 호출이 네트워크 I/O 로 무한 hang → 배치 전체 스톨.
+    // grounded(구글검색)은 10~20s 정상이라 90s 상한. 초과 시 일반 에러로 던져
+    // 호출자(fetchOne)가 checked 마킹 없이 스킵 → 다음 실행에서 재시도.
+    { timeout: 90_000 },
   );
   try {
     const result = await m.generateContent(prompt);

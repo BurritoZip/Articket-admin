@@ -72,12 +72,18 @@ export const ArtistIngestionSchema = z.object({
     .refine((v) => !DATE_RE.test(v), "아티스트 이름에 날짜 포함")
     .refine((v) => !v.includes("/"), "아티스트 이름에 구분자(/) 포함"),
 
-  avatar_url: z
-    .string()
-    .url("avatar_url이 유효한 URL이 아님")
-    .optional()
-    .nullable(),
+  // 빈 문자열("")은 null 로 선변환 — 아바타 미지정 시 폼이 ""를 보내는데
+  // ""는 .url() 검증에서 터져 생성/수정이 422 로 막히던 원인.
+  avatar_url: z.preprocess(
+    (v) => (v === "" ? null : v),
+    z.string().url("avatar_url이 유효한 URL이 아님").optional().nullable(),
+  ),
 });
+
+/** 빈 문자열을 null 로 변환. 그 외 값은 그대로. (DB 쓰기 전 좌표) */
+export function emptyToNull<T>(v: T): T | null {
+  return (v as unknown) === "" ? null : v;
+}
 
 // ── 공연장 스키마 ─────────────────────────────────────────────────────
 
@@ -103,8 +109,7 @@ export const VenueIngestionSchema = z.object({
 // ── 유틸 ──────────────────────────────────────────────────────────────
 
 export type ValidationResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; errors: string[] };
+  { ok: true; data: T } | { ok: false; errors: string[] };
 
 export function validateEvent(
   input: Record<string, unknown>,

@@ -29,6 +29,9 @@ import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { formatKst } from "@/lib/format-kst";
+import { stepResultLines as stepResultLinesShared } from "@/lib/pipeline/step-display";
+import { PipelineRunsCard } from "@/components/admin/PipelineRunsCard";
+import { PipelineHealthBanner } from "@/components/admin/PipelineHealthBanner";
 
 // ── 타입 ─────────────────────────────────────────────────────────────
 
@@ -145,57 +148,7 @@ const STEPS = [
 // ── 헬퍼 ──────────────────────────────────────────────────────────────
 
 function stepResultLines(s: PipelineStep): string[] {
-  const r = s.result;
-  if (!r) return [];
-  if (s.step_name === "crawl") {
-    const sources = Object.entries(r) as Array<
-      [string, Record<string, unknown>]
-    >;
-    if (sources.length === 0) return ["활성 소스 없음"];
-    return sources.map(([src, d]) =>
-      d.error
-        ? `${src}: 오류`
-        : `${src}: 발견 ${d.eventsFound ?? 0} · 저장 ${d.eventsUpserted ?? 0}`,
-    );
-  }
-  if (s.step_name === "sweep") {
-    const lines = [`업데이트 ${r.updated ?? 0}건`];
-    const bd = r.breakdown as Record<string, number> | undefined;
-    if (bd) {
-      const parts = Object.entries(bd)
-        .filter(([, v]) => v > 0)
-        .map(([k, v]) => `${k} ${v}`);
-      if (parts.length) lines.push(parts.join(" · "));
-    }
-    return lines;
-  }
-  if (s.step_name === "fix") {
-    const lines = [`필드수정 ${r.fixed ?? 0}건`];
-    if ((r.queued as number) > 0) lines.push(`AI큐 등록 ${r.queued}건`);
-    if ((r.flagged as number) > 0) lines.push(`이슈감지 ${r.flagged}건`);
-    return lines;
-  }
-  if (s.step_name === "delete") return [`삭제 ${r.deleted ?? 0}건`];
-  if (s.step_name === "enrich") {
-    const total = r.total_in_queue as number | undefined;
-    const processed = (r.processed as number) ?? 0;
-    const succeeded = (r.succeeded as number) ?? 0;
-    const failed = (r.failed as number) ?? 0;
-    const lines = total
-      ? [`${processed} / ${total}건 처리`]
-      : [`처리 ${processed}건`];
-    lines.push(`성공 ${succeeded}  실패 ${failed}`);
-    return lines;
-  }
-  if (s.step_name === "merge")
-    return [`아티스트 ${r.artists ?? 0}건`, `공연장 ${r.venues ?? 0}건`];
-  if (s.step_name === "score")
-    return [
-      `아티스트 ${r.artist_scored ?? 0}건`,
-      `공연 ${r.concert_scored ?? 0}건`,
-    ];
-  if (s.step_name === "purge") return [`숨김 ${r.hidden ?? 0}건`];
-  return [];
+  return stepResultLinesShared(s.step_name, s.result);
 }
 
 function elapsed(s: PipelineStep, now?: number): string {
@@ -235,7 +188,8 @@ export function DashboardPageClient() {
       if (!res.ok) throw new Error("stats fetch failed");
       return res.json() as Promise<DashboardStats>;
     },
-    staleTime: 30_000,
+    staleTime: 10_000,
+    refetchInterval: 10_000, // 홈은 계속 갱신 — 흩어진 신호가 실시간으로 반영되게
   });
 
   // 파이프라인 상태 폴링
@@ -247,8 +201,8 @@ export function DashboardPageClient() {
         if (!res.ok) throw new Error("pipeline status fetch failed");
         return res.json() as Promise<PipelineStatusResponse>;
       },
-      // 실행 중이거나 멈춤 감지 시 폴링(멈춤은 좀 느리게)
-      refetchInterval: runningPipeline ? 1500 : 20_000,
+      // 실행 중 1.5초, 평시에도 10초 상시 폴링(홈 계속 갱신)
+      refetchInterval: runningPipeline ? 1500 : 10_000,
       staleTime: 0,
     });
 
@@ -258,6 +212,10 @@ export function DashboardPageClient() {
   const staleMinutes = pipelineData?.staleMinutes ?? 15;
   // 멈춘(stalled) 단계는 '실행 중'으로 치지 않는다 → 무한 스피너 방지
   const isAnyRunning = steps.some((s) => s.status === "running" && !s.stalled);
+  // 실행이 끝나면 스테퍼는 idle 로 비운다(화면만) — 완료 결과는 아래 "실행 보고" 카드가 담당.
+  // "이게 방금 건지 어제 건지" 눌어붙는 문제 해소. step_status 는 건드리지 않음(다음 run 이 덮음).
+  const pipelineActive = isAnyRunning || runningPipeline;
+  const displaySteps = pipelineActive ? steps : [];
 
   const handleResetPipeline = async () => {
     try {
@@ -358,6 +316,9 @@ export function DashboardPageClient() {
 
   return (
     <div className="space-y-6">
+      {/* 전체 건강 verdict — 파이프라인이 제대로 도는지 한눈에 */}
+      <PipelineHealthBanner />
+
       {/* KPI 카드 */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpiCards.map((card) => (
@@ -442,7 +403,7 @@ export function DashboardPageClient() {
           )}
           <div className="flex items-start gap-0 overflow-x-auto pb-2">
             {STEPS.map((meta, i) => {
-              const step = steps.find((s) => s.step_name === meta.key);
+              const step = displaySteps.find((s) => s.step_name === meta.key);
               const status: StepStatus = step?.status ?? "idle";
               return (
                 <React.Fragment key={meta.key}>
@@ -540,10 +501,12 @@ export function DashboardPageClient() {
                   {i < STEPS.length - 1 && (
                     <div
                       className={`mt-5 h-0.5 flex-1 min-w-[12px] transition-colors ${
-                        steps.find((s) => s.step_name === STEPS[i + 1].key)
-                          ?.status === "done" ||
-                        steps.find((s) => s.step_name === STEPS[i + 1].key)
-                          ?.status === "running"
+                        displaySteps.find(
+                          (s) => s.step_name === STEPS[i + 1].key,
+                        )?.status === "done" ||
+                        displaySteps.find(
+                          (s) => s.step_name === STEPS[i + 1].key,
+                        )?.status === "running"
                           ? "bg-brand/40"
                           : "bg-border"
                       }`}
@@ -622,6 +585,9 @@ export function DashboardPageClient() {
           )}
         </CardContent>
       </Card>
+
+      {/* 실행 보고 + 이력 (직전 실행이 뭘 불러오고 뭘 바꿨나) */}
+      <PipelineRunsCard />
 
       {/* AI 큐 + 보강 현황 */}
       <div className="grid gap-4 sm:grid-cols-2">

@@ -138,35 +138,45 @@ async function fetchAll(
   return all;
 }
 
-async function mergeCluster(
+/**
+ * canonical(canonId) 로 otherIds 들을 흡수: 빈 필드 이관 + source_urls 합집합 + created_at 보존,
+ * 흡수 행 유저 FK 재지정 후 스냅샷 남기고 하드삭제. auto-merge 클러스터와 수동 pair 병합이 공유.
+ * 전체 행을 여기서 refetch 하므로 호출부는 id 만 넘기면 된다.
+ */
+async function absorbEvents(
   db: ReturnType<typeof createServiceRoleClient>,
-  members: Ev[],
+  canonId: string,
+  otherIds: string[],
   passName: string,
 ): Promise<number> {
-  const canon = pickCanonical(members);
-  const others = members.filter((e) => e.id !== canon.id);
-  if (!others.length) return 0;
+  if (!otherIds.length) return 0;
 
   // 병합 직전 전체 행 스냅샷 — 복구 근거이자 이관 소스.
   const { data: rows } = await db
     .from("events")
     .select("*")
-    .in("id", [canon.id, ...others.map((o) => o.id)]);
+    .in("id", [canonId, ...otherIds]);
   const byId = new Map<string, Record<string, unknown>>(
     (rows ?? []).map((r) => [String(r.id), r as Record<string, unknown>]),
   );
-  const canonRow = byId.get(canon.id);
-  if (!canonRow) return 0; // canonical 이 사라짐(동시 실행 등) — 이번 클러스터 스킵
+  const canonRow = byId.get(canonId);
+  if (!canonRow) return 0; // canonical 이 사라짐(동시 실행 등) — 스킵
+  const otherRows = otherIds
+    .map((id) => byId.get(id))
+    .filter((r): r is Record<string, unknown> => !!r);
+  if (!otherRows.length) return 0;
 
   // 흡수 행에만 있는 값으로 canonical 의 빈 칸을 채운다(fill-only — 기존 값은 덮지 않음).
   // 정보량 많은 행부터 보게 정렬해 더 나은 값이 우선 선택되게 한다.
-  const donors = [...others].sort((a, b) => infoScore(b) - infoScore(a));
+  const donors = [...otherRows].sort(
+    (a, b) => infoScoreRow(b) - infoScoreRow(a),
+  );
   const patch: Record<string, unknown> = {};
   const transferred: string[] = [];
   for (const col of TRANSFERABLE) {
     if (!isBlank(canonRow[col])) continue;
     for (const d of donors) {
-      const v = byId.get(d.id)?.[col];
+      const v = d[col];
       if (!isBlank(v)) {
         patch[col] = v;
         transferred.push(col);
@@ -177,36 +187,82 @@ async function mergeCluster(
 
   // source_urls 합집합
   const urls = new Map<string, { site?: string; url?: string }>();
-  for (const m of members)
-    for (const s of m.source_urls ?? []) urls.set(JSON.stringify(s), s);
+  for (const r of [canonRow, ...otherRows])
+    for (const s of (r.source_urls as { site?: string; url?: string }[]) ?? [])
+      urls.set(JSON.stringify(s), s);
   patch.source_urls = Array.from(urls.values());
   // 최초 등록일 보존
-  patch.created_at = members.reduce(
-    (min, m) => (m.created_at < min ? m.created_at : min),
-    canon.created_at,
+  patch.created_at = [canonRow, ...otherRows].reduce(
+    (min, r) => (String(r.created_at) < min ? String(r.created_at) : min),
+    String(canonRow.created_at),
   );
 
-  await db.from("events").update(patch).eq("id", canon.id);
+  await db.from("events").update(patch).eq("id", canonId);
 
   // 흡수 행: 유저 FK 를 canonical 로 이관한 뒤 하드삭제.
   // 스냅샷(event_merge_logs)으로 복구 가능하고, crawl 링크(event_artists/venues/timetable)는
   // canonical 이 자체 보유하므로 CASCADE 삭제해도 무방(venue_id 는 위에서 이관됨).
   let merged = 0;
-  for (const o of others) {
-    const snapshot = byId.get(o.id);
+  for (const id of otherIds) {
+    const snapshot = byId.get(id);
     if (!snapshot) continue;
     await db.from("event_merge_logs").insert({
-      canonical_event_id: canon.id,
-      merged_event_id: o.id,
+      canonical_event_id: canonId,
+      merged_event_id: id,
       pass_name: passName,
       snapshot,
       transferred_fields: transferred,
     });
-    await reassignEventUserData(db, o.id, canon.id);
-    const { error } = await db.from("events").delete().eq("id", o.id);
+    await reassignEventUserData(db, id, canonId);
+    const { error } = await db.from("events").delete().eq("id", id);
     if (!error) merged++;
   }
   return merged;
+}
+
+/** infoScore 의 refetch 행(Record) 버전 — absorbEvents 내부 donor 정렬용 */
+function infoScoreRow(r: Record<string, unknown>): number {
+  const cols = [
+    "poster_url",
+    "genre",
+    "age_restriction",
+    "ticket_open_date",
+    "ticket_provider",
+    "notice_text",
+    "booking_url",
+    "venue_id",
+    "end_date",
+  ];
+  return cols.reduce((n, c) => n + (isBlank(r[c]) ? 0 : 1), 0);
+}
+
+async function mergeCluster(
+  db: ReturnType<typeof createServiceRoleClient>,
+  members: Ev[],
+  passName: string,
+): Promise<number> {
+  const canon = pickCanonical(members);
+  const others = members.filter((e) => e.id !== canon.id);
+  return absorbEvents(
+    db,
+    canon.id,
+    others.map((o) => o.id),
+    passName,
+  );
+}
+
+/**
+ * 관리자 수동 pair 병합 — dedup UI 에서 keep/merge 를 명시 지정.
+ * canonical 은 auto-merge 처럼 추론하지 않고 관리자가 고른 keepId 를 그대로 쓴다.
+ */
+export async function mergeEventPair(args: {
+  keepId: string;
+  mergeId: string;
+}): Promise<{ merged: number }> {
+  const { keepId, mergeId } = args;
+  const db = createServiceRoleClient();
+  const merged = await absorbEvents(db, keepId, [mergeId], "manual_admin");
+  return { merged };
 }
 
 /**

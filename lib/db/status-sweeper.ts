@@ -22,6 +22,10 @@ export async function sweepEventStatuses(): Promise<SweepResult> {
 
   const breakdown = { ended: 0, ongoing: 0, on_sale: 0, upcoming: 0 };
 
+  // 운영자가 상태를 고정(pin)한 이벤트는 건너뛴다 — locked_fields 에 'status' 포함.
+  // (locked_fields 는 NOT NULL DEFAULT '{}' 이라 cs 필터가 모든 행에 안전)
+  const notPinned = "{status}";
+
   // DB 에러를 조용히 삼키지 않도록 — 실패 시 어느 단계인지 명시해 throw(라우트가 500 반환)
   const count = (
     phase: keyof SweepResult["breakdown"],
@@ -41,6 +45,7 @@ export async function sweepEventStatuses(): Promise<SweepResult> {
       .update({ status: "ended" })
       .or(`end_date.lt.${now},and(end_date.is.null,start_date.lt.${now})`)
       .neq("status", "ended")
+      .not("locked_fields", "cs", notPinned)
       .select("id"),
   );
 
@@ -53,6 +58,7 @@ export async function sweepEventStatuses(): Promise<SweepResult> {
       .lte("start_date", now)
       .gte("end_date", now)
       .neq("status", "ongoing")
+      .not("locked_fields", "cs", notPinned)
       .select("id"),
   );
 
@@ -65,6 +71,7 @@ export async function sweepEventStatuses(): Promise<SweepResult> {
       .gt("start_date", now)
       .gt("ticket_open_date", now)
       .not("status", "in", '("ended","ongoing","upcoming")')
+      .not("locked_fields", "cs", notPinned)
       .select("id"),
   );
 
@@ -81,6 +88,7 @@ export async function sweepEventStatuses(): Promise<SweepResult> {
       .or(`ticket_open_date.is.null,ticket_open_date.lte.${now}`)
       .or(`ticket_close_date.is.null,ticket_close_date.gte.${now}`)
       .not("status", "in", '("ended","ongoing","on_sale")')
+      .not("locked_fields", "cs", notPinned)
       .select("id"),
   );
 
