@@ -86,8 +86,12 @@ export async function geminiEnrichArtists(opts?: {
   const ids = opts?.ids;
   const db = createServiceRoleClient();
 
-  // 이벤트 보유(활성) 아티스트 우선
+  // 이벤트 보유(활성) 아티스트 우선 — primary(events.artist_id) + lineup(event_artists) 둘 다.
+  // (예전엔 events.artist_id 만 세서 라인업으로만 연결된 아티스트가 통째 보강에서 빠졌다.)
   const counts = new Map<string, number>();
+  const tally = (id: string | null) => {
+    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  };
   for (let f = 0; ; f += 1000) {
     const { data } = await db
       .from("events")
@@ -95,8 +99,16 @@ export async function geminiEnrichArtists(opts?: {
       .not("artist_id", "is", null)
       .range(f, f + 999);
     if (!data?.length) break;
-    for (const e of data as { artist_id: string }[])
-      counts.set(e.artist_id, (counts.get(e.artist_id) ?? 0) + 1);
+    for (const e of data as { artist_id: string }[]) tally(e.artist_id);
+    if (data.length < 1000) break;
+  }
+  for (let f = 0; ; f += 1000) {
+    const { data } = await db
+      .from("event_artists")
+      .select("artist_id")
+      .range(f, f + 999);
+    if (!data?.length) break;
+    for (const e of data as { artist_id: string }[]) tally(e.artist_id);
     if (data.length < 1000) break;
   }
 

@@ -12,29 +12,47 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 // .env.local 로드 (dotenv 미설치 환경 대비 직접 파싱)
-for (const line of readFileSync(resolve(process.cwd(), ".env.local"), "utf8").split("\n")) {
+for (const line of readFileSync(
+  resolve(process.cwd(), ".env.local"),
+  "utf8",
+).split("\n")) {
   const i = line.indexOf("=");
   if (i > 0 && !line.trimStart().startsWith("#")) {
     const k = line.slice(0, i).trim();
-    if (!process.env[k]) process.env[k] = line.slice(i + 1).trim().replace(/^["']|["']$/g, "");
+    if (!process.env[k])
+      process.env[k] = line
+        .slice(i + 1)
+        .trim()
+        .replace(/^["']|["']$/g, "");
   }
 }
 
 async function main() {
-  const { createServiceRoleClient } = await import("../../lib/supabase/service-role");
-  const { geminiEnrichArtists } = await import("../../lib/artists/enrich/gemini-enrich");
+  const { createServiceRoleClient } =
+    await import("../../lib/supabase/service-role");
+  const { geminiEnrichArtists } =
+    await import("../../lib/artists/enrich/gemini-enrich");
   const db = createServiceRoleClient();
 
   const reset = process.argv.includes("--reset");
 
   if (reset) {
-    // 활성(이벤트 보유) 아티스트 id 수집 후 gemini_checked_at 리셋
+    // 활성 아티스트 id 수집 후 gemini_checked_at 리셋 — primary + lineup 둘 다.
     const active = new Set<string>();
     for (let f = 0; ; f += 1000) {
       const { data } = await db
         .from("events")
         .select("artist_id")
         .not("artist_id", "is", null)
+        .range(f, f + 999);
+      if (!data?.length) break;
+      for (const e of data as { artist_id: string }[]) active.add(e.artist_id);
+      if (data.length < 1000) break;
+    }
+    for (let f = 0; ; f += 1000) {
+      const { data } = await db
+        .from("event_artists")
+        .select("artist_id")
         .range(f, f + 999);
       if (!data?.length) break;
       for (const e of data as { artist_id: string }[]) active.add(e.artist_id);
@@ -66,7 +84,9 @@ async function main() {
     .from("artists")
     .select("id", { count: "exact", head: true })
     .not("name_proposal", "is", null);
-  console.log(`\n완료. 총 checked=${totalChecked}, 검토큐 대기 제안=${proposals ?? 0}`);
+  console.log(
+    `\n완료. 총 checked=${totalChecked}, 검토큐 대기 제안=${proposals ?? 0}`,
+  );
 }
 
 main().catch((e) => {
