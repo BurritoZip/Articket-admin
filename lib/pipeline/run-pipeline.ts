@@ -32,6 +32,7 @@ import { purgeOldEvents } from "@/lib/data-quality/purge-old-events";
 import { purgeNonMusicArtistEvents } from "@/lib/data-quality/purge-non-music";
 import { purgeUnlinkedEvents } from "@/lib/data-quality/purge-unlinked";
 import { autoMergeExactArtists } from "@/lib/artists/auto-merge";
+import { autoMergeAnnotationVariants } from "@/lib/artists/auto-merge-annotations";
 import { aiDedupArtists } from "@/lib/artists/ai-dedup";
 import { geminiEnrichArtists } from "@/lib/artists/enrich/gemini-enrich";
 import { autoMergeExactVenues } from "@/lib/venues/auto-merge";
@@ -273,6 +274,7 @@ const STEP_FNS: Record<PipelineStep, (ctx: StepCtx) => Promise<unknown>> = {
     const unlinked = await purgeUnlinkedEvents();
     const aiArtists = await aiDedupArtists({ apply: true });
     const artists = await autoMergeExactArtists();
+    const annotations = await autoMergeAnnotationVariants({ apply: true });
     const venues = await autoMergeExactVenues();
     const events = await autoMergeDuplicateEvents();
     return {
@@ -282,6 +284,7 @@ const STEP_FNS: Record<PipelineStep, (ctx: StepCtx) => Promise<unknown>> = {
       unlinkedRestored: unlinked.unhidden,
       aiArtistsMerged: aiArtists.merged,
       artists: artists.merged,
+      annotationVariants: annotations.merged,
       venues: venues.merged,
       eventDupsMerged: events.merged,
     };
