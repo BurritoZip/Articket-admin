@@ -43,9 +43,12 @@ export async function POST(request: Request) {
 
   const { id, action } = (await request.json()) as {
     id?: string;
-    action?: "approve" | "reject";
+    action?: "approve" | "reject" | "delete_artist";
   };
-  if (!id || (action !== "approve" && action !== "reject")) {
+  if (
+    !id ||
+    (action !== "approve" && action !== "reject" && action !== "delete_artist")
+  ) {
     return NextResponse.json({ error: "bad_request" }, { status: 400 });
   }
 
@@ -57,6 +60,18 @@ export async function POST(request: Request) {
     .maybeSingle();
   if (!artist || !artist.name_proposal) {
     return NextResponse.json({ error: "no_proposal" }, { status: 404 });
+  }
+
+  // 불량 아티스트 자체를 삭제 (event_artists·aliases 는 FK CASCADE)
+  if (action === "delete_artist") {
+    const { error } = await supabase.from("artists").delete().eq("id", id);
+    if (error) {
+      return NextResponse.json(
+        { error: "delete_failed", detail: error.message },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json({ ok: true, deleted: true });
   }
 
   if (action === "reject") {

@@ -5,6 +5,7 @@ import {
   CalendarDays,
   ClipboardList,
   History,
+  Inbox,
   LayoutDashboard,
   Mic2,
   Rss,
@@ -78,6 +79,12 @@ export const ADMIN_NAV: NavItem[] = [
   },
 
   // 이슈 · 로그 (미해결 건수 뱃지 표시 대상)
+  {
+    href: "/admin/review",
+    label: "검토 대기",
+    icon: Inbox,
+    group: "issues",
+  },
   {
     href: "/admin/booking-issues",
     label: "예매 링크 이슈",
