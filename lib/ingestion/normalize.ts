@@ -162,6 +162,17 @@ function normalizeTicketUrl(raw: string | null | undefined): string | null {
   return u && /^https?:\/\//i.test(u) ? u : null;
 }
 
+/**
+ * 포스터 URL 정규화 — http:// → https:// 승격.
+ * iOS ATS 가 http 이미지를 차단해 앱에서 포스터가 안 뜨던 원인(주로 interpark ticketimage).
+ * 이미지 CDN 은 사실상 전부 https 를 지원하므로 승격이 항상 안전(못해도 ATS 로 어차피 깨졌음).
+ */
+function normalizePosterUrl(raw: string | null | undefined): string | null {
+  const u = raw?.trim();
+  if (!u || !/^https?:\/\//i.test(u)) return null;
+  return u.replace(/^http:\/\//i, "https://");
+}
+
 export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
   const displayTitle = cleanDisplayTitle(raw.title);
   const normalizedTitle = normalizeTitle(displayTitle);
@@ -173,7 +184,7 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
   return {
     title: displayTitle,
     normalizedTitle,
-    posterUrl: raw.posterUrl ?? null,
+    posterUrl: normalizePosterUrl(raw.posterUrl),
     venueName: raw.venueName?.trim() ?? null,
     normalizedVenueName,
     venueAddress: raw.venueAddress?.trim() ?? null,
