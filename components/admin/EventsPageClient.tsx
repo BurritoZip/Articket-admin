@@ -448,9 +448,19 @@ export function EventsPageClient() {
     setEditOpen(true);
   };
 
-  const openDetail = (event: EventRow) => {
-    setDetailEvent(event);
+  const openDetail = async (event: EventRow) => {
+    setDetailEvent(event); // 목록 행으로 즉시 표시
     setDetailOpen(true);
+    // 목록 API 가 안 내리는 score_breakdown·field_sources 등을 단건 조회로 채운다.
+    try {
+      const res = await fetch(`/api/admin/events/${event.id}`);
+      if (res.ok) {
+        const { event: full } = (await res.json()) as { event: EventRow };
+        setDetailEvent(full);
+      }
+    } catch {
+      /* 실패 시 목록 행 데이터 유지 */
+    }
   };
 
   const openTimetable = (event: EventRow) => {
@@ -1266,6 +1276,114 @@ export function EventsPageClient() {
                       "등록된 공지가 없습니다."}
                   </div>
                 </div>
+
+                {/* 점수 상세 — score_breakdown 설명(왜 이 점수인가) */}
+                {detailEvent.score_breakdown && (
+                  <div>
+                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                      점수 상세
+                    </p>
+                    <div className="space-y-2 rounded-md border border-border p-3 text-body-sm">
+                      <div className="flex items-center gap-4 text-caption">
+                        <span>
+                          인기{" "}
+                          <b>
+                            {detailEvent.popularity_score?.toFixed(1) ?? "-"}
+                          </b>
+                        </span>
+                        <span>
+                          트렌드{" "}
+                          <b>{detailEvent.trending_score?.toFixed(1) ?? "-"}</b>
+                        </span>
+                        {detailEvent.score_breakdown.lowConfidence && (
+                          <Badge variant="warning" className="text-[10px]">
+                            저신뢰
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="space-y-1">
+                        {detailEvent.score_breakdown.signals.map((s) => (
+                          <div key={s.key} className="flex items-center gap-2">
+                            <span className="w-28 shrink-0 truncate text-caption text-text-tertiary">
+                              {s.label}
+                            </span>
+                            <div className="h-1.5 flex-1 overflow-hidden rounded bg-surface-muted">
+                              <div
+                                className="h-full bg-primary"
+                                style={{
+                                  width: `${Math.max(0, Math.min(100, s.normalized))}%`,
+                                }}
+                              />
+                            </div>
+                            <span className="w-24 shrink-0 text-right text-caption tabular-nums">
+                              {s.contribution.toFixed(2)}{" "}
+                              <span className="text-text-tertiary">
+                                (w{s.weight})
+                              </span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      {detailEvent.score_breakdown.notes.length > 0 && (
+                        <ul className="list-inside list-disc text-caption text-text-tertiary">
+                          {detailEvent.score_breakdown.notes.map((n) => (
+                            <li key={n.key}>{n.note}</li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* 필드 출처 — 각 필드를 어떤 소스가 채웠나(provenance) */}
+                {detailEvent.field_sources &&
+                  Object.keys(detailEvent.field_sources).length > 0 && (
+                    <div>
+                      <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                        필드 출처
+                      </p>
+                      <div className="space-y-1 rounded-md border border-border p-3 text-caption">
+                        {Object.entries(detailEvent.field_sources).map(
+                          ([field, src]) => (
+                            <div key={field} className="flex gap-2">
+                              <span className="w-32 shrink-0 text-text-tertiary">
+                                {field}
+                              </span>
+                              <span className="font-medium">
+                                {src?.source ?? "-"}
+                              </span>
+                              {src?.at && (
+                                <span className="text-text-tertiary">
+                                  · {formatKst(src.at)}
+                                </span>
+                              )}
+                            </div>
+                          ),
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                {/* 잠금 필드 — 운영자가 잠가 크롤이 덮지 못하는 필드 */}
+                {(detailEvent.locked_fields ?? []).length > 0 && (
+                  <div>
+                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
+                      잠금 필드{" "}
+                      <span className="font-normal">(크롤이 덮지 않음)</span>
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                      {detailEvent.locked_fields.map((f) => (
+                        <Badge
+                          key={f}
+                          variant="secondary"
+                          className="text-[10px]"
+                        >
+                          🔒 {f}
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
               <SheetFooter>
                 <Button variant="outline" onClick={() => setDetailOpen(false)}>
