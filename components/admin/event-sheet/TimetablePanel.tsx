@@ -79,13 +79,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     skippedCount: number;
     issues: Array<{ line: string; reason: string }>;
   } | null>(null);
-  const [autoLoading, setAutoLoading] = React.useState(false);
-  const [autoSourceUrl, setAutoSourceUrl] = React.useState("");
-  const [autoResult, setAutoResult] = React.useState<{
-    inserted: number;
-    artists: string[];
-    days: number;
-  } | null>(null);
   const [manualOpen, setManualOpen] = React.useState(false);
   const [editTarget, setEditTarget] =
     React.useState<TimetablePerformanceRow | null>(null);
@@ -172,8 +165,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     setReplaceExisting(false);
     setSourceIssues([]);
     setImportResult(null);
-    setAutoResult(null);
-    setAutoSourceUrl("");
     setManualOpen(false);
     setImageOpen(false);
     setImageFile(null);
@@ -273,49 +264,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
       toast.error(e instanceof Error ? e.message : "저장 실패");
     } finally {
       setImageCommitting(false);
-    }
-  };
-
-  const submitAutoImport = async () => {
-    if (!event) return;
-    setAutoLoading(true);
-    setAutoResult(null);
-    try {
-      const res = await fetch("/api/admin/timetable/auto", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          event_id: event.id,
-          replaceExisting,
-          ...(autoSourceUrl.trim() ? { source_url: autoSourceUrl.trim() } : {}),
-        }),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        inserted?: number;
-        artists?: string[];
-        days?: number;
-        reason?: string;
-        detail?: string;
-      };
-      if (!res.ok || !json.ok) {
-        throw new Error(json.detail ?? "아티스트 정보를 찾지 못했습니다.");
-      }
-      setAutoResult({
-        inserted: json.inserted ?? 0,
-        artists: json.artists ?? [],
-        days: json.days ?? 1,
-      });
-      toast.success(
-        `${json.inserted}명 아티스트 타임테이블 생성 완료 (${json.days}일 구성)`,
-      );
-      refetch();
-      onHasTimetableChange();
-      void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "자동 생성 실패");
-    } finally {
-      setAutoLoading(false);
     }
   };
 
@@ -603,27 +551,10 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
           <DialogHeader>
             <DialogTitle>타임테이블 자동화</DialogTitle>
             <DialogDescription>
-              StagePick URL 또는 타임테이블 이미지로 공연 정보를 자동으로
-              가져옵니다.
+              타임테이블 이미지로 공연 정보를 자동으로 가져옵니다.
             </DialogDescription>
           </DialogHeader>
           <div className="flex-1 space-y-4 overflow-y-auto py-2">
-            {/* StagePick URL 직접 입력 */}
-            <div className="space-y-1">
-              <Label htmlFor="auto-source-url">
-                StagePick URL{" "}
-                <span className="text-caption text-text-secondary">
-                  (크롤 데이터 없을 때 직접 입력)
-                </span>
-              </Label>
-              <Input
-                id="auto-source-url"
-                placeholder="https://www.stagepick.co.kr/performances/detail/12345"
-                value={autoSourceUrl}
-                onChange={(e) => setAutoSourceUrl(e.target.value)}
-              />
-            </div>
-
             {/* 기존 항목 교체 옵션 */}
             <div className="flex items-center gap-2">
               <input
@@ -637,21 +568,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
                 기존 타임테이블을 지우고 새로 생성
               </Label>
             </div>
-
-            {/* 자동 생성 결과 */}
-            {autoResult && (
-              <div className="rounded-md border border-green-200 bg-green-50 p-3 text-body-sm text-green-800">
-                <p className="font-medium">
-                  ✅ {autoResult.inserted}명 아티스트 · {autoResult.days}일 구성
-                </p>
-                <p className="mt-1 text-caption text-green-700">
-                  {autoResult.artists.slice(0, 8).join(", ")}
-                  {autoResult.artists.length > 8
-                    ? ` 외 ${autoResult.artists.length - 8}명`
-                    : ""}
-                </p>
-              </div>
-            )}
 
             {/* 이미지로 가져오기 (접기/펼치기) */}
             <div>
@@ -725,7 +641,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
                   {imageFile && !imageParsed && (
                     <Button
                       size="sm"
-                      variant="secondary"
                       loading={imageParsing}
                       onClick={() => void submitImageParse()}
                     >
@@ -897,13 +812,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setImportOpen(false)}>
               닫기
-            </Button>
-            <Button
-              loading={autoLoading}
-              onClick={() => void submitAutoImport()}
-            >
-              <Wand2 className="mr-1 h-4 w-4" />
-              아티스트 자동 생성
             </Button>
           </DialogFooter>
         </DialogContent>
