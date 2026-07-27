@@ -104,7 +104,7 @@ const STEPS = [
     key: "crawl",
     label: "크롤링",
     icon: Database,
-    desc: "stagepick",
+    desc: "예매처 신규 공연 수집",
   },
   {
     key: "sweep",

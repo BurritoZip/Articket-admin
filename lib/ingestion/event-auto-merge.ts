@@ -507,7 +507,7 @@ export async function autoMergeDuplicateEvents(): Promise<{
   }
 
   // 패스 5: 같은 공연일 + (같은 공연장 OR 제목 포함관계) — 소스마다 제목 표기가 다른 동일 공연.
-  //   예) "[부산] …빈백콘서트"(yes24) vs "…빈백콘서트 - 부산"(stagepick) — 같은 공연장+날짜
+  //   예) "[부산] …빈백콘서트"(yes24) vs "…빈백콘서트 - 부산"(yanolja) — 같은 공연장+날짜
   //       "포스트 말론 내한공연"(interpark) vs "Post Malone 포스트말론 내한공연" — 제목 포함관계
   //   안전장치: 같은공연장 매칭은 공통 부분문자열 6자 이상일 때만(페스티벌 다른 출연 오병합 방지).
   const lcsLen = (a: string, b: string): number => {

@@ -51,7 +51,7 @@ interface UnmatchedResponse {
 const SOURCE_LABELS: Record<string, string> = {
   image: "캡쳐 이미지",
   text: "텍스트",
-  auto: "자동(StagePick)",
+  auto: "자동",
   manual: "수동",
 };
 
