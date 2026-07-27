@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { EventFormFields } from "./EventFormFields";
 import type { EventRow, OptionItem } from "@/types/event";
 
-const emptyForm: Partial<EventRow> = {
+export const EMPTY_EVENT_FORM: Partial<EventRow> = {
   title: "",
   artist_id: "",
   venue_id: "",
@@ -63,7 +63,7 @@ export function EventEditTab({
 }) {
   const isCreate = event === null;
   const [form, setForm] = React.useState<Partial<EventRow>>(
-    initialForm ?? (isCreate ? { ...emptyForm } : { ...event }),
+    initialForm ?? (isCreate ? { ...EMPTY_EVENT_FORM } : { ...event }),
   );
   const [artistIds, setArtistIds] = React.useState<string[]>(
     initialArtistIds ?? [],
@@ -79,11 +79,26 @@ export function EventEditTab({
       onDirtyChange?.(true);
     }
   };
+  // setter 를 래핑해 폼 필드 어떤 변경이든 dirty 로 표시한다. onInput 만 쓰면 Radix Select·
+  // 다중선택 칩 제거·ImageUploader 처럼 native input 이벤트를 안 내는 변경을 놓쳐 dirty 가드가
+  // 헛돈다. 재시드/저장 경로는 raw setter 를 쓰므로 dirty 로 안 잡힌다.
+  const setFormDirty: typeof setForm = (v) => {
+    markDirty();
+    setForm(v);
+  };
+  const setArtistIdsDirty: typeof setArtistIds = (v) => {
+    markDirty();
+    setArtistIds(v);
+  };
+  const setVenueIdsDirty: typeof setVenueIds = (v) => {
+    markDirty();
+    setVenueIds(v);
+  };
 
   // event(또는 initial* prefill) 변경 시 재시드. 편집 진입 시 join 된 artist/venue id,
   // URL-import prefill 은 상위(EventsPageClient)가 initialArtistIds/initialVenueIds/initialForm 으로 넘긴다.
   React.useEffect(() => {
-    setForm(initialForm ?? (isCreate ? { ...emptyForm } : { ...event }));
+    setForm(initialForm ?? (isCreate ? { ...EMPTY_EVENT_FORM } : { ...event }));
     setArtistIds(initialArtistIds ?? []);
     setVenueIds(initialVenueIds ?? []);
     setDirty(false);
@@ -132,16 +147,16 @@ export function EventEditTab({
   };
 
   return (
-    <div className="space-y-4" onInput={markDirty}>
+    <div className="space-y-4">
       <EventFormFields
         form={form}
-        setForm={setForm}
+        setForm={setFormDirty}
         artists={artists}
         venues={venues}
         artistIds={artistIds}
-        setArtistIds={setArtistIds}
+        setArtistIds={setArtistIdsDirty}
         venueIds={venueIds}
-        setVenueIds={setVenueIds}
+        setVenueIds={setVenueIdsDirty}
       />
       <div className="flex justify-end">
         <Button onClick={() => void save()} disabled={submitting}>
