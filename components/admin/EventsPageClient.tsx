@@ -26,14 +26,6 @@ import {
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/Sheet";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -52,8 +44,7 @@ import {
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { formatKst } from "@/lib/format-kst";
 import type { EventRow, OptionItem } from "@/types/event";
-import { EventEditTab } from "@/components/admin/event-sheet/EventEditTab";
-import { EventDetailTab } from "@/components/admin/event-sheet/EventDetailTab";
+import { EventSheet } from "@/components/admin/event-sheet/EventSheet";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
@@ -65,7 +56,6 @@ import {
 } from "@/components/admin/CompletenessFilterBar";
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { EVENT_FIELDS } from "@/lib/completeness";
-import { TimetableSheet } from "@/components/admin/TimetableSheet";
 import { EventDedupSheet } from "@/components/admin/EventDedupSheet";
 import {
   SortableTableHead,
@@ -88,7 +78,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/AlertDialog";
-import type { TimetablePerformanceRow } from "@/types/timetable";
 
 type EventQueryResponse = {
   rows: EventRow[];
@@ -118,21 +107,19 @@ export function EventsPageClient() {
     DEFAULT_ADMIN_PAGE_SIZE,
   );
 
-  const [createOpen, setCreateOpen] = React.useState(false);
-  const [editOpen, setEditOpen] = React.useState(false);
-  const [detailOpen, setDetailOpen] = React.useState(false);
-  const [timetableOpen, setTimetableOpen] = React.useState(false);
-  const [submitting, setSubmitting] = React.useState(false);
   const [fromUrlOpen, setFromUrlOpen] = React.useState(false);
   const [dedupOpen, setDedupOpen] = React.useState(false);
   const [fromUrlInput, setFromUrlInput] = React.useState("");
   const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
-  const [editingEvent, setEditingEvent] = React.useState<EventRow | null>(null);
-  const [detailEvent, setDetailEvent] = React.useState<EventRow | null>(null);
-  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(
-    null,
-  );
+  // 통합 EventSheet (상세/편집/타임테이블 탭) — Task 3. 타임테이블 탭은 Task 4 까지
+  // 플레이스홀더이므로 옛 TimetableSheet(행 "관리" 버튼) 는 여기서 제거한다.
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  const [sheetEvent, setSheetEvent] = React.useState<EventRow | null>(null);
+  const [sheetTab, setSheetTab] = React.useState<
+    "detail" | "edit" | "timetable"
+  >("edit");
+
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
     React.useState(false);
@@ -254,20 +241,6 @@ export function EventsPageClient() {
     },
   });
 
-  const { data: detailTimetable } = useQuery({
-    queryKey: ["detail-timetable", detailEvent?.id],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/admin/timetable?event_id=${detailEvent!.id}`,
-        { cache: "no-store" },
-      );
-      if (!res.ok) return [] as TimetablePerformanceRow[];
-      const json = (await res.json()) as { rows: TimetablePerformanceRow[] };
-      return json.rows;
-    },
-    enabled: detailOpen && !!detailEvent?.has_timetable,
-  });
-
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["admin-events-stats"],
     queryFn: async () => {
@@ -318,33 +291,36 @@ export function EventsPageClient() {
     return map;
   }, [data]);
 
-  // 편집 다이얼로그가 EventEditTab 에 넘길 기존 연결 — event_artists/event_venues 우선,
-  // 없으면 레거시 artist_id/venue_id 단일 필드로 폴백 (openEdit 과 동일 로직).
-  const editInitialArtistIds = React.useMemo(() => {
-    if (!editingEvent) return [];
-    const eaList = eventArtistsMap.get(editingEvent.id);
+  // EventSheet 에 넘길 기존 연결 — event_artists/event_venues 우선, 없으면 레거시
+  // artist_id/venue_id 단일 필드로 폴백. sheetEvent 가 없으면(생성 모드) URL-import
+  // 프리필로 세팅된 artistIds/venueIds 를 그대로 쓴다.
+  const sheetInitialArtistIds = React.useMemo(() => {
+    if (!sheetEvent) return artistIds;
+    const eaList = eventArtistsMap.get(sheetEvent.id);
     return eaList && eaList.length > 0
       ? eaList.map((a) => a.artist_id)
-      : editingEvent.artist_id
-        ? [editingEvent.artist_id]
+      : sheetEvent.artist_id
+        ? [sheetEvent.artist_id]
         : [];
-  }, [editingEvent, eventArtistsMap]);
+  }, [sheetEvent, eventArtistsMap, artistIds]);
 
-  const editInitialVenueIds = React.useMemo(() => {
-    if (!editingEvent) return [];
-    const evList = eventVenuesMap.get(editingEvent.id);
+  const sheetInitialVenueIds = React.useMemo(() => {
+    if (!sheetEvent) return venueIds;
+    const evList = eventVenuesMap.get(sheetEvent.id);
     return evList && evList.length > 0
       ? evList
-      : editingEvent.venue_id
-        ? [editingEvent.venue_id]
+      : sheetEvent.venue_id
+        ? [sheetEvent.venue_id]
         : [];
-  }, [editingEvent, eventVenuesMap]);
+  }, [sheetEvent, eventVenuesMap, venueIds]);
 
   const openCreate = () => {
     setForm({ ...emptyForm });
     setArtistIds([]);
     setVenueIds([]);
-    setCreateOpen(true);
+    setSheetEvent(null);
+    setSheetTab("edit");
+    setSheetOpen(true);
   };
 
   const importFromUrl = async () => {
@@ -413,7 +389,9 @@ export function EventsPageClient() {
 
       setFromUrlOpen(false);
       setFromUrlInput("");
-      setCreateOpen(true);
+      setSheetEvent(null);
+      setSheetTab("edit");
+      setSheetOpen(true);
 
       const artistMsg =
         matchedArtistIds.length > 0
@@ -437,148 +415,21 @@ export function EventsPageClient() {
   };
 
   const openEdit = (event: EventRow) => {
-    setEditingEvent(event);
-    setForm({
-      ...event,
-      start_date: event.start_date?.slice(0, 16),
-      end_date: event.end_date?.slice(0, 16) ?? "",
-      ticket_open_date: event.ticket_open_date?.slice(0, 16) ?? "",
-    });
-    const eaList = eventArtistsMap.get(event.id);
-    setArtistIds(
-      eaList && eaList.length > 0
-        ? eaList.map((a) => a.artist_id)
-        : event.artist_id
-          ? [event.artist_id]
-          : [],
-    );
-    const evList = eventVenuesMap.get(event.id);
-    setVenueIds(
-      evList && evList.length > 0
-        ? evList
-        : event.venue_id
-          ? [event.venue_id]
-          : [],
-    );
-    setEditOpen(true);
+    setSheetEvent(event);
+    setSheetTab("edit");
+    setSheetOpen(true);
   };
 
-  const openDetail = async (event: EventRow) => {
-    setDetailEvent(event); // 목록 행으로 즉시 표시
-    setDetailOpen(true);
-    // 목록 API 가 안 내리는 score_breakdown·field_sources 등을 단건 조회로 채운다.
-    try {
-      const res = await fetch(`/api/admin/events/${event.id}`);
-      if (res.ok) {
-        const { event: full } = (await res.json()) as { event: EventRow };
-        setDetailEvent(full);
-      }
-    } catch {
-      /* 실패 시 목록 행 데이터 유지 */
-    }
+  const openDetail = (event: EventRow) => {
+    setSheetEvent(event);
+    setSheetTab("detail");
+    setSheetOpen(true);
   };
 
   const openTimetable = (event: EventRow) => {
-    setTimetableEvent(event);
-    setTimetableOpen(true);
-  };
-
-  const handleTimetableAdded = async () => {
-    if (!timetableEvent) return;
-    const res = await fetch(`/api/admin/events/${timetableEvent.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ has_timetable: true }),
-    });
-    if (!res.ok) {
-      toast.error("타임테이블 상태 갱신 실패");
-      return;
-    }
-    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
-  };
-
-  const submitCreate = async () => {
-    if (
-      !form.title?.trim() ||
-      !form.start_date ||
-      artistIds.length === 0 ||
-      venueIds.length === 0
-    ) {
-      toast.error("필수 항목을 입력하세요. (공연명, 아티스트, 공연장, 시작일)");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/admin/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          title: form.title.trim(),
-          artist_ids: artistIds,
-          venue_ids: venueIds,
-          end_date: form.end_date || null,
-          ticket_open_date: form.ticket_open_date || null,
-          duration: form.duration || null,
-          age_restriction: form.age_restriction || null,
-          ticket_provider: form.ticket_provider || null,
-          notice_text: form.notice_text || null,
-        }),
-      });
-      const json = (await res.json()) as { detail?: string };
-      if (!res.ok) throw new Error(json.detail ?? "생성 실패");
-      toast.success("공연이 추가되었습니다.");
-      setCreateOpen(false);
-      await refetch();
-    } catch (error) {
-      toast.error("생성 실패", {
-        description: error instanceof Error ? error.message : "알 수 없는 오류",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const submitEdit = async () => {
-    if (!editingEvent) return;
-    // 편집은 공연명·시작일만 필수. 아티스트/공연장은 비어 있어도 허용
-    // (페스티벌·미연결 공연도 예매링크 등 다른 필드를 수정할 수 있어야 함).
-    if (!form.title?.trim() || !form.start_date) {
-      toast.error("필수 항목을 입력하세요. (공연명, 시작일)");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch(`/api/admin/events/${editingEvent.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          title: form.title.trim(),
-          artist_ids: artistIds,
-          venue_ids: venueIds,
-          end_date: form.end_date || null,
-          ticket_open_date: form.ticket_open_date || null,
-          duration: form.duration || null,
-          age_restriction: form.age_restriction || null,
-          ticket_provider: form.ticket_provider || null,
-          booking_url: form.booking_url?.trim() || null,
-          notice_text: form.notice_text || null,
-        }),
-      });
-      const json = (await res.json()) as { detail?: string };
-      if (!res.ok) throw new Error(json.detail ?? "수정 실패");
-      toast.success("공연이 수정되었습니다.");
-      setEditOpen(false);
-      setEditingEvent(null);
-      await refetch();
-    } catch (error) {
-      toast.error("수정 실패", {
-        description: error instanceof Error ? error.message : "알 수 없는 오류",
-      });
-    } finally {
-      setSubmitting(false);
-    }
+    setSheetEvent(event);
+    setSheetTab("timetable");
+    setSheetOpen(true);
   };
 
   /** 낙관적 업데이트 — 활성 admin-events 캐시들의 해당 행을 즉시 patch. 롤백용 이전 스냅샷 반환 */
@@ -1110,112 +961,18 @@ export function EventsPageClient() {
         </CardContent>
       </Card>
 
-      {/* 생성 다이얼로그 */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>공연 추가</DialogTitle>
-            <DialogDescription>
-              필수 항목(공연명, 아티스트, 공연장, 시작일)을 입력하세요.
-            </DialogDescription>
-          </DialogHeader>
-          <EventEditTab
-            event={null}
-            artists={artists}
-            venues={venues}
-            initialForm={form}
-            initialArtistIds={artistIds}
-            initialVenueIds={venueIds}
-            onSaved={() => {
-              setCreateOpen(false);
-              void refetch();
-            }}
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* 수정 다이얼로그 */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>공연 수정</DialogTitle>
-            <DialogDescription>
-              필수 항목(공연명, 아티스트, 공연장, 시작일)을 입력하세요.
-            </DialogDescription>
-          </DialogHeader>
-          <EventEditTab
-            event={editingEvent}
-            artists={artists}
-            venues={venues}
-            initialForm={editingEvent ?? undefined}
-            initialArtistIds={editInitialArtistIds}
-            initialVenueIds={editInitialVenueIds}
-            onSaved={() => {
-              setEditOpen(false);
-              setEditingEvent(null);
-              void refetch();
-            }}
-          />
-        </DialogContent>
-      </Dialog>
-
-      {/* 상세 시트 */}
-      <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
-        <SheetContent className="flex w-full flex-col sm:max-w-xl">
-          {detailEvent
-            ? (() => {
-                const ea = eventArtistsMap.get(detailEvent.id);
-                const artistNames =
-                  ea && ea.length > 0
-                    ? ea.map((a) => a.artist_name).join(", ")
-                    : (artistMap.get(detailEvent.artist_id) ?? "-");
-                const ev = eventVenuesMap.get(detailEvent.id);
-                const venueNames =
-                  ev && ev.length > 0
-                    ? ev.map((vid) => venueMap.get(vid) ?? vid).join(", ")
-                    : (venueMap.get(detailEvent.venue_id) ?? "-");
-                return (
-                  <>
-                    <SheetHeader>
-                      <SheetTitle>{detailEvent.title}</SheetTitle>
-                      <SheetDescription>
-                        {artistNames} · {venueNames}
-                      </SheetDescription>
-                    </SheetHeader>
-                    <EventDetailTab
-                      event={detailEvent}
-                      artistNames={artistNames}
-                      venueNames={venueNames}
-                      timetable={detailTimetable}
-                    />
-                    <SheetFooter>
-                      <Button
-                        variant="outline"
-                        onClick={() => setDetailOpen(false)}
-                      >
-                        닫기
-                      </Button>
-                      <Button
-                        onClick={() => {
-                          setDetailOpen(false);
-                          openEdit(detailEvent);
-                        }}
-                      >
-                        편집하기
-                      </Button>
-                    </SheetFooter>
-                  </>
-                );
-              })()
-            : null}
-        </SheetContent>
-      </Sheet>
-
-      <TimetableSheet
-        event={timetableEvent}
-        open={timetableOpen}
-        onOpenChange={setTimetableOpen}
-        onHasTimetableChange={() => void handleTimetableAdded()}
+      {/* 통합 시트(상세/편집/타임테이블 탭) */}
+      <EventSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        event={sheetEvent}
+        defaultTab={sheetTab}
+        artists={artists}
+        venues={venues}
+        initialForm={sheetEvent ? undefined : form}
+        initialArtistIds={sheetInitialArtistIds}
+        initialVenueIds={sheetInitialVenueIds}
+        onChanged={() => void refetch()}
       />
 
       <EventDedupSheet open={dedupOpen} onClose={() => setDedupOpen(false)} />

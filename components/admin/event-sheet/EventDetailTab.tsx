@@ -12,13 +12,7 @@ const STATUS_LABEL: Record<EventStatus, string> = {
   ended: "종료",
 };
 
-export function InfoItem({
-  label,
-  value,
-}: {
-  label: string;
-  value: string;
-}) {
+export function InfoItem({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border border-border p-3">
       <p className="text-caption text-text-tertiary">{label}</p>
@@ -41,6 +35,8 @@ export function EventDetailTab({
   return (
     <div className="flex-1 space-y-4 overflow-y-auto py-4 text-body-sm">
       <div className="grid gap-3 sm:grid-cols-2">
+        <InfoItem label="아티스트" value={artistNames || "-"} />
+        <InfoItem label="공연장" value={venueNames || "-"} />
         <InfoItem label="상태" value={STATUS_LABEL[event.status]} />
         <InfoItem label="배너 노출" value={event.is_banner ? "ON" : "OFF"} />
         <InfoItem label="시작일시" value={formatKst(event.start_date)} />
@@ -74,9 +70,7 @@ export function EventDetailTab({
           </p>
           <div className="space-y-1">
             {(timetable ?? []).length === 0 ? (
-              <p className="text-caption text-text-tertiary">
-                불러오는 중...
-              </p>
+              <p className="text-caption text-text-tertiary">불러오는 중...</p>
             ) : (
               (timetable ?? []).map((p) => (
                 <div
