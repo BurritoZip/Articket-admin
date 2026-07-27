@@ -112,8 +112,7 @@ export function EventsPageClient() {
   const [fromUrlInput, setFromUrlInput] = React.useState("");
   const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
-  // 통합 EventSheet (상세/편집/타임테이블 탭) — Task 3. 타임테이블 탭은 Task 4 까지
-  // 플레이스홀더이므로 옛 TimetableSheet(행 "관리" 버튼) 는 여기서 제거한다.
+  // 통합 EventSheet (상세/편집/타임테이블 탭)
   const [sheetOpen, setSheetOpen] = React.useState(false);
   const [sheetEvent, setSheetEvent] = React.useState<EventRow | null>(null);
   const [sheetTab, setSheetTab] = React.useState<

@@ -2,10 +2,16 @@
 
 import * as React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/Sheet";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/Sheet";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { EventDetailTab } from "./EventDetailTab";
 import { EventEditTab } from "./EventEditTab";
+import { TimetablePanel } from "./TimetablePanel";
 import type { EventRow, OptionItem } from "@/types/event";
 import type { TimetablePerformanceRow } from "@/types/timetable";
 
@@ -73,10 +79,9 @@ export function EventSheet({
   const { data: timetable } = useQuery({
     queryKey: ["sheet-timetable", current?.id],
     queryFn: async () => {
-      const res = await fetch(
-        `/api/admin/timetable?event_id=${current!.id}`,
-        { cache: "no-store" },
-      );
+      const res = await fetch(`/api/admin/timetable?event_id=${current!.id}`, {
+        cache: "no-store",
+      });
       if (!res.ok) return [] as TimetablePerformanceRow[];
       const json = (await res.json()) as { rows: TimetablePerformanceRow[] };
       return json.rows;
@@ -105,9 +110,7 @@ export function EventSheet({
   const venueNames = React.useMemo(() => {
     if (!current) return "";
     if (initialVenueIds && initialVenueIds.length > 0)
-      return initialVenueIds
-        .map((id) => venueNameMap.get(id) ?? id)
-        .join(", ");
+      return initialVenueIds.map((id) => venueNameMap.get(id) ?? id).join(", ");
     return current.venue_id ? (venueNameMap.get(current.venue_id) ?? "-") : "-";
   }, [current, initialVenueIds, venueNameMap]);
 
@@ -118,7 +121,11 @@ export function EventSheet({
     setTab(next);
   };
   const requestOpenChange = (o: boolean) => {
-    if (!o && dirty && !confirm("저장하지 않은 변경이 있습니다. 이동/닫으시겠어요?"))
+    if (
+      !o &&
+      dirty &&
+      !confirm("저장하지 않은 변경이 있습니다. 이동/닫으시겠어요?")
+    )
       return;
     onOpenChange(o);
   };
@@ -172,9 +179,10 @@ export function EventSheet({
           </TabsContent>
           <TabsContent value="timetable" className="flex-1 overflow-y-auto">
             {current && (
-              <div className="py-4 text-body-sm text-text-secondary">
-                타임테이블 — Task 4
-              </div>
+              <TimetablePanel
+                event={current}
+                onHasTimetableChange={onChanged}
+              />
             )}
           </TabsContent>
         </Tabs>

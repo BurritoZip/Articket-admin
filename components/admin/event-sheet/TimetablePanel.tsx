@@ -25,13 +25,6 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/Sheet";
-import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -54,9 +47,7 @@ import type { TimetablePerformanceRow } from "@/types/timetable";
 import type { EventRow } from "@/types/event";
 
 type Props = {
-  event: EventRow | null;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
+  event: EventRow;
   onHasTimetableChange: () => void;
 };
 
@@ -74,12 +65,7 @@ const EMPTY_FORM: Omit<
   genre: "",
 };
 
-export function TimetableSheet({
-  event,
-  open,
-  onOpenChange,
-  onHasTimetableChange,
-}: Props) {
+export function TimetablePanel({ event, onHasTimetableChange }: Props) {
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = React.useState(false);
   const [importOpen, setImportOpen] = React.useState(false);
@@ -155,7 +141,7 @@ export function TimetableSheet({
       if (!res.ok) throw new Error("타임테이블을 불러오지 못했습니다.");
       return res.json() as Promise<{ rows: TimetablePerformanceRow[] }>;
     },
-    enabled: open && !!event?.id,
+    enabled: !!event?.id,
   });
 
   const rows = React.useMemo(() => data?.rows ?? [], [data]);
@@ -511,97 +497,86 @@ export function TimetableSheet({
 
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent className="flex w-full flex-col sm:max-w-2xl">
-          <SheetHeader>
-            <SheetTitle>타임테이블 관리</SheetTitle>
-            <SheetDescription>
-              {event?.title ?? ""} 공연의 타임테이블을 관리합니다.
-            </SheetDescription>
-          </SheetHeader>
+      <div className="flex items-center justify-between pt-2">
+        <p className="text-body-sm text-text-secondary">
+          총 {rows.length}개 출연
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" variant="secondary" onClick={openImport}>
+            <Wand2 className="mr-1 h-4 w-4" />
+            자동 입력
+          </Button>
+          <Button size="sm" onClick={openAdd}>
+            <Plus className="mr-1 h-4 w-4" />
+            공연 추가
+          </Button>
+        </div>
+      </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <p className="text-body-sm text-text-secondary">
-              총 {rows.length}개 출연
+      <div className="flex-1 space-y-6 overflow-y-auto py-2">
+        {isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-20 w-full" />
+            <Skeleton className="h-20 w-full" />
+          </div>
+        ) : byDay.size === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-surface-muted/40 py-12 text-center">
+            <Music2 className="mx-auto mb-3 h-8 w-8 text-text-tertiary" />
+            <p className="text-body text-text-secondary">
+              등록된 공연이 없습니다.
             </p>
-            <div className="flex gap-2">
-              <Button size="sm" variant="secondary" onClick={openImport}>
-                <Wand2 className="mr-1 h-4 w-4" />
-                자동 입력
-              </Button>
-              <Button size="sm" onClick={openAdd}>
-                <Plus className="mr-1 h-4 w-4" />
-                공연 추가
-              </Button>
-            </div>
           </div>
-
-          <div className="flex-1 space-y-6 overflow-y-auto py-2">
-            {isLoading ? (
-              <div className="space-y-3">
-                <Skeleton className="h-20 w-full" />
-                <Skeleton className="h-20 w-full" />
-              </div>
-            ) : byDay.size === 0 ? (
-              <div className="rounded-lg border border-dashed border-border bg-surface-muted/40 py-12 text-center">
-                <Music2 className="mx-auto mb-3 h-8 w-8 text-text-tertiary" />
-                <p className="text-body text-text-secondary">
-                  등록된 공연이 없습니다.
-                </p>
-              </div>
-            ) : (
-              Array.from(byDay.entries()).map(([day, perfs]) => (
-                <div key={day}>
-                  <h3 className="mb-3 text-label font-semibold text-text-primary">
-                    DAY {day}{" "}
-                    <span className="ml-1 text-caption font-normal text-text-tertiary">
-                      {perfs[0]?.date_string}
-                    </span>
-                  </h3>
-                  <div className="space-y-2">
-                    {perfs.map((p) => (
-                      <div
-                        key={p.id}
-                        className="flex items-center gap-3 rounded-md border border-border bg-surface p-3"
+        ) : (
+          Array.from(byDay.entries()).map(([day, perfs]) => (
+            <div key={day}>
+              <h3 className="mb-3 text-label font-semibold text-text-primary">
+                DAY {day}{" "}
+                <span className="ml-1 text-caption font-normal text-text-tertiary">
+                  {perfs[0]?.date_string}
+                </span>
+              </h3>
+              <div className="space-y-2">
+                {perfs.map((p) => (
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-3 rounded-md border border-border bg-surface p-3"
+                  >
+                    <div className="flex min-w-[90px] items-center gap-1 text-caption text-text-tertiary">
+                      <Clock className="h-3 w-3" />
+                      {p.start_time}–{p.end_time}
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-body-sm font-medium text-text-primary">
+                        {p.artist_name}
+                      </p>
+                      <p className="text-caption text-text-tertiary">
+                        {p.stage_name}
+                        {p.genre ? ` · ${p.genre}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button
+                        size="icon"
+                        variant="outline"
+                        onClick={() => openEdit(p)}
                       >
-                        <div className="flex min-w-[90px] items-center gap-1 text-caption text-text-tertiary">
-                          <Clock className="h-3 w-3" />
-                          {p.start_time}–{p.end_time}
-                        </div>
-                        <div className="flex-1">
-                          <p className="text-body-sm font-medium text-text-primary">
-                            {p.artist_name}
-                          </p>
-                          <p className="text-caption text-text-tertiary">
-                            {p.stage_name}
-                            {p.genre ? ` · ${p.genre}` : ""}
-                          </p>
-                        </div>
-                        <div className="flex gap-1">
-                          <Button
-                            size="icon"
-                            variant="outline"
-                            onClick={() => openEdit(p)}
-                          >
-                            <Pencil className="h-3.5 w-3.5" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="danger-weak"
-                            onClick={() => setDeleteId(p.id)}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        size="icon"
+                        variant="danger-weak"
+                        onClick={() => setDeleteId(p.id)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
-                </div>
-              ))
-            )}
-          </div>
-        </SheetContent>
-      </Sheet>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
 
       <Dialog open={addOpen} onOpenChange={setAddOpen}>
         <DialogContent>
