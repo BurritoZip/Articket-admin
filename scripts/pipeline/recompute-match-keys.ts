@@ -47,8 +47,6 @@ async function main() {
   const { createServiceRoleClient } =
     await import("../../lib/supabase/service-role");
   const { eventDedupKey } = await import("../../lib/ingestion/match-key");
-  const { absorbEvents, pickCanonical } =
-    await import("../../lib/ingestion/event-auto-merge");
   const db = createServiceRoleClient();
 
   // 활성 이벤트 fetch — pickCanonical/infoScore 가 읽는 전체 컬럼 + dedup_key.
@@ -87,7 +85,7 @@ async function main() {
       vname.set(v.id, v.normalized_name);
   }
 
-  // 새 키로 그룹핑
+  // 새 키로 그룹핑(미리보기/요약용 — 실제 collapse 는 lib 의 collapseByStrongKey 가 재계산해서 한다)
   const groups = new Map<string, Row[]>();
   for (const e of all) {
     const key = eventDedupKey(
@@ -117,25 +115,14 @@ async function main() {
     return;
   }
 
-  // canonical = event-auto-merge 와 동일 기준(pickCanonical): artist_id 보유 →
-  // 정보량(infoScore) → 제목 길이 → 최초 등록일. absorbEvents 는 흡수 행의
-  // event_artists/timetable_performances 를 CASCADE 로 삭제(이관 안 함)하므로,
-  // 라인업 없는 행을 canonical 로 잘못 고르면 라인업이 조용히 사라진다.
-  let collapsed = 0,
-    keyed = 0;
-  for (const [key, g] of dupGroups) {
-    const canon = pickCanonical(g);
-    const others = g.filter((e) => e.id !== canon.id).map((e) => e.id);
-    const n = await absorbEvents(db, canon.id, others, "recompute_collapse");
-    collapsed += n;
-    // 생존 행 키 세팅(흡수로 충돌 행 삭제됨 → UNIQUE 안전)
-    const { error } = await db
-      .from("events")
-      .update({ dedup_key: key })
-      .eq("id", canon.id);
-    if (!error) keyed++;
-  }
+  // canonical 선정 + 흡수 + 생존 행 키 세팅 — lib/ingestion/event-auto-merge 의
+  // collapseByStrongKey() 로 위임(파이프라인 pass0 와 동일 로직, 중복 구현 금지).
+  const { collapseByStrongKey } =
+    await import("../../lib/ingestion/event-auto-merge");
+  const { collapsed } = await collapseByStrongKey();
+
   // 단일 그룹(중복 아님)도 키 갱신
+  let keyed = 0;
   for (const [key, g] of Array.from(groups)) {
     if (g.length !== 1) continue;
     if (g[0].dedup_key === key) continue;

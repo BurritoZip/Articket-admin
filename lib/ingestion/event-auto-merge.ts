@@ -24,6 +24,7 @@ import {
   normTitleKey,
   coreTitleKey,
   festivalKey,
+  eventDedupKey,
 } from "@/lib/ingestion/match-key";
 
 export interface Ev {
@@ -308,15 +309,85 @@ export async function reassignEventUserData(
   }
 }
 
+/**
+ * 강한 키(eventDedupKey) 기준 collapse — recompute-match-keys.ts 의 apply 경로와 동일 로직을
+ * 라이브러리 함수로 공용화. dry-run/로그 없이 실행만 하고 흡수 건수를 반환한다.
+ * 매 파이프라인 run 의 auto-merge 맨 앞(pass0)에서 호출돼 새로 샌 강한-키 중복을 상시 정리한다.
+ */
+export async function collapseByStrongKey(): Promise<{ collapsed: number }> {
+  const db = createServiceRoleClient();
+
+  type Row = Ev & { dedup_key: string | null };
+  const all: Row[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data } = await db
+      .from("events")
+      .select(
+        "id,title,normalized_title,start_date,end_date,artist_id,venue_id,poster_url,genre,age_restriction,ticket_open_date,ticket_provider,notice_text,booking_url,source_urls,created_at,dedup_key",
+      )
+      .is("merged_into_event_id", null)
+      .eq("is_hidden", false)
+      .range(f, f + 999);
+    if (!data?.length) break;
+    all.push(...(data as Row[]));
+    if (data.length < 1000) break;
+  }
+
+  // 공연장 정규화명 조회. NULL 은 그대로 보존(?? "" 로 뭉개지 않음) — ingest 와 동일 규칙.
+  const vname = new Map<string, string | null>();
+  const venueIds = Array.from(
+    new Set(all.map((e) => e.venue_id).filter(Boolean)),
+  ) as string[];
+  for (let i = 0; i < venueIds.length; i += 500) {
+    const { data } = await db
+      .from("venues")
+      .select("id,normalized_name")
+      .in("id", venueIds.slice(i, i + 500));
+    for (const v of (data as {
+      id: string;
+      normalized_name: string | null;
+    }[]) ?? [])
+      vname.set(v.id, v.normalized_name);
+  }
+
+  const groups = new Map<string, Row[]>();
+  for (const e of all) {
+    const key = eventDedupKey(
+      e.title,
+      e.venue_id ? (vname.get(e.venue_id) ?? null) : null,
+      e.start_date,
+    );
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(e);
+  }
+
+  const dupGroups = Array.from(groups.entries()).filter(
+    ([, g]) => g.length > 1,
+  );
+
+  let collapsed = 0;
+  for (const [key, g] of dupGroups) {
+    const canon = pickCanonical(g);
+    const others = g.filter((e) => e.id !== canon.id).map((e) => e.id);
+    const n = await absorbEvents(db, canon.id, others, "recompute_collapse");
+    collapsed += n;
+    await db.from("events").update({ dedup_key: key }).eq("id", canon.id);
+  }
+  return { collapsed };
+}
+
 export async function autoMergeDuplicateEvents(): Promise<{
   clusters: number;
   merged: number;
 }> {
   const db = createServiceRoleClient();
-  const all = await fetchAll(db);
   const consumed = new Set<string>();
   let clusters = 0;
   let merged = 0;
+
+  const strong = await collapseByStrongKey();
+  merged += strong.collapsed;
+
+  const all = await fetchAll(db);
 
   // 패스 1: artist_id + 공연일
   const byArtistDay = new Map<string, Ev[]>();
