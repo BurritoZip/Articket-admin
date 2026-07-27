@@ -31,6 +31,14 @@ import {
 } from "@/lib/admin-pagination";
 import { formatKst } from "@/lib/format-kst";
 
+interface Breadcrumb {
+  time?: string;
+  kind?: string; // screen | action | api
+  screen?: string | null;
+  message?: string;
+  meta?: Record<string, string> | null;
+}
+
 interface ErrorRow {
   id: string;
   platform: string;
@@ -39,6 +47,8 @@ interface ErrorRow {
   domain: string | null;
   stack_trace: string | null;
   context: Record<string, unknown> | null;
+  screen: string | null;
+  breadcrumbs: Breadcrumb[] | null;
   app_version: string | null;
   os_version: string | null;
   device_model: string | null;
@@ -46,6 +56,13 @@ interface ErrorRow {
   is_resolved: boolean;
   created_at: string;
 }
+
+// 흔적 종류별 아이콘 (iOS AppLog 콘솔과 동일한 시각 언어)
+const CRUMB_ICON: Record<string, string> = {
+  screen: "🧭",
+  action: "🖲️",
+  api: "🌐",
+};
 
 interface ErrorsResponse {
   data: ErrorRow[];
@@ -260,6 +277,7 @@ export function ErrorLogsPageClient() {
                               value={deviceLabel(row.device_model)}
                             />
                             <Meta label="사용자" value={row.app_user_id} />
+                            <Meta label="화면" value={row.screen} />
                           </div>
                           {row.stack_trace && (
                             <div>
@@ -279,6 +297,37 @@ export function ErrorLogsPageClient() {
                               <pre className="max-h-48 overflow-auto rounded-md bg-surface p-3 text-caption">
                                 {JSON.stringify(row.context, null, 2)}
                               </pre>
+                            </div>
+                          )}
+                          {row.breadcrumbs && row.breadcrumbs.length > 0 && (
+                            <div>
+                              <p className="mb-1 font-medium text-text-secondary">
+                                흔적 (직전 화면 → UI → API)
+                              </p>
+                              <ol className="space-y-1 rounded-md bg-surface p-3 text-caption">
+                                {row.breadcrumbs.map((b, i) => {
+                                  const meta = b.meta
+                                    ? Object.entries(b.meta)
+                                        .map(([k, v]) => `${k}=${v}`)
+                                        .join(" ")
+                                    : "";
+                                  return (
+                                    <li key={i} className="font-mono">
+                                      {(CRUMB_ICON[b.kind ?? ""] ?? "•") + " "}
+                                      <span className="text-text-secondary">
+                                        {b.screen ?? "-"}
+                                      </span>{" "}
+                                      {b.message}
+                                      {meta && (
+                                        <span className="text-text-tertiary">
+                                          {" "}
+                                          · {meta}
+                                        </span>
+                                      )}
+                                    </li>
+                                  );
+                                })}
+                              </ol>
                             </div>
                           )}
                           <Button
