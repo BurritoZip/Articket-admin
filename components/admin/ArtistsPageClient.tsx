@@ -311,7 +311,7 @@ export function ArtistsPageClient() {
       toast.success("아티스트가 추가되었습니다.");
       setCreateOpen(false);
       await refetch();
-      queryClient.invalidateQueries({ queryKey: ["admin-artists-list"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-artists"] });
     } catch (error) {
       toast.error("생성 실패", {
         description: error instanceof Error ? error.message : "알 수 없는 오류",
@@ -344,7 +344,7 @@ export function ArtistsPageClient() {
       setEditOpen(false);
       setEditingArtist(null);
       await refetch();
-      queryClient.invalidateQueries({ queryKey: ["admin-artists-list"] });
+      queryClient.invalidateQueries({ queryKey: ["admin-artists"] });
     } catch (error) {
       toast.error("수정 실패", {
         description: error instanceof Error ? error.message : "알 수 없는 오류",

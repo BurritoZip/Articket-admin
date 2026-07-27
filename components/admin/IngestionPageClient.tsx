@@ -667,6 +667,7 @@ function DataQualityTab() {
         method: "POST",
       });
       const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? "상태 업데이트 실패");
       setSweepResult({
         updated: json.updated ?? 0,
         breakdown: json.breakdown ?? {},
@@ -683,13 +684,15 @@ function DataQualityTab() {
     setMerging(true);
     const id = toast.loading("중복 자동 병합 중...");
     try {
+      const okJson = async (url: string) => {
+        const r = await fetch(url, { method: "POST" });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? "자동 병합 실패");
+        return j;
+      };
       const [artistRes, venueRes] = await Promise.all([
-        fetch("/api/admin/artists/auto-merge", { method: "POST" }).then((r) =>
-          r.json(),
-        ),
-        fetch("/api/admin/venues/auto-merge", { method: "POST" }).then((r) =>
-          r.json(),
-        ),
+        okJson("/api/admin/artists/auto-merge"),
+        okJson("/api/admin/venues/auto-merge"),
       ]);
       setMergeResult({
         artists: artistRes.merged ?? 0,
