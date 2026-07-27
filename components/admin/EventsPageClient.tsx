@@ -324,6 +324,28 @@ export function EventsPageClient() {
     return map;
   }, [data]);
 
+  // 편집 다이얼로그가 EventEditTab 에 넘길 기존 연결 — event_artists/event_venues 우선,
+  // 없으면 레거시 artist_id/venue_id 단일 필드로 폴백 (openEdit 과 동일 로직).
+  const editInitialArtistIds = React.useMemo(() => {
+    if (!editingEvent) return [];
+    const eaList = eventArtistsMap.get(editingEvent.id);
+    return eaList && eaList.length > 0
+      ? eaList.map((a) => a.artist_id)
+      : editingEvent.artist_id
+        ? [editingEvent.artist_id]
+        : [];
+  }, [editingEvent, eventArtistsMap]);
+
+  const editInitialVenueIds = React.useMemo(() => {
+    if (!editingEvent) return [];
+    const evList = eventVenuesMap.get(editingEvent.id);
+    return evList && evList.length > 0
+      ? evList
+      : editingEvent.venue_id
+        ? [editingEvent.venue_id]
+        : [];
+  }, [editingEvent, eventVenuesMap]);
+
   const openCreate = () => {
     setForm({ ...emptyForm });
     setArtistIds([]);
@@ -1107,6 +1129,9 @@ export function EventsPageClient() {
             event={null}
             artists={artists}
             venues={venues}
+            initialForm={form}
+            initialArtistIds={artistIds}
+            initialVenueIds={venueIds}
             onSaved={() => {
               setCreateOpen(false);
               void refetch();
@@ -1128,6 +1153,9 @@ export function EventsPageClient() {
             event={editingEvent}
             artists={artists}
             venues={venues}
+            initialForm={editingEvent ?? undefined}
+            initialArtistIds={editInitialArtistIds}
+            initialVenueIds={editInitialVenueIds}
             onSaved={() => {
               setEditOpen(false);
               setEditingEvent(null);
