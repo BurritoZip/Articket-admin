@@ -190,6 +190,41 @@ function parseStageTimeSlot(
   };
 }
 
+/**
+ * 같은 무대(day+stage)에서 시간이 겹치는 공연을 검출해 경고 이슈로 반환.
+ * 한 무대는 물리적으로 동시 공연 불가 → 겹침은 소스 텍스트의 스테이지/시간 오배정 신호.
+ * (앱 그리드는 무대 칼럼×시간에 정직하게 그리므로, 겹치면 블록이 서로 위에 겹쳐 렌더됨)
+ */
+function detectStageOverlaps(
+  rows: ParsedTimetableRow[],
+): TimetableImportIssue[] {
+  const issues: TimetableImportIssue[] = [];
+  const groups = new Map<string, ParsedTimetableRow[]>();
+  for (const r of rows) {
+    const key = `${r.day_number}||${r.stage_name}`;
+    const list = groups.get(key);
+    if (list) list.push(r);
+    else groups.set(key, [r]);
+  }
+  for (const list of Array.from(groups.values())) {
+    const sorted = [...list].sort(
+      (a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
+    );
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const cur = sorted[i];
+      if (timeToMinutes(cur.start_time) < timeToMinutes(prev.end_time)) {
+        issues.push({
+          line: `${cur.stage_name} · DAY${cur.day_number} · ${prev.artist_name}(${prev.start_time}~${prev.end_time}) ↔ ${cur.artist_name}(${cur.start_time}~${cur.end_time})`,
+          reason:
+            "같은 무대에서 시간이 겹칩니다 — 한 무대는 동시 공연 불가. 스테이지/시간 배정을 확인하세요.",
+        });
+      }
+    }
+  }
+  return issues;
+}
+
 export function parseTimetableText(
   text: string,
   event: EventInfo,
@@ -271,6 +306,9 @@ export function parseTimetableText(
       reason: "다음 줄에서 아티스트명을 찾지 못했습니다.",
     });
   }
+
+  // 같은 무대 시간겹침 경고 — 소스의 스테이지/시간 오배정을 import 프리뷰에서 잡는다
+  issues.push(...detectStageOverlaps(rows));
 
   return { rows, issues };
 }
