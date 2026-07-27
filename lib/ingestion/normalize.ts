@@ -115,6 +115,37 @@ export function parseDate(raw: string | null | undefined): string | null {
   return null;
 }
 
+/**
+ * 예매 오픈 일시 파서 — 시각(HH:MM)을 보존한다.
+ *
+ * parseDate 는 KOREAN_DATE_PATTERNS 로 날짜만 뽑아 시각을 버리고, 결과가 오프셋 없는
+ * `YYYY-MM-DD` 라 timestamptz 로 저장되면 UTC 자정(=09시 KST)으로 굳어 9시간 스큐가 생긴다.
+ * 예매 오픈은 "오후 8시 오픈"처럼 시각이 중요하므로(iOS '오픈 예정' 노출 타이밍) 별도 파서를 쓴다.
+ *   (a) 이미 시각 포함 ISO(예: yanolja `2026-08-05T20:00:00+09:00`)는 그대로 보존
+ *   (b) 날짜+시각(`2026.08.05 20:00`)은 KST 로 파싱
+ *   (c) 날짜만이면 KST 자정(`...T00:00:00+09:00`)으로 — 오프셋을 박아 스큐 제거
+ */
+export function parseTicketOpenDateTime(
+  raw: string | null | undefined,
+): string | null {
+  const u = raw?.trim();
+  if (!u) return null;
+  // (a) 시각 포함 ISO 그대로
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(u) && !isNaN(Date.parse(u)))
+    return u;
+  // (b) 날짜 + 시각
+  const dt = u.match(
+    /(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})\D+(\d{1,2}):(\d{2})/,
+  );
+  if (dt) {
+    const [, y, mo, d, h, mi] = dt;
+    return `${y}-${mo.padStart(2, "0")}-${d.padStart(2, "0")}T${h.padStart(2, "0")}:${mi}:00+09:00`;
+  }
+  // (c) 날짜만 → KST 자정
+  const dateOnly = parseDate(u);
+  return dateOnly ? `${dateOnly}T00:00:00+09:00` : null;
+}
+
 export function parseEndDate(raw: string | null | undefined): string | null {
   if (!raw?.trim()) return null;
   // 2025.07.04 ~ 07.06 — extract trailing date
@@ -179,7 +210,7 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
   const normalizedVenueName = normalizeVenueName(raw.venueName, raw.title);
   const startDate = parseDate(raw.startDate);
   const endDate = parseEndDate(raw.endDate) ?? parseEndDate(raw.startDate);
-  const ticketOpenDate = parseDate(raw.ticketOpenDate);
+  const ticketOpenDate = parseTicketOpenDateTime(raw.ticketOpenDate);
 
   return {
     title: displayTitle,
