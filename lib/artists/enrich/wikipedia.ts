@@ -16,6 +16,7 @@ export interface WikipediaProfile {
   country?: string;
   related?: string; // Associated acts / 그룹
   label?: string; // Record label
+  avatar_url?: string; // 인포박스 대표 이미지(아티스트 사진)
   source_url: string;
 }
 
@@ -32,6 +33,32 @@ async function rateLimit() {
   const wait = RATE_LIMIT_MS - (now - lastCall);
   if (wait > 0) await new Promise((r) => setTimeout(r, wait));
   lastCall = Date.now();
+}
+
+/** Wikipedia pageimages API → 페이지 대표 이미지(썸네일) URL. 아이콘/장식 없이 실제 사진만. */
+async function fetchPageImage(
+  title: string,
+  lang: "ko" | "en",
+): Promise<string | undefined> {
+  try {
+    await rateLimit();
+    const url = `https://${lang}.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=pageimages&piprop=thumbnail&pithumbsize=400&format=json`;
+    const res = await fetch(url, {
+      headers: HEADERS,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return undefined;
+    const data = (await res.json()) as {
+      query?: { pages?: Record<string, { thumbnail?: { source?: string } }> };
+    };
+    const pages = data.query?.pages ?? {};
+    for (const p of Object.values(pages)) {
+      if (p.thumbnail?.source) return p.thumbnail.source;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Wikipedia API 검색 → 페이지 제목 반환 */
@@ -136,6 +163,8 @@ function parseInfobox(
     }
   });
 
+  // 인포박스 대표 이미지(아티스트 사진). 전용 이미지 셀(.infobox-image) 우선,
+  // 없으면 첫 인포박스 사진 — 국기·장식 아이콘(Picto/Flag/svg/logo/speaker 등) 제외.
   // 한국어 위키에서 영문명 추출 시도 (제목 옆 괄호 내 영문)
   if (lang === "ko" && !profile.name_en) {
     const title = $("h1.firstHeading").text();
@@ -164,7 +193,11 @@ export async function fetchWikipediaProfile(
         const html = await res.text();
         const $ = cheerio.load(html);
         const result = parseInfobox($, KO_FIELD_MAP, "ko", url);
-        if (result) return result;
+        if (result) {
+          if (!result.avatar_url)
+            result.avatar_url = await fetchPageImage(koTitle, "ko");
+          return result;
+        }
       }
     }
   } catch {
@@ -184,7 +217,10 @@ export async function fetchWikipediaProfile(
       if (res.ok) {
         const html = await res.text();
         const $ = cheerio.load(html);
-        return parseInfobox($, EN_FIELD_MAP, "en", url);
+        const result = parseInfobox($, EN_FIELD_MAP, "en", url);
+        if (result && !result.avatar_url)
+          result.avatar_url = await fetchPageImage(enTitle, "en");
+        return result;
       }
     }
   } catch {

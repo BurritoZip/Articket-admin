@@ -63,6 +63,7 @@ const SOURCE_FIELDS: Record<EnrichSource, EnrichField[]> = {
     "related",
     "label",
     "country",
+    "avatar_url",
   ],
 };
 

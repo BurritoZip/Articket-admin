@@ -56,7 +56,7 @@ async function main() {
     try {
       const r = await enrichArtist(a.id, {
         force: true,
-        sources: ["melon", "naver"],
+        sources: ["melon", "naver", "wikipedia"],
       });
       if (r.addedFields.includes("avatar_url")) filled++;
     } catch {

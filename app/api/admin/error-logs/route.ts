@@ -28,7 +28,7 @@ export async function GET(request: Request) {
   let query = supabase
     .from("app_error_logs")
     .select(
-      "id, platform, error_type, message, domain, stack_trace, context, app_version, os_version, device_model, app_user_id, is_resolved, created_at",
+      "id, platform, error_type, message, domain, stack_trace, context, screen, breadcrumbs, app_version, os_version, device_model, app_user_id, is_resolved, created_at",
       { count: "exact" },
     )
     .order("created_at", { ascending: false })
