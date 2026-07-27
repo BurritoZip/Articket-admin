@@ -45,6 +45,7 @@ import { differenceInCalendarDays, parseISO } from "date-fns";
 import { formatKst } from "@/lib/format-kst";
 import type { EventRow, OptionItem } from "@/types/event";
 import { EventSheet } from "@/components/admin/event-sheet/EventSheet";
+import { EMPTY_EVENT_FORM } from "@/components/admin/event-sheet/EventEditTab";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
@@ -123,21 +124,7 @@ export function EventsPageClient() {
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
     React.useState(false);
 
-  const emptyForm: Partial<EventRow> = {
-    title: "",
-    artist_id: "",
-    venue_id: "",
-    start_date: "",
-    end_date: "",
-    status: "upcoming",
-    genre: "",
-    duration: "",
-    age_restriction: "",
-    ticket_open_date: "",
-    ticket_provider: "",
-    notice_text: "",
-    is_banner: false,
-  };
+  const emptyForm = EMPTY_EVENT_FORM;
 
   const [form, setForm] = React.useState<Partial<EventRow>>(emptyForm);
   const [artistIds, setArtistIds] = React.useState<string[]>([]);
