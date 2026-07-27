@@ -20,6 +20,11 @@
  * (유저 데이터 CASCADE 손실은 FK 재지정으로 방지 — reassignEventUserData.)
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import {
+  normTitleKey,
+  coreTitleKey,
+  festivalKey,
+} from "@/lib/ingestion/match-key";
 
 interface Ev {
   id: string;
@@ -80,13 +85,10 @@ function infoScore(e: Ev): number {
   return cols.reduce((n, c) => n + (isBlank(e[c]) ? 0 : 1), 0);
 }
 
-function normTitle(e: Ev): string {
-  // 영숫자+한글만 남기고 전부 제거 — 전각/반각 문장부호(＃#·．.·［］[] 등) 차이를 흡수.
-  return (e.normalized_title ?? e.title ?? "")
-    .normalize("NFKC") // 전각→반각 정규화
-    .toLowerCase()
-    .replace(/[^a-z0-9가-힣]/g, "");
-}
+// 영숫자+한글만 남기고 전부 제거 — 전각/반각 문장부호(＃#·．.·［］[] 등) 차이를 흡수.
+// 공용 match-key 로 위임(lib/ingestion/match-key.ts) — 로직은 거기서 관리.
+const normTitle = (e: Ev): string =>
+  normTitleKey(e.normalized_title ?? e.title ?? "");
 
 function dayOf(e: Ev): string | null {
   return e.start_date ? String(e.start_date).slice(0, 10) : null;
@@ -557,16 +559,9 @@ export async function autoMergeDuplicateEvents(): Promise<{
   //   앞 [도시] 와 뒤 "- 도시"를 떼어낸 core 가 같고 같은 날짜면 동일 공연으로 병합.
   //   같은 날짜로 제한 → 전국투어(도시별 다른 날) 보존.
   //   티켓종류 마커([스탠딩]/[지정석]/[VIP] 등)는 떼지 않음 → 변형끼리 안 합쳐짐.
-  const TICKET =
-    /스탠딩|지정석|얼리버드|예매|선예매|티켓|블라인드|vip|premium|pass|[rsa]석/i;
-  const coreKey = (e: Ev): string => {
-    let t = (e.normalized_title ?? e.title ?? "").normalize("NFKC");
-    const lead = t.match(/^\s*[[(［（]([^\])］）]{1,10})[\])］）]\s*/);
-    if (lead && !TICKET.test(lead[1])) t = t.slice(lead[0].length); // 도시류만 제거
-    // 뒤 "- 도시"는 대시류가 있을 때만 제거(공백/콜론만으론 안 뗌 → 부제·마지막단어 보존)
-    t = t.replace(/[ \t]*[-－‐‑–—―_⎽~∼][ \t]*[가-힣A-Za-z]{1,6}[ \t]*$/, "");
-    return t.toLowerCase().replace(/[^a-z0-9가-힣]/g, "");
-  };
+  // 공용 match-key 로 위임 — 티켓종류 마커 보존 로직 등은 거기서 관리.
+  const coreKey = (e: Ev): string =>
+    coreTitleKey(e.normalized_title ?? e.title ?? "");
   const byCore = new Map<string, Ev[]>();
   for (const e of all) {
     if (consumed.has(e.id)) continue;
@@ -590,33 +585,8 @@ export async function autoMergeDuplicateEvents(): Promise<{
   //   한 페스티벌이 "- 개최 발표 / 일반 티켓 / 1·2·3차 라인업 / 크루 티켓" 등 여러 행으로 들어옴.
   //   앱엔 1개여야 함. 페스티벌 키워드가 있는 경우만(일반 콘서트의 "- 1부/2부"는 보존).
   // 서브listing 신호: "- 라인업/얼리버드/티켓/발표/개최/N차/크루/오픈" 등
-  const LISTING =
-    /라인업|얼리버드|티켓|발표|개최|크루|예매|오픈|lineup|[0-9]\s*차|최종/i;
-  const festPrefix = (e: Ev): string | null => {
-    const raw = (e.title ?? "").normalize("NFKC");
-    const idx = raw.search(/\s[-–—]\s/);
-    const head = idx >= 0 ? raw.slice(0, idx) : raw;
-    const tail = idx >= 0 ? raw.slice(idx) : "";
-    // 페스티벌 키워드가 있거나, "- 라인업/티켓" 같은 서브listing 꼬리가 있을 때만 통합
-    if (!FEST.test(head) && !(tail && LISTING.test(tail))) return null;
-    // 토큰셋 키: 연도(20xx)·서브listing어·짧은 라틴 약자(≤5자, JUMF 등) 제거 후 정렬.
-    //   → "2026 서울 파크 페스티벌" = "서울 파크 페스티벌 2026", "JUMF 2026 X" = "2026 X".
-    //   한글 단어(재즈 등)는 남겨 "서울 페스티벌" ≠ "서울 재즈 페스티벌" 구분.
-    const toks = head
-      .toLowerCase()
-      .split(/[\s·,]+/)
-      .map((t) => t.replace(/[^a-z0-9가-힣]/g, ""))
-      .filter(
-        (t) =>
-          t.length >= 2 &&
-          !/^20\d\d$/.test(t) &&
-          !LISTING.test(t) &&
-          !/^[a-z]{1,5}$/.test(t), // 짧은 라틴 약자 제거
-      )
-      .sort();
-    const k = toks.join("");
-    return k.length >= 6 ? k : null;
-  };
+  // 공용 match-key 로 위임 — 토큰셋 키 생성 로직은 거기서 관리.
+  const festPrefix = (e: Ev): string | null => festivalKey(e.title ?? "");
   const byFest = new Map<string, Ev[]>();
   for (const e of all) {
     if (consumed.has(e.id)) continue;
