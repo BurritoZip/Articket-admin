@@ -1,5 +1,6 @@
 /**
  * dedup_key 재계산 + 기존 중복 collapse. dedup_key 가 UNIQUE 라 "흡수(삭제) → 생존 행 키 세팅" 순서.
+ * 이어서 아티스트/공연장 normalized_name 도 (NFKC 강화 반영) 재계산한다 — UPDATE 만, merge/delete 없음.
  * 실행: npx tsx scripts/pipeline/recompute-match-keys.ts [--dry]
  */
 import { readFileSync } from "node:fs";
@@ -24,6 +25,42 @@ for (const line of readFileSync(
 
 // pickCanonical/infoScore 가 읽는 전체 컬럼 + dedup_key(이 스크립트 전용).
 type Row = Ev & { dedup_key: string | null };
+
+/**
+ * artists/venues 의 normalized_name 을 최신 정규화 함수로 재계산.
+ * merge/delete 없음 — 값이 다를 때만 UPDATE. 계산 키가 빈 문자열이면 스킵(null/"" 로 덮어쓰지 않음).
+ * dry=true 면 카운트만 하고 쓰지 않는다.
+ */
+async function recomputeNormalizedNames(
+  db: ReturnType<
+    typeof import("../../lib/supabase/service-role").createServiceRoleClient
+  >,
+  table: "artists" | "venues",
+  compute: (name: string) => string | null,
+  dry: boolean,
+): Promise<number> {
+  let changed = 0;
+  for (let f = 0; ; f += 1000) {
+    const { data } = await db
+      .from(table)
+      .select("id,name,normalized_name")
+      .range(f, f + 999);
+    if (!data?.length) break;
+    for (const row of data as {
+      id: string;
+      name: string;
+      normalized_name: string | null;
+    }[]) {
+      const nk = compute(row.name);
+      if (!nk || nk === row.normalized_name) continue;
+      changed++;
+      if (!dry)
+        await db.from(table).update({ normalized_name: nk }).eq("id", row.id);
+    }
+    if (data.length < 1000) break;
+  }
+  return changed;
+}
 
 async function main() {
   if (process.argv.includes("--check")) {
@@ -101,6 +138,25 @@ async function main() {
   );
   console.log(
     `이벤트 ${all.length}, 새 키 그룹 ${groups.size}, 중복 그룹 ${dupGroups.length}, 흡수 예정 ${dupGroups.reduce((n, [, g]) => n + g.length - 1, 0)}`,
+  );
+
+  // 아티스트/공연장 normalized_name 재계산(NFKC 강화 반영) — UPDATE 만, merge/delete 없음.
+  const { normalizeKey } = await import("../../lib/artists/normalize");
+  const { normalizeVenueName } = await import("../../lib/ingestion/normalize");
+  const artistChanged = await recomputeNormalizedNames(
+    db,
+    "artists",
+    normalizeKey,
+    dry,
+  );
+  const venueChanged = await recomputeNormalizedNames(
+    db,
+    "venues",
+    (name) => normalizeVenueName(name),
+    dry,
+  );
+  console.log(
+    `아티스트 normalized_name ${dry ? "변경 예정" : "갱신"} ${artistChanged}, 공연장 normalized_name ${dry ? "변경 예정" : "갱신"} ${venueChanged}`,
   );
 
   if (dry) {
