@@ -711,7 +711,7 @@ function DataQualityTab() {
 
   const runDrain = async () => {
     setDraining(true);
-    const id = toast.loading("AI 큐 전체 처리 중... (최대 5분)");
+    const id = toast.loading("아티스트 보강 큐 처리 중... (최대 5분)");
     try {
       const res = await fetch("/api/admin/ingestion/queue/drain", {
         method: "POST",
@@ -771,7 +771,7 @@ function DataQualityTab() {
               {merging ? "병합 중..." : "중복 자동 병합"}
             </Button>
             <Button onClick={runDrain} disabled={draining}>
-              {draining ? "처리 중... (최대 5분)" : "AI 큐 전체 처리"}
+              {draining ? "처리 중... (최대 5분)" : "아티스트 보강 큐 처리"}
             </Button>
           </div>
 
