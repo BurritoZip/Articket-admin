@@ -170,17 +170,35 @@ export async function upsertEvent(
       .select("id")
       .single();
 
-    if (error) throw new Error(`Upsert insert failed: ${error.message}`);
-    const insertedId = (inserted as { id: string }).id;
-    await Promise.all([
-      linkEventArtists(insertedId, matchedArtists, event.sourceName),
-      linkEventVenues(insertedId, venueId ? [venueId] : []),
-    ]);
-    return {
-      action: "inserted",
-      eventId: insertedId,
-      changes: [],
-    };
+    if (error) {
+      // 강한 dedup_key 가 UNIQUE 충돌(23505) → 사실상 같은 공연이 방금 들어옴/경합.
+      // throw 대신 그 키로 기존 행을 다시 찾아 UPDATE 경로로 폴백.
+      if ((error as { code?: string }).code === "23505") {
+        const { data: dupe } = await db
+          .from("events")
+          .select(EXISTING_COLS)
+          .eq("dedup_key", event.dedupKey)
+          .maybeSingle();
+        if (!dupe)
+          throw new Error(
+            `Upsert insert failed(23505, no row): ${error.message}`,
+          );
+        existing = dupe; // fall through to UPDATE path below
+      } else {
+        throw new Error(`Upsert insert failed: ${error.message}`);
+      }
+    } else {
+      const insertedId = (inserted as { id: string }).id;
+      await Promise.all([
+        linkEventArtists(insertedId, matchedArtists, event.sourceName),
+        linkEventVenues(insertedId, venueId ? [venueId] : []),
+      ]);
+      return {
+        action: "inserted",
+        eventId: insertedId,
+        changes: [],
+      };
+    }
   }
 
   // UPDATE — detect changes

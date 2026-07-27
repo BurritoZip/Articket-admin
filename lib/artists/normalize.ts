@@ -20,14 +20,14 @@ const STRIP_RE = /[^가-힯ᄀ-ᇿ㄰-㆏A-Za-z0-9\s]/g;
 
 /**
  * 중복 탐지용 정규화 키 생성
- * - NFC 유니코드 정규화
+ * - NFKC 유니코드 정규화(전각/반각·호환문자 흡수)
  * - 소문자
  * - 특수문자 제거 (한글/영문/숫자/공백 유지)
  * - 공백 축약
  */
 export function normalizeKey(name: string): string {
   return name
-    .normalize("NFC")
+    .normalize("NFKC")
     .toLowerCase()
     .replace(STRIP_RE, "")
     .replace(/\s+/g, " ")

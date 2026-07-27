@@ -1,16 +1,12 @@
-import { createHash } from "crypto";
+import { eventDedupKey } from "./match-key";
 
+/** @deprecated 강한 키 위임. rawTitle 을 넘기면 marker-aware 로 계산된다. */
 export function generateDedupKey(
-  normalizedTitle: string,
+  titleOrRaw: string,
   normalizedVenueName: string | null,
   startDate: string | null,
 ): string {
-  const parts = [
-    normalizedTitle.toLowerCase().trim(),
-    (normalizedVenueName ?? "unknown").toLowerCase().trim(),
-    startDate ?? "unknown",
-  ];
-  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 32);
+  return eventDedupKey(titleOrRaw, normalizedVenueName, startDate);
 }
 
 export function isDuplicate(keyA: string, keyB: string): boolean {

@@ -20,8 +20,14 @@
  * (유저 데이터 CASCADE 손실은 FK 재지정으로 방지 — reassignEventUserData.)
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
+import {
+  normTitleKey,
+  coreTitleKey,
+  festivalKey,
+  eventDedupKey,
+} from "@/lib/ingestion/match-key";
 
-interface Ev {
+export interface Ev {
   id: string;
   title: string;
   normalized_title: string | null;
@@ -80,13 +86,10 @@ function infoScore(e: Ev): number {
   return cols.reduce((n, c) => n + (isBlank(e[c]) ? 0 : 1), 0);
 }
 
-function normTitle(e: Ev): string {
-  // 영숫자+한글만 남기고 전부 제거 — 전각/반각 문장부호(＃#·．.·［］[] 등) 차이를 흡수.
-  return (e.normalized_title ?? e.title ?? "")
-    .normalize("NFKC") // 전각→반각 정규화
-    .toLowerCase()
-    .replace(/[^a-z0-9가-힣]/g, "");
-}
+// 영숫자+한글만 남기고 전부 제거 — 전각/반각 문장부호(＃#·．.·［］[] 등) 차이를 흡수.
+// 공용 match-key 로 위임(lib/ingestion/match-key.ts) — 로직은 거기서 관리.
+const normTitle = (e: Ev): string =>
+  normTitleKey(e.normalized_title ?? e.title ?? "");
 
 function dayOf(e: Ev): string | null {
   return e.start_date ? String(e.start_date).slice(0, 10) : null;
@@ -105,7 +108,7 @@ function sourceSet(e: Ev): Set<string> {
  * "제목이 짧다"는 이유로 흡수 대상이 되곤 했다(소프트 병합 + 필드 이관으로 손실은 막았지만,
  * 표시되는 행 자체가 빈약해지는 건 여전히 나쁘다).
  */
-function pickCanonical(members: Ev[]): Ev {
+export function pickCanonical(members: Ev[]): Ev {
   return [...members].sort((a, b) => {
     if (!!a.artist_id !== !!b.artist_id) return a.artist_id ? -1 : 1;
     const si = infoScore(b) - infoScore(a);
@@ -143,7 +146,7 @@ async function fetchAll(
  * 흡수 행 유저 FK 재지정 후 스냅샷 남기고 하드삭제. auto-merge 클러스터와 수동 pair 병합이 공유.
  * 전체 행을 여기서 refetch 하므로 호출부는 id 만 넘기면 된다.
  */
-async function absorbEvents(
+export async function absorbEvents(
   db: ReturnType<typeof createServiceRoleClient>,
   canonId: string,
   otherIds: string[],
@@ -306,15 +309,85 @@ export async function reassignEventUserData(
   }
 }
 
+/**
+ * 강한 키(eventDedupKey) 기준 collapse — recompute-match-keys.ts 의 apply 경로와 동일 로직을
+ * 라이브러리 함수로 공용화. dry-run/로그 없이 실행만 하고 흡수 건수를 반환한다.
+ * 매 파이프라인 run 의 auto-merge 맨 앞(pass0)에서 호출돼 새로 샌 강한-키 중복을 상시 정리한다.
+ */
+export async function collapseByStrongKey(): Promise<{ collapsed: number }> {
+  const db = createServiceRoleClient();
+
+  type Row = Ev & { dedup_key: string | null };
+  const all: Row[] = [];
+  for (let f = 0; ; f += 1000) {
+    const { data } = await db
+      .from("events")
+      .select(
+        "id,title,normalized_title,start_date,end_date,artist_id,venue_id,poster_url,genre,age_restriction,ticket_open_date,ticket_provider,notice_text,booking_url,source_urls,created_at,dedup_key",
+      )
+      .is("merged_into_event_id", null)
+      .eq("is_hidden", false)
+      .range(f, f + 999);
+    if (!data?.length) break;
+    all.push(...(data as Row[]));
+    if (data.length < 1000) break;
+  }
+
+  // 공연장 정규화명 조회. NULL 은 그대로 보존(?? "" 로 뭉개지 않음) — ingest 와 동일 규칙.
+  const vname = new Map<string, string | null>();
+  const venueIds = Array.from(
+    new Set(all.map((e) => e.venue_id).filter(Boolean)),
+  ) as string[];
+  for (let i = 0; i < venueIds.length; i += 500) {
+    const { data } = await db
+      .from("venues")
+      .select("id,normalized_name")
+      .in("id", venueIds.slice(i, i + 500));
+    for (const v of (data as {
+      id: string;
+      normalized_name: string | null;
+    }[]) ?? [])
+      vname.set(v.id, v.normalized_name);
+  }
+
+  const groups = new Map<string, Row[]>();
+  for (const e of all) {
+    const key = eventDedupKey(
+      e.title,
+      e.venue_id ? (vname.get(e.venue_id) ?? null) : null,
+      e.start_date,
+    );
+    (groups.get(key) ?? groups.set(key, []).get(key)!).push(e);
+  }
+
+  const dupGroups = Array.from(groups.entries()).filter(
+    ([, g]) => g.length > 1,
+  );
+
+  let collapsed = 0;
+  for (const [key, g] of dupGroups) {
+    const canon = pickCanonical(g);
+    const others = g.filter((e) => e.id !== canon.id).map((e) => e.id);
+    const n = await absorbEvents(db, canon.id, others, "recompute_collapse");
+    collapsed += n;
+    await db.from("events").update({ dedup_key: key }).eq("id", canon.id);
+  }
+  return { collapsed };
+}
+
 export async function autoMergeDuplicateEvents(): Promise<{
   clusters: number;
   merged: number;
 }> {
   const db = createServiceRoleClient();
-  const all = await fetchAll(db);
   const consumed = new Set<string>();
   let clusters = 0;
   let merged = 0;
+
+  const strong = await collapseByStrongKey();
+  merged += strong.collapsed;
+
+  const all = await fetchAll(db);
 
   // 패스 1: artist_id + 공연일
   const byArtistDay = new Map<string, Ev[]>();
@@ -557,16 +630,9 @@ export async function autoMergeDuplicateEvents(): Promise<{
   //   앞 [도시] 와 뒤 "- 도시"를 떼어낸 core 가 같고 같은 날짜면 동일 공연으로 병합.
   //   같은 날짜로 제한 → 전국투어(도시별 다른 날) 보존.
   //   티켓종류 마커([스탠딩]/[지정석]/[VIP] 등)는 떼지 않음 → 변형끼리 안 합쳐짐.
-  const TICKET =
-    /스탠딩|지정석|얼리버드|예매|선예매|티켓|블라인드|vip|premium|pass|[rsa]석/i;
-  const coreKey = (e: Ev): string => {
-    let t = (e.normalized_title ?? e.title ?? "").normalize("NFKC");
-    const lead = t.match(/^\s*[[(［（]([^\])］）]{1,10})[\])］）]\s*/);
-    if (lead && !TICKET.test(lead[1])) t = t.slice(lead[0].length); // 도시류만 제거
-    // 뒤 "- 도시"는 대시류가 있을 때만 제거(공백/콜론만으론 안 뗌 → 부제·마지막단어 보존)
-    t = t.replace(/[ \t]*[-－‐‑–—―_⎽~∼][ \t]*[가-힣A-Za-z]{1,6}[ \t]*$/, "");
-    return t.toLowerCase().replace(/[^a-z0-9가-힣]/g, "");
-  };
+  // 공용 match-key 로 위임 — 티켓종류 마커 보존 로직 등은 거기서 관리.
+  const coreKey = (e: Ev): string =>
+    coreTitleKey(e.normalized_title ?? e.title ?? "");
   const byCore = new Map<string, Ev[]>();
   for (const e of all) {
     if (consumed.has(e.id)) continue;
@@ -590,33 +656,8 @@ export async function autoMergeDuplicateEvents(): Promise<{
   //   한 페스티벌이 "- 개최 발표 / 일반 티켓 / 1·2·3차 라인업 / 크루 티켓" 등 여러 행으로 들어옴.
   //   앱엔 1개여야 함. 페스티벌 키워드가 있는 경우만(일반 콘서트의 "- 1부/2부"는 보존).
   // 서브listing 신호: "- 라인업/얼리버드/티켓/발표/개최/N차/크루/오픈" 등
-  const LISTING =
-    /라인업|얼리버드|티켓|발표|개최|크루|예매|오픈|lineup|[0-9]\s*차|최종/i;
-  const festPrefix = (e: Ev): string | null => {
-    const raw = (e.title ?? "").normalize("NFKC");
-    const idx = raw.search(/\s[-–—]\s/);
-    const head = idx >= 0 ? raw.slice(0, idx) : raw;
-    const tail = idx >= 0 ? raw.slice(idx) : "";
-    // 페스티벌 키워드가 있거나, "- 라인업/티켓" 같은 서브listing 꼬리가 있을 때만 통합
-    if (!FEST.test(head) && !(tail && LISTING.test(tail))) return null;
-    // 토큰셋 키: 연도(20xx)·서브listing어·짧은 라틴 약자(≤5자, JUMF 등) 제거 후 정렬.
-    //   → "2026 서울 파크 페스티벌" = "서울 파크 페스티벌 2026", "JUMF 2026 X" = "2026 X".
-    //   한글 단어(재즈 등)는 남겨 "서울 페스티벌" ≠ "서울 재즈 페스티벌" 구분.
-    const toks = head
-      .toLowerCase()
-      .split(/[\s·,]+/)
-      .map((t) => t.replace(/[^a-z0-9가-힣]/g, ""))
-      .filter(
-        (t) =>
-          t.length >= 2 &&
-          !/^20\d\d$/.test(t) &&
-          !LISTING.test(t) &&
-          !/^[a-z]{1,5}$/.test(t), // 짧은 라틴 약자 제거
-      )
-      .sort();
-    const k = toks.join("");
-    return k.length >= 6 ? k : null;
-  };
+  // 공용 match-key 로 위임 — 토큰셋 키 생성 로직은 거기서 관리.
+  const festPrefix = (e: Ev): string | null => festivalKey(e.title ?? "");
   const byFest = new Map<string, Ev[]>();
   for (const e of all) {
     if (consumed.has(e.id)) continue;

@@ -45,10 +45,12 @@ export function normalizeVenueName(
   eventTitle?: string,
 ): string | null {
   if (!raw?.trim()) return null;
+  // NFKC 정규화(전각/반각·호환문자 흡수) — 이후 로직은 전부 이 정규화된 입력을 사용
+  const nfkcRaw = raw.normalize("NFKC");
 
   // 티켓 정보 suffix 먼저 제거 ("예스24 라이브홀 티켓 가격: ..." → "예스24 라이브홀")
-  const cutMatch = VENUE_SUFFIX_CUT.exec(raw);
-  const s = (cutMatch ? raw.slice(0, cutMatch.index) : raw).trim();
+  const cutMatch = VENUE_SUFFIX_CUT.exec(nfkcRaw);
+  const s = (cutMatch ? nfkcRaw.slice(0, cutMatch.index) : nfkcRaw).trim();
 
   if (s.length <= 1) return null;
   // 공연 제목과 동일하면 공연장이 아님
@@ -188,6 +190,6 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
     genre: raw.genre?.trim() ?? null,
     description: raw.description?.trim() ?? null,
     status: raw.status ?? inferStatus(startDate, endDate, ticketOpenDate),
-    dedupKey: generateDedupKey(normalizedTitle, normalizedVenueName, startDate),
+    dedupKey: generateDedupKey(displayTitle, normalizedVenueName, startDate),
   };
 }
