@@ -40,6 +40,27 @@ const LOCKABLE = [
   "status",
 ] as const;
 
+// 상세 시트용 단건 조회 — 목록 API 가 payload 절약차 안 내리는 score_breakdown·
+// field_sources·popularity/trending 까지 포함해 전체 행을 반환한다.
+export async function GET(
+  _request: Request,
+  { params }: { params: { id: string } },
+) {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  const db = createServiceRoleClient();
+  const { data, error } = await db
+    .from("events")
+    .select("*")
+    .eq("id", params.id)
+    .maybeSingle();
+  if (error)
+    return NextResponse.json({ error: error.message }, { status: 400 });
+  if (!data) return NextResponse.json({ error: "not found" }, { status: 404 });
+  return NextResponse.json({ event: data });
+}
+
 export async function PATCH(
   request: Request,
   { params }: { params: { id: string } },
