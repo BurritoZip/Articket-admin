@@ -188,6 +188,6 @@ export function normalizeEvent(raw: RawScrapedEvent): NormalizedEvent {
     genre: raw.genre?.trim() ?? null,
     description: raw.description?.trim() ?? null,
     status: raw.status ?? inferStatus(startDate, endDate, ticketOpenDate),
-    dedupKey: generateDedupKey(normalizedTitle, normalizedVenueName, startDate),
+    dedupKey: generateDedupKey(displayTitle, normalizedVenueName, startDate),
   };
 }
