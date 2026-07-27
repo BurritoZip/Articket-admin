@@ -168,6 +168,24 @@ export function EventsPageClient() {
   const [noArtistLinkFilter, setNoArtistLinkFilter] = React.useState(false);
   const [hiddenFilter, setHiddenFilter] = React.useState(false);
   const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
+
+  // 대시보드 딥링크(?status=/?missing=/?q=) 로 진입 시 해당 필터를 시드한다.
+  // 예전엔 URL 파라미터를 아예 안 읽어 "종료 처리 필요"·"아티스트 미연결"·"티켓 임박"
+  // 버튼이 필터 없는 전체 목록으로 착지했다(대시보드 버튼 3개가 사실상 무동작).
+  React.useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const status = sp.get("status");
+    const missing = sp.get("missing");
+    const q = sp.get("q");
+    if (status) setStatusFilter(status);
+    if (missing) setMissingFilter(missing);
+    if (q) {
+      setSearch(q);
+      setDebouncedSearch(q);
+    }
+    // 마운트 시 1회만 — 이후엔 사용자 조작이 필터를 관리한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [bulkDeleting, setBulkDeleting] = React.useState(false);
   const [sortBy, setSortBy] = React.useState("start_date");
   const [sortDir, setSortDir] = React.useState<SortDir>("desc");
@@ -442,11 +460,15 @@ export function EventsPageClient() {
 
   const handleTimetableAdded = async () => {
     if (!timetableEvent) return;
-    await fetch(`/api/admin/events/${timetableEvent.id}`, {
+    const res = await fetch(`/api/admin/events/${timetableEvent.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ has_timetable: true }),
     });
+    if (!res.ok) {
+      toast.error("타임테이블 상태 갱신 실패");
+      return;
+    }
     void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
   };
 

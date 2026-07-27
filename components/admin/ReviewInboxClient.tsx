@@ -67,7 +67,7 @@ export function ReviewInboxClient() {
             : "제안 거절됨",
       );
       void qc.invalidateQueries({ queryKey: ["artist-name-proposals"] });
-      void qc.invalidateQueries({ queryKey: ["admin-artists-list"] });
+      void qc.invalidateQueries({ queryKey: ["admin-artists"] });
     },
     onError: (e) => toast.error(e.message),
   });

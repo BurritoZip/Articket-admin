@@ -53,7 +53,7 @@ export function ArtistNameProposalSheet({ open, onClose }: Props) {
     },
     onSuccess: (_, v) => {
       toast.success(v.action === "approve" ? "이름 교체됨" : "제안 거절됨");
-      void qc.invalidateQueries({ queryKey: ["admin-artists-list"] });
+      void qc.invalidateQueries({ queryKey: ["admin-artists"] });
       void refetch();
     },
     onError: (e) => toast.error(e.message),
@@ -67,8 +67,8 @@ export function ArtistNameProposalSheet({ open, onClose }: Props) {
         <SheetHeader className="mb-4">
           <SheetTitle>✏️ 이름 교정 제안 검토</SheetTitle>
           <p className="text-xs text-muted-foreground">
-            Gemini 가 현재 이름에 없던 새 표시명을 제안한 건들. 승인하면 표시명이
-            바뀌고 기존 이름은 별명으로 보존됩니다.
+            Gemini 가 현재 이름에 없던 새 표시명을 제안한 건들. 승인하면
+            표시명이 바뀌고 기존 이름은 별명으로 보존됩니다.
           </p>
         </SheetHeader>
 
