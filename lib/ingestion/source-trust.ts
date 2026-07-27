@@ -17,7 +17,6 @@ export const SOURCE_TRUST: Record<string, number> = {
   yes24: 70,
   melon: 70,
   yanolja: 70,
-  stagepick: 60,
   festivallife: 55,
   "gemini-search": 20,
 };

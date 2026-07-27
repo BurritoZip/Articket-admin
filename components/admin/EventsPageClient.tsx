@@ -15,16 +15,7 @@ import { PageHeader } from "@/components/layout/PageHeader";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
-import { Label } from "@/components/ui/Label";
 import {
   Select,
   SelectContent,
@@ -108,10 +99,7 @@ export function EventsPageClient() {
     DEFAULT_ADMIN_PAGE_SIZE,
   );
 
-  const [fromUrlOpen, setFromUrlOpen] = React.useState(false);
   const [dedupOpen, setDedupOpen] = React.useState(false);
-  const [fromUrlInput, setFromUrlInput] = React.useState("");
-  const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
   // 통합 EventSheet (상세/편집/타임테이블 탭)
   const [sheetOpen, setSheetOpen] = React.useState(false);
@@ -278,8 +266,8 @@ export function EventsPageClient() {
   }, [data]);
 
   // EventSheet 에 넘길 기존 연결 — event_artists/event_venues 우선, 없으면 레거시
-  // artist_id/venue_id 단일 필드로 폴백. sheetEvent 가 없으면(생성 모드) URL-import
-  // 프리필로 세팅된 artistIds/venueIds 를 그대로 쓴다.
+  // artist_id/venue_id 단일 필드로 폴백. sheetEvent 가 없으면(생성 모드) openCreate 가
+  // 세팅한 artistIds/venueIds 를 그대로 쓴다.
   const sheetInitialArtistIds = React.useMemo(() => {
     if (!sheetEvent) return artistIds;
     const eaList = eventArtistsMap.get(sheetEvent.id);
@@ -307,97 +295,6 @@ export function EventsPageClient() {
     setSheetEvent(null);
     setSheetTab("edit");
     setSheetOpen(true);
-  };
-
-  const importFromUrl = async () => {
-    const url = fromUrlInput.trim();
-    if (!url) return;
-    setFromUrlLoading(true);
-    try {
-      const res = await fetch("/api/admin/events/from-url", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url }),
-      });
-      const json = (await res.json()) as {
-        parsed?: {
-          title?: string | null;
-          posterUrl?: string | null;
-          startDate?: string | null;
-          endDate?: string | null;
-          ticketOpenDate?: string | null;
-          ticketProvider?: string | null;
-          genre?: string | null;
-          artists?: string[];
-          venueName?: string | null;
-        };
-        detail?: string;
-      };
-      if (!res.ok) throw new Error(json.detail ?? "불러오기 실패");
-      const p = json.parsed ?? {};
-
-      // 아티스트명 → DB artist 이름 매칭
-      const parsedArtistNames = p.artists ?? [];
-      const matchedArtistIds = parsedArtistNames
-        .map((name) =>
-          artists.find(
-            (a) =>
-              a.name.toLowerCase() === name.toLowerCase() ||
-              a.name.toLowerCase().includes(name.toLowerCase()) ||
-              name.toLowerCase().includes(a.name.toLowerCase()),
-          ),
-        )
-        .filter(Boolean)
-        .map((a) => a!.id);
-
-      // 장소명 → DB venue 이름 매칭
-      const parsedVenueName = (p.venueName ?? "").toLowerCase();
-      const matchedVenue = parsedVenueName
-        ? venues.find(
-            (v) =>
-              v.name.toLowerCase().includes(parsedVenueName) ||
-              parsedVenueName.includes(v.name.toLowerCase()),
-          )
-        : undefined;
-
-      setForm({
-        ...emptyForm,
-        title: p.title ?? "",
-        poster_url: p.posterUrl ?? "",
-        start_date: p.startDate ? `${p.startDate}T00:00` : "",
-        end_date: p.endDate ? `${p.endDate}T00:00` : "",
-        ticket_open_date: p.ticketOpenDate ? `${p.ticketOpenDate}T00:00` : "",
-        ticket_provider: p.ticketProvider ?? "",
-        genre: p.genre ?? "",
-      });
-      setArtistIds(matchedArtistIds);
-      setVenueIds(matchedVenue ? [matchedVenue.id] : []);
-
-      setFromUrlOpen(false);
-      setFromUrlInput("");
-      setSheetEvent(null);
-      setSheetTab("edit");
-      setSheetOpen(true);
-
-      const artistMsg =
-        matchedArtistIds.length > 0
-          ? `아티스트 ${matchedArtistIds.length}명 자동 선택됨.`
-          : "아티스트를 직접 선택하세요.";
-      const venueMsg = matchedVenue
-        ? `공연장 "${matchedVenue.name}" 자동 선택됨.`
-        : p.venueName
-          ? `공연장 "${p.venueName}"을 직접 선택하세요.`
-          : "공연장을 직접 선택하세요.";
-      toast.success("URL에서 정보를 가져왔습니다.", {
-        description: `${artistMsg} ${venueMsg}`,
-      });
-    } catch (e) {
-      toast.error("가져오기 실패", {
-        description: e instanceof Error ? e.message : "알 수 없는 오류",
-      });
-    } finally {
-      setFromUrlLoading(false);
-    }
   };
 
   const openEdit = (event: EventRow) => {
@@ -585,15 +482,6 @@ export function EventsPageClient() {
           <div className="flex gap-2">
             <Button variant="secondary" onClick={() => setDedupOpen(true)}>
               🔀 중복 검토
-            </Button>
-            <Button
-              variant="secondary"
-              onClick={() => {
-                setFromUrlInput("");
-                setFromUrlOpen(true);
-              }}
-            >
-              URL로 추가
             </Button>
             <Button onClick={openCreate}>
               <Plus className="h-5 w-5" />
@@ -1010,42 +898,6 @@ export function EventsPageClient() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-
-      {/* URL로 공연 추가 */}
-      <Dialog open={fromUrlOpen} onOpenChange={setFromUrlOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>URL로 공연 추가</DialogTitle>
-            <DialogDescription>
-              StagePick 공연 상세 URL을 붙여넣으면 정보를 자동으로 가져옵니다.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2 py-2">
-            <Label htmlFor="from-url-input">공연 URL</Label>
-            <Input
-              id="from-url-input"
-              placeholder="https://www.stagepick.co.kr/performances/detail/..."
-              value={fromUrlInput}
-              onChange={(e) => setFromUrlInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") void importFromUrl();
-              }}
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setFromUrlOpen(false)}>
-              취소
-            </Button>
-            <Button
-              loading={fromUrlLoading}
-              disabled={!fromUrlInput.trim()}
-              onClick={() => void importFromUrl()}
-            >
-              가져오기
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
