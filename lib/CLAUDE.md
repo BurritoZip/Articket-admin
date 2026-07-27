@@ -10,7 +10,7 @@
 | `venues/` | 공연장 병합 로직 |
 | `db/` | DB 공통 유틸 — pipeline-tracker, status-sweeper |
 | `crawler/` | 크롤러 잡 생성·완료 관리 |
-| `scrapers/` | 사이트별 TypeScript 스크래퍼 (현재 stagepick) |
+| `scrapers/` | 사이트별 TypeScript 스크래퍼 (yes24·melon·interpark·festivallife·yanolja·gemini-search) |
 | `supabase/` | Supabase 클라이언트 (server/client/service-role) |
 | `gemini.ts` | Gemini API 공용 클라이언트 — `geminiText(prompt)` |
 | `completeness.ts` | 아티스트/공연 데이터 완성도 계산 |

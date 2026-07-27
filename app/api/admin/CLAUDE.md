@@ -17,7 +17,6 @@
 | 경로 | 역할 |
 |---|---|
 | `crawler/cron/` | Vercel Cron 엔트리포인트 — 전체 파이프라인 실행 |
-| `crawler/run/` | 수동 크롤러 실행 |
 | `pipeline/run/` | 수동 전체 파이프라인 트리거 |
 | `pipeline/status/` | 파이프라인 단계별 실시간 상태 GET |
 | `ingestion/queue/` | AI 처리 큐 관리 |
