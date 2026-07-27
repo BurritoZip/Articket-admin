@@ -59,13 +59,19 @@ export function eventDedupKey(
   normalizedVenueName: string | null,
   startDate: string | null,
 ): string {
-  const title = strongTitleKey(rawTitle) || (rawTitle ?? "").toLowerCase().trim();
+  // 공연장 null 이면 도시/페스티벌 마커를 벗기지 않는다 — venue+date 앵커가 없으면
+  // "[서울] 신년음악회"/"[부산] 신년음악회" 가 같은 키로 뭉쳐 오병합된다.
+  const keyFn = normalizedVenueName == null ? normTitleKey : strongTitleKey;
+  const title = keyFn(rawTitle) || (rawTitle ?? "").toLowerCase().trim();
   const parts = [
     title,
     (normalizedVenueName ?? "unknown").toLowerCase().trim(),
     startDate ?? "unknown",
   ];
-  return createHash("sha256").update(parts.join("|")).digest("hex").slice(0, 32);
+  return createHash("sha256")
+    .update(parts.join("|"))
+    .digest("hex")
+    .slice(0, 32);
 }
 
 export function demo(): void {
@@ -76,7 +82,11 @@ export function demo(): void {
     "city marker collapse",
   );
   // 전각/반각
-  assert.equal(strongTitleKey("［서울］ 아이유"), strongTitleKey("[서울] 아이유"), "fullwidth");
+  assert.equal(
+    strongTitleKey("［서울］ 아이유"),
+    strongTitleKey("[서울] 아이유"),
+    "fullwidth",
+  );
   // 회차 보존(합치면 안 됨)
   assert.notEqual(
     strongTitleKey("굴다리 콘서트 1부"),
@@ -100,6 +110,12 @@ export function demo(): void {
     strongTitleKey("서울숲재즈페스티벌 - 티켓"),
     strongTitleKey("부산국제록페스티벌 - 티켓"),
     "different festivals kept",
+  );
+  // 공연장 null + 도시마커 → strongTitleKey 로 뭉개지면 안 됨(오병합 방지)
+  assert.notEqual(
+    eventDedupKey("[서울] 신년음악회", null, "2026-01-01"),
+    eventDedupKey("[부산] 신년음악회", null, "2026-01-01"),
+    "null-venue city markers stay distinct",
   );
   console.log("match-key demo OK");
 }

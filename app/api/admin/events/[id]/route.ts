@@ -191,7 +191,7 @@ export async function PATCH(
     const normTitle = normalizeTitle(resolvedTitle);
     payload.normalized_title = normTitle;
     payload.dedup_key = generateDedupKey(
-      normTitle,
+      resolvedTitle,
       normalizeVenueName(venueName),
       resolvedStart,
     );

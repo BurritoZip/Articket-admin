@@ -272,7 +272,7 @@ export async function POST(request: Request) {
     (venueRow as { name?: string } | null)?.name ?? null,
   );
   const dedupKey = generateDedupKey(
-    normalizedTitleVal,
+    body.title.trim(),
     normalizedVenueVal,
     startDateStr,
   );
