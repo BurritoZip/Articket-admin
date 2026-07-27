@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from "@/components/ui/Select";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { deviceLabel } from "@/lib/device-model";
 import {
   Table,
   TableBody,
@@ -230,7 +231,12 @@ export function ErrorLogsPageClient() {
                       {row.domain ?? "-"}
                     </TableCell>
                     <TableCell className="text-text-secondary">
-                      {[row.platform, row.os_version, row.app_version]
+                      {[
+                        row.platform,
+                        deviceLabel(row.device_model),
+                        row.os_version,
+                        row.app_version,
+                      ]
                         .filter(Boolean)
                         .join(" · ") || "-"}
                     </TableCell>
@@ -249,7 +255,10 @@ export function ErrorLogsPageClient() {
                             <Meta label="플랫폼" value={row.platform} />
                             <Meta label="OS" value={row.os_version} />
                             <Meta label="앱 버전" value={row.app_version} />
-                            <Meta label="기기" value={row.device_model} />
+                            <Meta
+                              label="기기"
+                              value={deviceLabel(row.device_model)}
+                            />
                             <Meta label="사용자" value={row.app_user_id} />
                           </div>
                           {row.stack_trace && (
