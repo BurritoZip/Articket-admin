@@ -18,7 +18,6 @@
 |---|---|
 | `ArtistDedupSheet.tsx` | 아티스트 중복 검토 UI |
 | `VenueDedupSheet.tsx` | 공연장 중복 검토 UI |
-| `TimetableSheet.tsx` | 타임테이블 편집 |
 
 ## 공통 유틸 컴포넌트
 

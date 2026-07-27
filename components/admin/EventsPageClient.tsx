@@ -25,15 +25,6 @@ import {
 } from "@/components/ui/Dialog";
 import { Input } from "@/components/ui/Input";
 import { Label } from "@/components/ui/Label";
-import { Textarea } from "@/components/ui/Textarea";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/Sheet";
 import {
   Select,
   SelectContent,
@@ -52,8 +43,8 @@ import {
 } from "@/components/ui/Table";
 import { differenceInCalendarDays, parseISO } from "date-fns";
 import { formatKst } from "@/lib/format-kst";
-import { ImageUploader } from "@/components/admin/ImageUploader";
-import type { EventRow, EventStatus, OptionItem } from "@/types/event";
+import type { EventRow, OptionItem } from "@/types/event";
+import { EventSheet } from "@/components/admin/event-sheet/EventSheet";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
@@ -65,7 +56,6 @@ import {
 } from "@/components/admin/CompletenessFilterBar";
 import { MissingFieldChips } from "@/components/admin/MissingFieldChips";
 import { EVENT_FIELDS } from "@/lib/completeness";
-import { TimetableSheet } from "@/components/admin/TimetableSheet";
 import { EventDedupSheet } from "@/components/admin/EventDedupSheet";
 import {
   SortableTableHead,
@@ -88,7 +78,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/AlertDialog";
-import type { TimetablePerformanceRow } from "@/types/timetable";
 
 type EventQueryResponse = {
   rows: EventRow[];
@@ -108,13 +97,6 @@ type EventQueryResponse = {
   pageSize?: number;
 };
 
-const STATUS_LABEL: Record<EventStatus, string> = {
-  upcoming: "예정",
-  on_sale: "예매중",
-  ongoing: "진행중",
-  ended: "종료",
-};
-
 export function EventsPageClient() {
   const queryClient = useQueryClient();
   const [search, setSearch] = React.useState("");
@@ -125,21 +107,18 @@ export function EventsPageClient() {
     DEFAULT_ADMIN_PAGE_SIZE,
   );
 
-  const [createOpen, setCreateOpen] = React.useState(false);
-  const [editOpen, setEditOpen] = React.useState(false);
-  const [detailOpen, setDetailOpen] = React.useState(false);
-  const [timetableOpen, setTimetableOpen] = React.useState(false);
-  const [submitting, setSubmitting] = React.useState(false);
   const [fromUrlOpen, setFromUrlOpen] = React.useState(false);
   const [dedupOpen, setDedupOpen] = React.useState(false);
   const [fromUrlInput, setFromUrlInput] = React.useState("");
   const [fromUrlLoading, setFromUrlLoading] = React.useState(false);
 
-  const [editingEvent, setEditingEvent] = React.useState<EventRow | null>(null);
-  const [detailEvent, setDetailEvent] = React.useState<EventRow | null>(null);
-  const [timetableEvent, setTimetableEvent] = React.useState<EventRow | null>(
-    null,
-  );
+  // 통합 EventSheet (상세/편집/타임테이블 탭)
+  const [sheetOpen, setSheetOpen] = React.useState(false);
+  const [sheetEvent, setSheetEvent] = React.useState<EventRow | null>(null);
+  const [sheetTab, setSheetTab] = React.useState<
+    "detail" | "edit" | "timetable"
+  >("edit");
+
   const [deleteId, setDeleteId] = React.useState<string | null>(null);
   const [bulkDeleteConfirmOpen, setBulkDeleteConfirmOpen] =
     React.useState(false);
@@ -261,20 +240,6 @@ export function EventsPageClient() {
     },
   });
 
-  const { data: detailTimetable } = useQuery({
-    queryKey: ["detail-timetable", detailEvent?.id],
-    queryFn: async () => {
-      const res = await fetch(
-        `/api/admin/timetable?event_id=${detailEvent!.id}`,
-        { cache: "no-store" },
-      );
-      if (!res.ok) return [] as TimetablePerformanceRow[];
-      const json = (await res.json()) as { rows: TimetablePerformanceRow[] };
-      return json.rows;
-    },
-    enabled: detailOpen && !!detailEvent?.has_timetable,
-  });
-
   const { data: stats, isLoading: statsLoading } = useQuery({
     queryKey: ["admin-events-stats"],
     queryFn: async () => {
@@ -325,11 +290,36 @@ export function EventsPageClient() {
     return map;
   }, [data]);
 
+  // EventSheet 에 넘길 기존 연결 — event_artists/event_venues 우선, 없으면 레거시
+  // artist_id/venue_id 단일 필드로 폴백. sheetEvent 가 없으면(생성 모드) URL-import
+  // 프리필로 세팅된 artistIds/venueIds 를 그대로 쓴다.
+  const sheetInitialArtistIds = React.useMemo(() => {
+    if (!sheetEvent) return artistIds;
+    const eaList = eventArtistsMap.get(sheetEvent.id);
+    return eaList && eaList.length > 0
+      ? eaList.map((a) => a.artist_id)
+      : sheetEvent.artist_id
+        ? [sheetEvent.artist_id]
+        : [];
+  }, [sheetEvent, eventArtistsMap, artistIds]);
+
+  const sheetInitialVenueIds = React.useMemo(() => {
+    if (!sheetEvent) return venueIds;
+    const evList = eventVenuesMap.get(sheetEvent.id);
+    return evList && evList.length > 0
+      ? evList
+      : sheetEvent.venue_id
+        ? [sheetEvent.venue_id]
+        : [];
+  }, [sheetEvent, eventVenuesMap, venueIds]);
+
   const openCreate = () => {
     setForm({ ...emptyForm });
     setArtistIds([]);
     setVenueIds([]);
-    setCreateOpen(true);
+    setSheetEvent(null);
+    setSheetTab("edit");
+    setSheetOpen(true);
   };
 
   const importFromUrl = async () => {
@@ -398,7 +388,9 @@ export function EventsPageClient() {
 
       setFromUrlOpen(false);
       setFromUrlInput("");
-      setCreateOpen(true);
+      setSheetEvent(null);
+      setSheetTab("edit");
+      setSheetOpen(true);
 
       const artistMsg =
         matchedArtistIds.length > 0
@@ -422,148 +414,21 @@ export function EventsPageClient() {
   };
 
   const openEdit = (event: EventRow) => {
-    setEditingEvent(event);
-    setForm({
-      ...event,
-      start_date: event.start_date?.slice(0, 16),
-      end_date: event.end_date?.slice(0, 16) ?? "",
-      ticket_open_date: event.ticket_open_date?.slice(0, 16) ?? "",
-    });
-    const eaList = eventArtistsMap.get(event.id);
-    setArtistIds(
-      eaList && eaList.length > 0
-        ? eaList.map((a) => a.artist_id)
-        : event.artist_id
-          ? [event.artist_id]
-          : [],
-    );
-    const evList = eventVenuesMap.get(event.id);
-    setVenueIds(
-      evList && evList.length > 0
-        ? evList
-        : event.venue_id
-          ? [event.venue_id]
-          : [],
-    );
-    setEditOpen(true);
+    setSheetEvent(event);
+    setSheetTab("edit");
+    setSheetOpen(true);
   };
 
-  const openDetail = async (event: EventRow) => {
-    setDetailEvent(event); // 목록 행으로 즉시 표시
-    setDetailOpen(true);
-    // 목록 API 가 안 내리는 score_breakdown·field_sources 등을 단건 조회로 채운다.
-    try {
-      const res = await fetch(`/api/admin/events/${event.id}`);
-      if (res.ok) {
-        const { event: full } = (await res.json()) as { event: EventRow };
-        setDetailEvent(full);
-      }
-    } catch {
-      /* 실패 시 목록 행 데이터 유지 */
-    }
+  const openDetail = (event: EventRow) => {
+    setSheetEvent(event);
+    setSheetTab("detail");
+    setSheetOpen(true);
   };
 
   const openTimetable = (event: EventRow) => {
-    setTimetableEvent(event);
-    setTimetableOpen(true);
-  };
-
-  const handleTimetableAdded = async () => {
-    if (!timetableEvent) return;
-    const res = await fetch(`/api/admin/events/${timetableEvent.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ has_timetable: true }),
-    });
-    if (!res.ok) {
-      toast.error("타임테이블 상태 갱신 실패");
-      return;
-    }
-    void queryClient.invalidateQueries({ queryKey: ["admin-events"] });
-  };
-
-  const submitCreate = async () => {
-    if (
-      !form.title?.trim() ||
-      !form.start_date ||
-      artistIds.length === 0 ||
-      venueIds.length === 0
-    ) {
-      toast.error("필수 항목을 입력하세요. (공연명, 아티스트, 공연장, 시작일)");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch("/api/admin/events", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          title: form.title.trim(),
-          artist_ids: artistIds,
-          venue_ids: venueIds,
-          end_date: form.end_date || null,
-          ticket_open_date: form.ticket_open_date || null,
-          duration: form.duration || null,
-          age_restriction: form.age_restriction || null,
-          ticket_provider: form.ticket_provider || null,
-          notice_text: form.notice_text || null,
-        }),
-      });
-      const json = (await res.json()) as { detail?: string };
-      if (!res.ok) throw new Error(json.detail ?? "생성 실패");
-      toast.success("공연이 추가되었습니다.");
-      setCreateOpen(false);
-      await refetch();
-    } catch (error) {
-      toast.error("생성 실패", {
-        description: error instanceof Error ? error.message : "알 수 없는 오류",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const submitEdit = async () => {
-    if (!editingEvent) return;
-    // 편집은 공연명·시작일만 필수. 아티스트/공연장은 비어 있어도 허용
-    // (페스티벌·미연결 공연도 예매링크 등 다른 필드를 수정할 수 있어야 함).
-    if (!form.title?.trim() || !form.start_date) {
-      toast.error("필수 항목을 입력하세요. (공연명, 시작일)");
-      return;
-    }
-    setSubmitting(true);
-    try {
-      const res = await fetch(`/api/admin/events/${editingEvent.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          title: form.title.trim(),
-          artist_ids: artistIds,
-          venue_ids: venueIds,
-          end_date: form.end_date || null,
-          ticket_open_date: form.ticket_open_date || null,
-          duration: form.duration || null,
-          age_restriction: form.age_restriction || null,
-          ticket_provider: form.ticket_provider || null,
-          booking_url: form.booking_url?.trim() || null,
-          notice_text: form.notice_text || null,
-        }),
-      });
-      const json = (await res.json()) as { detail?: string };
-      if (!res.ok) throw new Error(json.detail ?? "수정 실패");
-      toast.success("공연이 수정되었습니다.");
-      setEditOpen(false);
-      setEditingEvent(null);
-      await refetch();
-    } catch (error) {
-      toast.error("수정 실패", {
-        description: error instanceof Error ? error.message : "알 수 없는 오류",
-      });
-    } finally {
-      setSubmitting(false);
-    }
+    setSheetEvent(event);
+    setSheetTab("timetable");
+    setSheetOpen(true);
   };
 
   /** 낙관적 업데이트 — 활성 admin-events 캐시들의 해당 행을 즉시 patch. 롤백용 이전 스냅샷 반환 */
@@ -1095,319 +960,18 @@ export function EventsPageClient() {
         </CardContent>
       </Card>
 
-      {/* 생성 다이얼로그 */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>공연 추가</DialogTitle>
-            <DialogDescription>
-              필수 항목(공연명, 아티스트, 공연장, 시작일)을 입력하세요.
-            </DialogDescription>
-          </DialogHeader>
-          <EventFormFields
-            form={form}
-            setForm={setForm}
-            artists={artists}
-            venues={venues}
-            artistIds={artistIds}
-            setArtistIds={setArtistIds}
-            venueIds={venueIds}
-            setVenueIds={setVenueIds}
-          />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
-              취소
-            </Button>
-            <Button loading={submitting} onClick={() => void submitCreate()}>
-              생성
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 수정 다이얼로그 */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>공연 수정</DialogTitle>
-            <DialogDescription>
-              필수 항목(공연명, 아티스트, 공연장, 시작일)을 입력하세요.
-            </DialogDescription>
-          </DialogHeader>
-          <EventFormFields
-            form={form}
-            setForm={setForm}
-            artists={artists}
-            venues={venues}
-            artistIds={artistIds}
-            setArtistIds={setArtistIds}
-            venueIds={venueIds}
-            setVenueIds={setVenueIds}
-          />
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setEditOpen(false);
-                setEditingEvent(null);
-              }}
-            >
-              취소
-            </Button>
-            <Button loading={submitting} onClick={() => void submitEdit()}>
-              저장
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* 상세 시트 */}
-      <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
-        <SheetContent className="flex w-full flex-col sm:max-w-xl">
-          {detailEvent ? (
-            <>
-              <SheetHeader>
-                <SheetTitle>{detailEvent.title}</SheetTitle>
-                <SheetDescription>
-                  {(() => {
-                    const ea = eventArtistsMap.get(detailEvent.id);
-                    return ea && ea.length > 0
-                      ? ea.map((a) => a.artist_name).join(", ")
-                      : (artistMap.get(detailEvent.artist_id) ?? "-");
-                  })()}{" "}
-                  ·{" "}
-                  {(() => {
-                    const ev = eventVenuesMap.get(detailEvent.id);
-                    return ev && ev.length > 0
-                      ? ev.map((vid) => venueMap.get(vid) ?? vid).join(", ")
-                      : (venueMap.get(detailEvent.venue_id) ?? "-");
-                  })()}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="flex-1 space-y-4 overflow-y-auto py-4 text-body-sm">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <InfoItem
-                    label="상태"
-                    value={STATUS_LABEL[detailEvent.status]}
-                  />
-                  <InfoItem
-                    label="배너 노출"
-                    value={detailEvent.is_banner ? "ON" : "OFF"}
-                  />
-                  <InfoItem
-                    label="시작일시"
-                    value={formatKst(detailEvent.start_date)}
-                  />
-                  <InfoItem
-                    label="종료일시"
-                    value={formatKst(detailEvent.end_date)}
-                  />
-                  <InfoItem label="장르" value={detailEvent.genre ?? "-"} />
-                  <InfoItem
-                    label="러닝타임"
-                    value={detailEvent.duration ?? "-"}
-                  />
-                  <InfoItem
-                    label="관람 연령"
-                    value={detailEvent.age_restriction ?? "-"}
-                  />
-                  <InfoItem
-                    label="예매 오픈일"
-                    value={formatKst(detailEvent.ticket_open_date)}
-                  />
-                  <InfoItem
-                    label="예매처"
-                    value={detailEvent.ticket_provider ?? "-"}
-                  />
-                </div>
-                {detailEvent.poster_url && (
-                  <div>
-                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                      포스터
-                    </p>
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={detailEvent.poster_url}
-                      alt="포스터"
-                      className="h-40 w-auto rounded-md border border-border object-contain"
-                    />
-                  </div>
-                )}
-                {detailEvent.has_timetable && (
-                  <div>
-                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                      타임테이블
-                    </p>
-                    <div className="space-y-1">
-                      {(detailTimetable ?? []).length === 0 ? (
-                        <p className="text-caption text-text-tertiary">
-                          불러오는 중...
-                        </p>
-                      ) : (
-                        (detailTimetable ?? []).map((p) => (
-                          <div
-                            key={p.id}
-                            className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-body-sm"
-                          >
-                            <span className="w-6 shrink-0 text-caption font-semibold text-text-tertiary">
-                              D{p.day_number}
-                            </span>
-                            <span className="w-[90px] shrink-0 text-caption text-text-tertiary">
-                              {p.start_time}–{p.end_time}
-                            </span>
-                            <span className="flex-1 font-medium">
-                              {p.artist_name}
-                            </span>
-                            <span className="text-caption text-text-tertiary">
-                              {p.stage_name}
-                            </span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                    공지
-                  </p>
-                  <div className="rounded-md border border-border bg-surface-muted/30 p-3 text-text-secondary whitespace-pre-wrap">
-                    {detailEvent.notice_text?.trim() ||
-                      "등록된 공지가 없습니다."}
-                  </div>
-                </div>
-
-                {/* 점수 상세 — score_breakdown 설명(왜 이 점수인가) */}
-                {detailEvent.score_breakdown && (
-                  <div>
-                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                      점수 상세
-                    </p>
-                    <div className="space-y-2 rounded-md border border-border p-3 text-body-sm">
-                      <div className="flex items-center gap-4 text-caption">
-                        <span>
-                          인기{" "}
-                          <b>
-                            {detailEvent.popularity_score?.toFixed(1) ?? "-"}
-                          </b>
-                        </span>
-                        <span>
-                          트렌드{" "}
-                          <b>{detailEvent.trending_score?.toFixed(1) ?? "-"}</b>
-                        </span>
-                        {detailEvent.score_breakdown.lowConfidence && (
-                          <Badge variant="warning" className="text-[10px]">
-                            저신뢰
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        {detailEvent.score_breakdown.signals.map((s) => (
-                          <div key={s.key} className="flex items-center gap-2">
-                            <span className="w-28 shrink-0 truncate text-caption text-text-tertiary">
-                              {s.label}
-                            </span>
-                            <div className="h-1.5 flex-1 overflow-hidden rounded bg-surface-muted">
-                              <div
-                                className="h-full bg-primary"
-                                style={{
-                                  width: `${Math.max(0, Math.min(100, s.normalized))}%`,
-                                }}
-                              />
-                            </div>
-                            <span className="w-24 shrink-0 text-right text-caption tabular-nums">
-                              {s.contribution.toFixed(2)}{" "}
-                              <span className="text-text-tertiary">
-                                (w{s.weight})
-                              </span>
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                      {detailEvent.score_breakdown.notes.length > 0 && (
-                        <ul className="list-inside list-disc text-caption text-text-tertiary">
-                          {detailEvent.score_breakdown.notes.map((n) => (
-                            <li key={n.key}>{n.note}</li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* 필드 출처 — 각 필드를 어떤 소스가 채웠나(provenance) */}
-                {detailEvent.field_sources &&
-                  Object.keys(detailEvent.field_sources).length > 0 && (
-                    <div>
-                      <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                        필드 출처
-                      </p>
-                      <div className="space-y-1 rounded-md border border-border p-3 text-caption">
-                        {Object.entries(detailEvent.field_sources).map(
-                          ([field, src]) => (
-                            <div key={field} className="flex gap-2">
-                              <span className="w-32 shrink-0 text-text-tertiary">
-                                {field}
-                              </span>
-                              <span className="font-medium">
-                                {src?.source ?? "-"}
-                              </span>
-                              {src?.at && (
-                                <span className="text-text-tertiary">
-                                  · {formatKst(src.at)}
-                                </span>
-                              )}
-                            </div>
-                          ),
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                {/* 잠금 필드 — 운영자가 잠가 크롤이 덮지 못하는 필드 */}
-                {(detailEvent.locked_fields ?? []).length > 0 && (
-                  <div>
-                    <p className="mb-2 text-caption font-semibold text-text-tertiary">
-                      잠금 필드{" "}
-                      <span className="font-normal">(크롤이 덮지 않음)</span>
-                    </p>
-                    <div className="flex flex-wrap gap-1">
-                      {detailEvent.locked_fields.map((f) => (
-                        <Badge
-                          key={f}
-                          variant="secondary"
-                          className="text-[10px]"
-                        >
-                          🔒 {f}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <SheetFooter>
-                <Button variant="outline" onClick={() => setDetailOpen(false)}>
-                  닫기
-                </Button>
-                <Button
-                  onClick={() => {
-                    setDetailOpen(false);
-                    openEdit(detailEvent);
-                  }}
-                >
-                  편집하기
-                </Button>
-              </SheetFooter>
-            </>
-          ) : null}
-        </SheetContent>
-      </Sheet>
-
-      <TimetableSheet
-        event={timetableEvent}
-        open={timetableOpen}
-        onOpenChange={setTimetableOpen}
-        onHasTimetableChange={() => void handleTimetableAdded()}
+      {/* 통합 시트(상세/편집/타임테이블 탭) */}
+      <EventSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        event={sheetEvent}
+        defaultTab={sheetTab}
+        artists={artists}
+        venues={venues}
+        initialForm={sheetEvent ? undefined : form}
+        initialArtistIds={sheetInitialArtistIds}
+        initialVenueIds={sheetInitialVenueIds}
+        onChanged={() => void refetch()}
       />
 
       <EventDedupSheet open={dedupOpen} onClose={() => setDedupOpen(false)} />
@@ -1499,15 +1063,6 @@ export function EventsPageClient() {
   );
 }
 
-function InfoItem({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-md border border-border p-3">
-      <p className="text-caption text-text-tertiary">{label}</p>
-      <p className="mt-1 break-all text-text-primary">{value}</p>
-    </div>
-  );
-}
-
 function TicketOpenBadge({ date }: { date: string | null }) {
   if (!date) return <span className="text-text-tertiary">-</span>;
   const diff = differenceInCalendarDays(parseISO(date), new Date());
@@ -1518,284 +1073,6 @@ function TicketOpenBadge({ date }: { date: string | null }) {
       </Badge>
     );
   return <span>{formatKst(date)}</span>;
-}
-
-function MultiSelect({
-  label,
-  required,
-  options,
-  selectedIds,
-  setSelectedIds,
-  placeholder,
-}: {
-  label: string;
-  required?: boolean;
-  options: OptionItem[];
-  selectedIds: string[];
-  setSelectedIds: React.Dispatch<React.SetStateAction<string[]>>;
-  placeholder: string;
-}) {
-  const selectedSet = new Set(selectedIds);
-  const unselected = options.filter((o) => !selectedSet.has(o.id));
-  const nameMap = new Map(options.map((o) => [o.id, o.name]));
-
-  return (
-    <div className="space-y-2">
-      <Label>
-        {label} {required && <span className="text-red-500">*</span>}
-      </Label>
-      {selectedIds.length > 0 && (
-        <div className="flex flex-wrap gap-1">
-          {selectedIds.map((id) => (
-            <span
-              key={id}
-              className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-muted px-2 py-0.5 text-xs"
-            >
-              {nameMap.get(id) ?? id}
-              <button
-                type="button"
-                className="ml-0.5 text-text-tertiary hover:text-text-primary"
-                onClick={() =>
-                  setSelectedIds((prev) => prev.filter((x) => x !== id))
-                }
-              >
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      )}
-      {unselected.length > 0 && (
-        <Select
-          value=""
-          onValueChange={(v) => {
-            if (v) setSelectedIds((prev) => [...prev, v]);
-          }}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder={placeholder} />
-          </SelectTrigger>
-          <SelectContent>
-            {unselected.map((o) => (
-              <SelectItem key={o.id} value={o.id}>
-                {o.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      )}
-    </div>
-  );
-}
-
-function EventFormFields({
-  form,
-  setForm,
-  artists,
-  venues,
-  artistIds,
-  setArtistIds,
-  venueIds,
-  setVenueIds,
-}: {
-  form: Partial<EventRow>;
-  setForm: React.Dispatch<React.SetStateAction<Partial<EventRow>>>;
-  artists: OptionItem[];
-  venues: OptionItem[];
-  artistIds: string[];
-  setArtistIds: React.Dispatch<React.SetStateAction<string[]>>;
-  venueIds: string[];
-  setVenueIds: React.Dispatch<React.SetStateAction<string[]>>;
-}) {
-  return (
-    <div className="grid gap-4 py-2">
-      {/* 기본 정보 */}
-      <div className="space-y-2">
-        <Label htmlFor="event-title">
-          공연명 <span className="text-red-500">*</span>
-        </Label>
-        <Input
-          id="event-title"
-          value={form.title ?? ""}
-          onChange={(e) => setForm((s) => ({ ...s, title: e.target.value }))}
-        />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <MultiSelect
-          label="아티스트"
-          required
-          options={artists}
-          selectedIds={artistIds}
-          setSelectedIds={setArtistIds}
-          placeholder="아티스트 추가"
-        />
-        <MultiSelect
-          label="공연장"
-          required
-          options={venues}
-          selectedIds={venueIds}
-          setSelectedIds={setVenueIds}
-          placeholder="공연장 추가"
-        />
-      </div>
-
-      {/* 날짜 */}
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="event-start">
-            시작일시 <span className="text-red-500">*</span>
-          </Label>
-          <Input
-            id="event-start"
-            type="datetime-local"
-            value={form.start_date ? form.start_date.slice(0, 16) : ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, start_date: e.target.value }))
-            }
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="event-end">종료일시</Label>
-          <Input
-            id="event-end"
-            type="datetime-local"
-            value={form.end_date ? form.end_date.slice(0, 16) : ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, end_date: e.target.value }))
-            }
-          />
-        </div>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="event-ticket-open">예매 오픈일시</Label>
-          <Input
-            id="event-ticket-open"
-            type="datetime-local"
-            value={
-              form.ticket_open_date ? form.ticket_open_date.slice(0, 16) : ""
-            }
-            onChange={(e) =>
-              setForm((s) => ({ ...s, ticket_open_date: e.target.value }))
-            }
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="event-ticket-provider">예매처</Label>
-          <Input
-            id="event-ticket-provider"
-            placeholder="예) 인터파크, YES24"
-            value={form.ticket_provider ?? ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, ticket_provider: e.target.value }))
-            }
-          />
-        </div>
-      </div>
-
-      {/* 예매 링크 — 앱 '예매하기' 버튼이 여는 외부 URL */}
-      <div className="space-y-2">
-        <Label htmlFor="event-booking-url">예매 링크 (booking_url)</Label>
-        <Input
-          id="event-booking-url"
-          type="url"
-          placeholder="https://tickets.interpark.com/goods/..."
-          value={form.booking_url ?? ""}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, booking_url: e.target.value }))
-          }
-        />
-      </div>
-
-      {/* 공연 정보 */}
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="space-y-2">
-          <Label>
-            상태 <span className="text-red-500">*</span>
-          </Label>
-          <Select
-            value={(form.status as string) ?? "upcoming"}
-            onValueChange={(v: EventStatus) =>
-              setForm((s) => ({ ...s, status: v }))
-            }
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="upcoming">예정</SelectItem>
-              <SelectItem value="on_sale">예매중</SelectItem>
-              <SelectItem value="ongoing">진행중</SelectItem>
-              <SelectItem value="ended">종료</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="event-genre">장르</Label>
-          <Input
-            id="event-genre"
-            placeholder="예) K-POP, ROCK"
-            value={form.genre ?? ""}
-            onChange={(e) => setForm((s) => ({ ...s, genre: e.target.value }))}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="event-duration">러닝타임</Label>
-          <Input
-            id="event-duration"
-            placeholder="예) 120분"
-            value={form.duration ?? ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, duration: e.target.value }))
-            }
-          />
-        </div>
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label htmlFor="event-age">관람 연령</Label>
-          <Input
-            id="event-age"
-            placeholder="예) 전체관람가, 만 12세 이상"
-            value={form.age_restriction ?? ""}
-            onChange={(e) =>
-              setForm((s) => ({ ...s, age_restriction: e.target.value }))
-            }
-          />
-        </div>
-      </div>
-
-      {/* 포스터 */}
-      <div className="space-y-2">
-        <Label>포스터 이미지</Label>
-        <ImageUploader
-          value={form.poster_url ?? ""}
-          onChange={(url) => setForm((s) => ({ ...s, poster_url: url }))}
-          folder="posters"
-          placeholder="포스터 이미지"
-        />
-      </div>
-
-      {/* 공지 */}
-      <div className="space-y-2">
-        <Label htmlFor="event-notice">공지사항</Label>
-        <Textarea
-          id="event-notice"
-          placeholder="관람객에게 안내할 내용을 입력하세요."
-          rows={4}
-          value={form.notice_text ?? ""}
-          onChange={(e) =>
-            setForm((s) => ({ ...s, notice_text: e.target.value }))
-          }
-        />
-      </div>
-
-      <div className="flex items-center gap-2 rounded-md border border-border p-3 text-body-sm text-text-secondary">
-        <CalendarDays className="h-4 w-4" />
-        모든 날짜/시간은 KST 기준으로 표시됩니다.
-      </div>
-    </div>
-  );
 }
 
 /** 이벤트 행의 아티스트 연결 상태를 배지로 표시 */

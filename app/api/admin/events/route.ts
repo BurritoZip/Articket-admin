@@ -344,5 +344,5 @@ export async function POST(request: Request) {
 
   await Promise.all(artistIds.map(recomputeUpcomingCount));
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, id: newEventId });
 }
