@@ -479,17 +479,6 @@ export function ArtistsPageClient() {
               onClick={() => setDedupOpen(true)}
             >
               🔀 중복 검토
-              {(
-                stats as
-                  (CompletenessStats & { duplicateCount?: number }) | null
-              )?.duplicateCount ? (
-                <Badge variant="danger" className="ml-1.5 h-4 px-1 text-[10px]">
-                  {
-                    (stats as CompletenessStats & { duplicateCount: number })
-                      .duplicateCount
-                  }
-                </Badge>
-              ) : null}
             </Button>
             <Button
               variant="secondary"
@@ -983,6 +972,12 @@ export function ArtistsPageClient() {
                         toast.success("보강 완료", {
                           description: `${json.delta!.addedFields.join(", ")} 필드가 채워졌습니다.`,
                         });
+                        // 열린 상세 시트도 최신값으로 갱신 — 예전엔 리스트만 refetch 해
+                        // 시트를 닫았다 다시 열어야 보강된 값이 보였다.
+                        const fresh = await fetchArtistDetail(detailArtist.id);
+                        setDetailArtist(fresh.artist);
+                        setDetailAlbums(fresh.albums);
+                        setDetailVideos(fresh.videos);
                         void refetch();
                       } else {
                         toast.warning("보강 결과 없음", {
