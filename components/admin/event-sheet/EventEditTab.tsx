@@ -88,15 +88,10 @@ export function EventEditTab({
     setVenueIds(initialVenueIds ?? []);
     setDirty(false);
     onDirtyChange?.(false);
+    // 대상 이벤트가 바뀌거나 폼이 재마운트될 때만 재시드 — 배경 refetch 로 인한 prop 참조 변경으로는
+    // 재시드하지 않아 작성 중 미저장 편집이 날아가지 않는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    event,
-    isCreate,
-    onDirtyChange,
-    initialForm,
-    initialArtistIds,
-    initialVenueIds,
-  ]);
+  }, [event?.id, isCreate]);
 
   const save = async () => {
     if (!form.title?.trim() || !form.start_date) {
