@@ -26,7 +26,7 @@ import {
   festivalKey,
 } from "@/lib/ingestion/match-key";
 
-interface Ev {
+export interface Ev {
   id: string;
   title: string;
   normalized_title: string | null;
@@ -107,7 +107,7 @@ function sourceSet(e: Ev): Set<string> {
  * "제목이 짧다"는 이유로 흡수 대상이 되곤 했다(소프트 병합 + 필드 이관으로 손실은 막았지만,
  * 표시되는 행 자체가 빈약해지는 건 여전히 나쁘다).
  */
-function pickCanonical(members: Ev[]): Ev {
+export function pickCanonical(members: Ev[]): Ev {
   return [...members].sort((a, b) => {
     if (!!a.artist_id !== !!b.artist_id) return a.artist_id ? -1 : 1;
     const si = infoScore(b) - infoScore(a);

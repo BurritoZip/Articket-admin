@@ -4,6 +4,8 @@
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { strict as assert } from "node:assert";
+import type { Ev } from "../../lib/ingestion/event-auto-merge";
 
 for (const line of readFileSync(
   resolve(process.cwd(), ".env.local"),
@@ -20,45 +22,59 @@ for (const line of readFileSync(
   }
 }
 
-type Ev = {
-  id: string;
-  title: string;
-  normalized_title: string | null;
-  start_date: string | null;
-  venue_id: string | null;
-  created_at: string;
-  dedup_key: string | null;
-};
+// pickCanonical/infoScore 가 읽는 전체 컬럼 + dedup_key(이 스크립트 전용).
+type Row = Ev & { dedup_key: string | null };
 
 async function main() {
+  if (process.argv.includes("--check")) {
+    const { eventDedupKey } = await import("../../lib/ingestion/match-key");
+    assert.equal(
+      eventDedupKey("공연", null, "2026-01-01"),
+      eventDedupKey("공연", null, "2026-01-01"),
+      "null venue stable",
+    );
+    // null venue 와 명명된 venue 는 서로 다른 키여야 한다(둘 다 "unknown"으로 뭉개지면 안 됨).
+    assert.notEqual(
+      eventDedupKey("공연", null, "2026-01-01"),
+      eventDedupKey("공연", "somevenue", "2026-01-01"),
+      "null venue differs from named venue",
+    );
+    console.log("recompute self-check OK");
+    return;
+  }
+
   const dry = process.argv.includes("--dry");
   const { createServiceRoleClient } =
     await import("../../lib/supabase/service-role");
   const { eventDedupKey } = await import("../../lib/ingestion/match-key");
-  const { absorbEvents } = await import("../../lib/ingestion/event-auto-merge");
+  const { absorbEvents, pickCanonical } =
+    await import("../../lib/ingestion/event-auto-merge");
   const db = createServiceRoleClient();
 
-  // 활성 이벤트 fetch
-  const all: Ev[] = [];
+  // 활성 이벤트 fetch — pickCanonical/infoScore 가 읽는 전체 컬럼 + dedup_key.
+  const all: Row[] = [];
   for (let f = 0; ; f += 1000) {
     const { data } = await db
       .from("events")
       .select(
-        "id,title,normalized_title,start_date,venue_id,created_at,dedup_key",
+        "id,title,normalized_title,start_date,end_date,artist_id,venue_id,poster_url,genre,age_restriction,ticket_open_date,ticket_provider,notice_text,booking_url,source_urls,created_at,dedup_key",
       )
       .is("merged_into_event_id", null)
       .eq("is_hidden", false)
       .range(f, f + 999);
     if (!data?.length) break;
-    all.push(...(data as Ev[]));
+    all.push(...(data as Row[]));
     if (data.length < 1000) break;
   }
 
-  // 공연장 정규화명 조회(키 계산용)
+  // 공연장 정규화명 조회(키 계산용). NULL 은 그대로 보존 — eventDedupKey 의 "unknown"
+  // 폴백은 null/undefined 에서만 발동하고 "" 에서는 발동하지 않는다("" ?? "unknown" === "").
+  // 여기서 ?? "" 로 뭉개면 NULL-name venue 가 "" 세그먼트를 받아 ingest 와 어긋나고,
+  // 서로 다른 NULL-name venue 들이 잘못 병합될 수 있다.
+  const vname = new Map<string, string | null>();
   const venueIds = Array.from(
     new Set(all.map((e) => e.venue_id).filter(Boolean)),
   ) as string[];
-  const vname = new Map<string, string>();
   for (let i = 0; i < venueIds.length; i += 500) {
     const { data } = await db
       .from("venues")
@@ -68,11 +84,11 @@ async function main() {
       id: string;
       normalized_name: string | null;
     }[]) ?? [])
-      vname.set(v.id, v.normalized_name ?? "");
+      vname.set(v.id, v.normalized_name);
   }
 
   // 새 키로 그룹핑
-  const groups = new Map<string, Ev[]>();
+  const groups = new Map<string, Row[]>();
   for (const e of all) {
     const key = eventDedupKey(
       e.title,
@@ -101,15 +117,14 @@ async function main() {
     return;
   }
 
-  // canonical = 정보량/최초등록 우선(간이): 아티스트 있으면… 여기선 created_at 최소 + 제목 김을 canonical.
+  // canonical = event-auto-merge 와 동일 기준(pickCanonical): artist_id 보유 →
+  // 정보량(infoScore) → 제목 길이 → 최초 등록일. absorbEvents 는 흡수 행의
+  // event_artists/timetable_performances 를 CASCADE 로 삭제(이관 안 함)하므로,
+  // 라인업 없는 행을 canonical 로 잘못 고르면 라인업이 조용히 사라진다.
   let collapsed = 0,
     keyed = 0;
   for (const [key, g] of dupGroups) {
-    const canon = [...g].sort(
-      (a, b) =>
-        (b.title?.length ?? 0) - (a.title?.length ?? 0) ||
-        (a.created_at < b.created_at ? -1 : 1),
-    )[0];
+    const canon = pickCanonical(g);
     const others = g.filter((e) => e.id !== canon.id).map((e) => e.id);
     const n = await absorbEvents(db, canon.id, others, "recompute_collapse");
     collapsed += n;
