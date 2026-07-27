@@ -145,7 +145,7 @@ async function fetchAll(
  * 흡수 행 유저 FK 재지정 후 스냅샷 남기고 하드삭제. auto-merge 클러스터와 수동 pair 병합이 공유.
  * 전체 행을 여기서 refetch 하므로 호출부는 id 만 넘기면 된다.
  */
-async function absorbEvents(
+export async function absorbEvents(
   db: ReturnType<typeof createServiceRoleClient>,
   canonId: string,
   otherIds: string[],
