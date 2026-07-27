@@ -8,14 +8,15 @@
  *   - 되돌릴 수 없어 오탐을 사후에 알 방법이 없다.
  * 앱은 is_hidden=false 만 조회하므로(20260702000000_event_soft_hide.sql) 노출 결과는 같다.
  *
- * 숨김 조건:
+ * 숨김 조건 (아래 + 공통: poster_url IS NULL — 포스터 없는 것만 숨긴다):
  *   1. artist_link_status='no_artist' (Gemini가 못 찾음)
  *   2. artist_id IS NULL AND enrich_attempted_at IS NOT NULL (enrich 시도 후도 연결 실패)
  *   3. artist_id IS NULL AND artist_link_status IS NULL AND crawled_at < 3일 전 (오래 됐는데 여전히 null)
  *
- * 보존:
+ * 보존/해제:
  *   - multi_artist (페스티벌·다중출연): 단일 artist_id 없는 게 정상 → 유지
  *   - artist_id 있는 것: 연결됨 → 유지. 이전에 숨겨졌더라도 자동 복구된다(아래 unhidden).
+ *   - 포스터가 있으면 아티스트 미연결이어도 노출(정책 완화) — Gemini 다운 시 대량 숨김 방지
  */
 import { createServiceRoleClient } from "@/lib/supabase/service-role";
 
@@ -36,6 +37,7 @@ export async function purgeUnlinkedEvents(): Promise<{
     .update(patch)
     .eq("artist_link_status", "no_artist")
     .is("artist_id", null)
+    .is("poster_url", null)
     .eq("is_hidden", false)
     .select("id");
 
@@ -46,6 +48,7 @@ export async function purgeUnlinkedEvents(): Promise<{
     .is("artist_id", null)
     .not("enrich_attempted_at", "is", null)
     .or("artist_link_status.is.null,artist_link_status.eq.no_artist")
+    .is("poster_url", null)
     .eq("is_hidden", false)
     .select("id");
 
@@ -56,6 +59,7 @@ export async function purgeUnlinkedEvents(): Promise<{
     .is("artist_id", null)
     .is("artist_link_status", null)
     .lt("crawled_at", threeDaysAgo)
+    .is("poster_url", null)
     .eq("is_hidden", false)
     .select("id");
 
@@ -68,8 +72,16 @@ export async function purgeUnlinkedEvents(): Promise<{
     .not("artist_id", "is", null)
     .select("id");
 
+  // 자가치유 2: 포스터가 있으면 아티스트 미연결이어도 노출한다(정책 완화).
+  const { data: backPoster } = await db
+    .from("events")
+    .update({ is_hidden: false, hidden_at: null, hidden_reason: null })
+    .eq("hidden_reason", REASON)
+    .not("poster_url", "is", null)
+    .select("id");
+
   return {
     hidden: (d1?.length ?? 0) + (d2?.length ?? 0) + (d3?.length ?? 0),
-    unhidden: back?.length ?? 0,
+    unhidden: (back?.length ?? 0) + (backPoster?.length ?? 0),
   };
 }
