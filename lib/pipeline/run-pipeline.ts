@@ -26,6 +26,7 @@ import {
   enrichEventDescriptions,
   backfillEventPosters,
 } from "@/lib/ingestion/event-enrich";
+import { rehostEventPosters } from "@/lib/ingestion/poster-rehost";
 import { autoMergeDuplicateEvents } from "@/lib/ingestion/event-auto-merge";
 import { autoPurgeNonConcerts } from "@/lib/data-quality/purge-non-concerts";
 import { purgeOldEvents } from "@/lib/data-quality/purge-old-events";
@@ -210,17 +211,27 @@ const STEP_FNS: Record<PipelineStep, (ctx: StepCtx) => Promise<unknown>> = {
   enrich: async ({ db, enrichBudgetMs }) => {
     await runArtistBackfill({ limit: 500, dryRun: false });
 
-    const [artistR, genreR, ageR, venueR, ticketR, descR, posterR, artistQ] =
-      await Promise.all([
-        enrichEventArtists(200),
-        enrichEventGenres(50),
-        enrichEventAges(50),
-        processVenueAddressEnrichment(60),
-        enrichEventTicketDates(40),
-        enrichEventDescriptions(40),
-        backfillEventPosters(40),
-        queueArtistEnrichment(),
-      ]);
+    const [
+      artistR,
+      genreR,
+      ageR,
+      venueR,
+      ticketR,
+      descR,
+      posterR,
+      rehostR,
+      artistQ,
+    ] = await Promise.all([
+      enrichEventArtists(200),
+      enrichEventGenres(50),
+      enrichEventAges(50),
+      processVenueAddressEnrichment(60),
+      enrichEventTicketDates(40),
+      enrichEventDescriptions(40),
+      backfillEventPosters(40),
+      rehostEventPosters(30), // 소스 CDN 포스터 → Supabase 스토리지(만료·핫링크·http 방어)
+      queueArtistEnrichment(),
+    ]);
     const artistLinked = artistR.linked;
 
     const giArtist = await geminiEnrichArtists({ maxItems: 40 });
@@ -261,6 +272,7 @@ const STEP_FNS: Record<PipelineStep, (ctx: StepCtx) => Promise<unknown>> = {
       ticket_dates_filled: ticketR.filled,
       description_filled: descR.filled,
       poster_filled: posterR.filled,
+      poster_rehosted: rehostR.rehosted,
       gemini_artist_filled: giArtist.filled,
       artist_enriched: succeeded,
       artist_failed: failed,
