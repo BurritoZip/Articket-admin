@@ -1,11 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { safeJson } from "@/lib/api-handler";
 import {
-  Play,
-  RefreshCw,
   AlertCircle,
   CheckCircle2,
   Clock,
@@ -13,17 +11,8 @@ import {
   Database,
   CalendarClock,
 } from "lucide-react";
-import { toast } from "sonner";
-import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/Select";
 import {
   Table,
   TableBody,
@@ -35,7 +24,7 @@ import {
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CrawlerSourcesTab } from "@/components/admin/CrawlerSourcesTab";
-import type { CrawlerJob, CrawlerSource } from "@/types/crawler";
+import type { CrawlerJob } from "@/types/crawler";
 
 type ArtistAuditMeta = {
   checkedCount?: number;
@@ -79,66 +68,14 @@ function formatDuration(start: string | null, end: string | null): string {
 }
 
 export function CrawlerPageClient() {
-  const queryClient = useQueryClient();
-  const [selectedSource, setSelectedSource] = React.useState("stagepick");
-  const [maxItems, setMaxItems] = React.useState("50");
-  const [dryRun, setDryRun] = React.useState(false);
-  const [running, setRunning] = React.useState(false);
-
-  const { data: sourcesData } = useQuery({
-    queryKey: ["crawler-sources"],
-    queryFn: async () => {
-      const res = await fetch("/api/admin/crawler/sources");
-      return safeJson(res, { rows: [] as CrawlerSource[] });
-    },
-  });
-  const sources = sourcesData?.rows ?? [];
-
   const { data: jobsData, isLoading } = useQuery({
     queryKey: ["crawler-jobs"],
     queryFn: async () => {
       const res = await fetch("/api/admin/crawler/jobs?limit=30");
       return safeJson(res, { rows: [] as CrawlerJob[] });
     },
-    refetchInterval: running ? 3000 : false,
   });
   const jobs = jobsData?.rows ?? [];
-
-  const handleRun = async () => {
-    setRunning(true);
-    const id = toast.loading(`${selectedSource} 크롤링 시작...`);
-    try {
-      const res = await fetch("/api/admin/crawler/run", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: selectedSource,
-          maxItems: parseInt(maxItems),
-          dryRun,
-        }),
-      });
-      const json = (await res.json()) as {
-        ok?: boolean;
-        result?: {
-          eventsUpserted: number;
-          errorCount: number;
-          artistAudit?: { missingCount: number };
-        };
-        error?: string;
-      };
-      if (!res.ok) throw new Error(json.error ?? "크롤링 실패");
-      const r = json.result;
-      toast.success(
-        `완료: ${r?.eventsUpserted ?? 0}건 저장, 아티스트 누락 ${r?.artistAudit?.missingCount ?? 0}건, 오류 ${r?.errorCount ?? 0}건`,
-        { id },
-      );
-      void queryClient.invalidateQueries({ queryKey: ["crawler-jobs"] });
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "오류", { id });
-    } finally {
-      setRunning(false);
-    }
-  };
 
   return (
     <div className="space-y-8">
@@ -173,90 +110,6 @@ export function CrawlerPageClient() {
                   로컬 launchd cron · 하루 2회 06:00 / 18:00 KST
                 </p>
               </div>
-            </CardContent>
-          </Card>
-
-          {/* 실행 패널 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-h3">크롤러 실행</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-end gap-4">
-              <div className="space-y-1">
-                <p className="text-label text-text-secondary">소스</p>
-                <Select
-                  value={selectedSource}
-                  onValueChange={setSelectedSource}
-                >
-                  <SelectTrigger className="w-40">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {sources.length > 0 ? (
-                      sources.map((s) => (
-                        <SelectItem key={s.name} value={s.name}>
-                          {s.display_name}
-                        </SelectItem>
-                      ))
-                    ) : (
-                      <SelectItem value="stagepick">StagePick</SelectItem>
-                    )}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-1">
-                <p className="text-label text-text-secondary">최대 수집</p>
-                <Select value={maxItems} onValueChange={setMaxItems}>
-                  <SelectTrigger className="w-28">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {["10", "25", "50", "100"].map((v) => (
-                      <SelectItem key={v} value={v}>
-                        {v}건
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="flex items-center gap-2 pb-0.5">
-                <input
-                  type="checkbox"
-                  id="dry-run"
-                  checked={dryRun}
-                  onChange={(e) => setDryRun(e.target.checked)}
-                  className="h-4 w-4"
-                />
-                <label
-                  htmlFor="dry-run"
-                  className="cursor-pointer text-body-sm text-text-secondary"
-                >
-                  Dry Run (저장 안 함)
-                </label>
-              </div>
-
-              <Button
-                loading={running}
-                onClick={() => void handleRun()}
-                className="gap-2"
-              >
-                <Play className="h-4 w-4" />
-                {running ? "실행중..." : "실행"}
-              </Button>
-
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() =>
-                  void queryClient.invalidateQueries({
-                    queryKey: ["crawler-jobs"],
-                  })
-                }
-              >
-                <RefreshCw className="h-4 w-4" />
-              </Button>
             </CardContent>
           </Card>
 
