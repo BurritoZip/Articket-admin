@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/AlertDialog";
 import type { TimetablePerformanceRow } from "@/types/timetable";
 import type { EventRow } from "@/types/event";
+import { buildDayOptions, dateForDay } from "./day-options";
 
 type Props = {
   event: EventRow;
@@ -97,6 +98,7 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     date_string: string;
   };
   const [imageFile, setImageFile] = React.useState<File | null>(null);
+  const [selectedDay, setSelectedDay] = React.useState(1);
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(
     null,
   );
@@ -191,6 +193,13 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
       if (event.start_date)
         fd.append("start_date", event.start_date.slice(0, 10));
       if (event.end_date) fd.append("end_date", event.end_date.slice(0, 10));
+      fd.append("day_number", String(selectedDay));
+      fd.append(
+        "date_string",
+        event.start_date
+          ? dateForDay(event.start_date.slice(0, 10), selectedDay)
+          : "",
+      );
       const res = await fetch("/api/admin/timetable/from-image", {
         method: "POST",
         body: fd,
@@ -637,6 +646,51 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
                       </>
                     )}
                   </div>
+
+                  {imageFile &&
+                    !imageParsed &&
+                    (() => {
+                      const dayOpts = buildDayOptions(
+                        event?.start_date?.slice(0, 10) ?? null,
+                        event?.end_date?.slice(0, 10) ?? null,
+                      );
+                      return (
+                        <div className="flex items-center gap-2">
+                          <Label className="text-caption text-text-secondary">
+                            며칠차
+                          </Label>
+                          {dayOpts.length > 0 ? (
+                            <Select
+                              value={String(selectedDay)}
+                              onValueChange={(v) => setSelectedDay(Number(v))}
+                            >
+                              <SelectTrigger className="h-8 w-48">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {dayOpts.map((o) => (
+                                  <SelectItem key={o.day} value={String(o.day)}>
+                                    Day {o.day} ({o.date})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              type="number"
+                              min={1}
+                              className="h-8 w-24"
+                              value={selectedDay}
+                              onChange={(e) =>
+                                setSelectedDay(
+                                  Math.max(1, Number(e.target.value) || 1),
+                                )
+                              }
+                            />
+                          )}
+                        </div>
+                      );
+                    })()}
 
                   {imageFile && !imageParsed && (
                     <Button
