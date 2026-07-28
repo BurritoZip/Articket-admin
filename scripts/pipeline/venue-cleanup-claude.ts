@@ -26,7 +26,11 @@ function isGarbageAddress(name: string, address: string | null): boolean {
   if (!address || address.trim() === "") return false;
   const a = address.trim();
   const norm = (s: string) =>
-    s.normalize("NFKC").toLowerCase().replace(/\s+/g, "").replace(/[^가-힣a-z0-9]/g, "");
+    s
+      .normalize("NFKC")
+      .toLowerCase()
+      .replace(/\s+/g, "")
+      .replace(/[^가-힣a-z0-9]/g, "");
   if (norm(a) === norm(name)) return true;
   if (a.length < 5) return true;
   if (!ADDRESS_KW.test(a)) return true;
@@ -67,8 +71,14 @@ async function predictAddress(name: string): Promise<string | null> {
       `공연장: "${name}"\n` +
       `마지막 줄에 주소만 한 줄로(도로명 주소 형식, 확실치 않으면 "모름"):`,
   );
-  const line = out.split("\n").map((s) => s.trim()).filter(Boolean).pop() ?? "";
-  if (!line || line === "모름" || line.length < 5 || line.length > 150) return null;
+  const line =
+    out
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .pop() ?? "";
+  if (!line || line === "모름" || line.length < 5 || line.length > 150)
+    return null;
   if (!ADDRESS_KW.test(line)) return null;
   return line;
 }
@@ -89,7 +99,9 @@ async function isSameVenue(
 }
 
 async function phase1(): Promise<void> {
-  console.log(`\n=== Phase 1: 주소 오염 수정 ${APPLY ? "(apply)" : "(dry-run)"} ===`);
+  console.log(
+    `\n=== Phase 1: 주소 오염 수정 ${APPLY ? "(apply)" : "(dry-run)"} ===`,
+  );
   const { data: rows } = await db
     .from("venues")
     .select("id,name,address")
@@ -98,13 +110,21 @@ async function phase1(): Promise<void> {
     .is("address_attempted_at", null)
     .limit(2000);
 
-  const garbage = (rows ?? []).filter((v) => isGarbageAddress(v.name, v.address));
+  const garbage = (rows ?? []).filter((v) =>
+    isGarbageAddress(v.name, v.address),
+  );
   console.log(`오염 후보: ${garbage.length}개`);
 
   let fixed = 0;
   let nulled = 0;
   for (const v of garbage) {
-    const addr = await predictAddress(v.name);
+    let addr: string | null;
+    try {
+      addr = await predictAddress(v.name);
+    } catch (e) {
+      console.error(`  [ERROR] predictAddress("${v.name}") 실패, skip: ${e}`);
+      continue;
+    }
     if (addr) {
       console.log(`  [FIX] "${v.name}": "${v.address}" → "${addr}"`);
       fixed++;
@@ -128,7 +148,9 @@ async function phase1(): Promise<void> {
 }
 
 async function phase2(): Promise<void> {
-  console.log(`\n=== Phase 2: 이름 변형 중복 병합 ${APPLY ? "(apply)" : "(dry-run)"} ===`);
+  console.log(
+    `\n=== Phase 2: 이름 변형 중복 병합 ${APPLY ? "(apply)" : "(dry-run)"} ===`,
+  );
   const { data: rawVenues } = await db
     .from("venues")
     .select("id,name,address,normalized_name")
@@ -141,7 +163,8 @@ async function phase2(): Promise<void> {
     .not("venue_id", "is", null);
   const linkedCountMap: Record<string, number> = {};
   for (const { venue_id } of eventLinks ?? []) {
-    if (venue_id) linkedCountMap[venue_id] = (linkedCountMap[venue_id] ?? 0) + 1;
+    if (venue_id)
+      linkedCountMap[venue_id] = (linkedCountMap[venue_id] ?? 0) + 1;
   }
 
   const candidates = detectDuplicateCandidates(venues, linkedCountMap);
@@ -151,10 +174,18 @@ async function phase2(): Promise<void> {
   let kept = 0;
   for (const c of candidates) {
     const [keep, other] = c.members; // members[0]=keep(event 많은쪽)
-    const same = await isSameVenue(
-      { name: keep.name, address: keep.address },
-      { name: other.name, address: other.address },
-    );
+    let same: boolean;
+    try {
+      same = await isSameVenue(
+        { name: keep.name, address: keep.address },
+        { name: other.name, address: other.address },
+      );
+    } catch (e) {
+      console.error(
+        `  [ERROR] isSameVenue("${keep.name}", "${other.name}") 실패, skip: ${e}`,
+      );
+      continue;
+    }
     if (same) {
       console.log(`  [MERGE] keep "${keep.name}" ← "${other.name}"`);
       merged++;
