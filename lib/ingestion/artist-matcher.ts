@@ -18,7 +18,7 @@ export type ArtistProfileInput = {
 
 // 강한 정규화 키로 통일 — 예전 toLowerCase+trim 은 한/영 혼종·구두점을 구분 못 해
 // dedup 함수(normalizeKey)와 어긋났다. 이제 write·match·dedup 이 같은 키를 쓴다.
-function normalizeArtistName(name: string): string {
+export function normalizeArtistName(name: string): string {
   return normalizeKey(name);
 }
 

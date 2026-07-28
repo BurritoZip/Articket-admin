@@ -6,6 +6,10 @@ import {
   buildPaginationMeta,
   parseAdminPagination,
 } from "@/lib/admin-pagination";
+import {
+  matchExistingArtist,
+  normalizeArtistName,
+} from "@/lib/ingestion/artist-matcher";
 
 // 타임테이블 임포트 시 기존 아티스트 리스트에 매칭 안 된 이름 로그 조회
 export async function GET(request: Request) {
@@ -69,5 +73,143 @@ export const PATCH = withErrorHandler(async (request: Request) => {
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+  return NextResponse.json({ ok: true });
+});
+
+// 미매칭 처리: 기존 연결 / 신규 생성 후 연결 / 이름 수정 재매칭 / 삭제
+export const POST = withErrorHandler(async (request: Request) => {
+  const guard = await requireAdmin();
+  if (!guard.ok) return guard.response;
+
+  const body = (await request.json()) as {
+    action?: "link" | "create" | "rename" | "delete";
+    logId?: string;
+    artistId?: string;
+    name?: string;
+    newName?: string;
+  };
+  const { action, logId } = body;
+  if (!logId || !action) {
+    return NextResponse.json(
+      { error: "action 과 logId 필요" },
+      { status: 400 },
+    );
+  }
+
+  const db = createServiceRoleClient();
+
+  const { data: log, error: logErr } = await db
+    .from("timetable_unmatched_artists")
+    .select("id, event_id, artist_name")
+    .eq("id", logId)
+    .maybeSingle();
+  if (logErr) {
+    return NextResponse.json({ error: logErr.message }, { status: 500 });
+  }
+  if (!log) {
+    return NextResponse.json(
+      { error: "로그를 찾을 수 없습니다." },
+      { status: 404 },
+    );
+  }
+  const eventId = (log as { event_id: string | null }).event_id;
+  const currentName = (log as { artist_name: string }).artist_name;
+
+  // 대상 performance 행 갱신 헬퍼 (event_id + 원문명 + artist_id null)
+  const updatePerformances = async (patch: Record<string, unknown>) => {
+    if (!eventId) return;
+    await db
+      .from("timetable_performances")
+      .update(patch)
+      .eq("event_id", eventId)
+      .eq("artist_name", currentName)
+      .is("artist_id", null);
+  };
+
+  if (action === "delete") {
+    if (eventId) {
+      await db
+        .from("timetable_performances")
+        .delete()
+        .eq("event_id", eventId)
+        .eq("artist_name", currentName)
+        .is("artist_id", null);
+    }
+    await db.from("timetable_unmatched_artists").delete().eq("id", logId);
+    return NextResponse.json({ ok: true });
+  }
+
+  if (action === "rename") {
+    const newName = body.newName?.trim();
+    if (!newName) {
+      return NextResponse.json({ error: "newName 필요" }, { status: 400 });
+    }
+    const artistId = await matchExistingArtist(newName);
+    if (artistId) {
+      const { data: art } = await db
+        .from("artists")
+        .select("name")
+        .eq("id", artistId)
+        .maybeSingle();
+      const canonical = (art as { name: string } | null)?.name ?? newName;
+      await updatePerformances({ artist_id: artistId, artist_name: canonical });
+      await db
+        .from("timetable_unmatched_artists")
+        .update({ artist_name: canonical, is_resolved: true })
+        .eq("id", logId);
+      return NextResponse.json({ ok: true, matched: true });
+    }
+    // 매칭 실패 → 이름만 갱신, 미해결 유지
+    await updatePerformances({ artist_name: newName });
+    await db
+      .from("timetable_unmatched_artists")
+      .update({ artist_name: newName })
+      .eq("id", logId);
+    return NextResponse.json({ ok: true, matched: false });
+  }
+
+  // link / create → artistId + 정식명 결정
+  let artistId: string | undefined = body.artistId;
+  let canonical: string;
+  if (action === "create") {
+    const name = body.name?.trim();
+    if (!name) {
+      return NextResponse.json({ error: "name 필요" }, { status: 400 });
+    }
+    const { data: created, error: cErr } = await db
+      .from("artists")
+      .insert({ name, normalized_name: normalizeArtistName(name) })
+      .select("id, name")
+      .single();
+    if (cErr) {
+      return NextResponse.json({ error: cErr.message }, { status: 500 });
+    }
+    artistId = (created as { id: string }).id;
+    canonical = (created as { name: string }).name;
+  } else if (action === "link") {
+    if (!artistId) {
+      return NextResponse.json({ error: "artistId 필요" }, { status: 400 });
+    }
+    const { data: art } = await db
+      .from("artists")
+      .select("name")
+      .eq("id", artistId)
+      .maybeSingle();
+    if (!art) {
+      return NextResponse.json(
+        { error: "아티스트를 찾을 수 없습니다." },
+        { status: 404 },
+      );
+    }
+    canonical = (art as { name: string }).name;
+  } else {
+    return NextResponse.json({ error: "알 수 없는 action" }, { status: 400 });
+  }
+
+  await updatePerformances({ artist_id: artistId, artist_name: canonical });
+  await db
+    .from("timetable_unmatched_artists")
+    .update({ is_resolved: true })
+    .eq("id", logId);
   return NextResponse.json({ ok: true });
 });
