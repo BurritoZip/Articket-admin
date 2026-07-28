@@ -193,7 +193,7 @@ export const POST = withErrorHandler(async (request: Request) => {
     }
     const { error: updLogErr2 } = await db
       .from("timetable_unmatched_artists")
-      .update({ artist_name: newName })
+      .update({ artist_name: newName, is_resolved: false })
       .eq("id", logId);
     if (updLogErr2) {
       return NextResponse.json({ error: updLogErr2.message }, { status: 500 });
@@ -209,16 +209,27 @@ export const POST = withErrorHandler(async (request: Request) => {
     if (!name) {
       return NextResponse.json({ error: "name 필요" }, { status: 400 });
     }
-    const { data: created, error: cErr } = await db
-      .from("artists")
-      .insert({ name, normalized_name: normalizeArtistName(name) })
-      .select("id, name")
-      .single();
-    if (cErr) {
-      return NextResponse.json({ error: cErr.message }, { status: 500 });
+    const existingId = await matchExistingArtist(name);
+    if (existingId) {
+      const { data: art } = await db
+        .from("artists")
+        .select("name")
+        .eq("id", existingId)
+        .maybeSingle();
+      artistId = existingId;
+      canonical = (art as { name: string } | null)?.name ?? name;
+    } else {
+      const { data: created, error: cErr } = await db
+        .from("artists")
+        .insert({ name, normalized_name: normalizeArtistName(name) })
+        .select("id, name")
+        .single();
+      if (cErr) {
+        return NextResponse.json({ error: cErr.message }, { status: 500 });
+      }
+      artistId = (created as { id: string }).id;
+      canonical = (created as { name: string }).name;
     }
-    artistId = (created as { id: string }).id;
-    canonical = (created as { name: string }).name;
   } else if (action === "link") {
     if (!artistId) {
       return NextResponse.json({ error: "artistId 필요" }, { status: 400 });
