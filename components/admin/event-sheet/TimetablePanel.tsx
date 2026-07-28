@@ -181,6 +181,7 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     setImagePreviewUrl(URL.createObjectURL(file));
     setImageParsed(null);
     setImageSelected(new Set());
+    setSelectedDay(1);
   };
 
   const submitImageParse = async () => {
