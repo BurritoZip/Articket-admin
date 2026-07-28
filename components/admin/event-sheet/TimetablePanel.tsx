@@ -151,6 +151,17 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     return map;
   }, [rows]);
 
+  // 이미 저장된 타임테이블이 있으면 다음 날(최대 day + 1)을 기본 선택. 공연 일수(N) 초과 방지.
+  const nextDefaultDay = React.useMemo(() => {
+    const maxDay = rows.reduce((m, r) => Math.max(m, r.day_number), 0);
+    const opts = buildDayOptions(
+      event?.start_date?.slice(0, 10) ?? null,
+      event?.end_date?.slice(0, 10) ?? null,
+    );
+    const next = Math.max(1, maxDay + 1);
+    return opts.length > 0 ? Math.min(next, opts.length) : next;
+  }, [rows, event?.start_date, event?.end_date]);
+
   const refetch = () => {
     void queryClient.invalidateQueries({
       queryKey: ["admin-timetable", event?.id],
@@ -181,7 +192,7 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     setImagePreviewUrl(URL.createObjectURL(file));
     setImageParsed(null);
     setImageSelected(new Set());
-    setSelectedDay(1);
+    setSelectedDay(nextDefaultDay);
   };
 
   const submitImageParse = async () => {
