@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/AlertDialog";
 import type { TimetablePerformanceRow } from "@/types/timetable";
 import type { EventRow } from "@/types/event";
+import { buildDayOptions, dateForDay } from "./day-options";
 
 type Props = {
   event: EventRow;
@@ -97,6 +98,7 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     date_string: string;
   };
   const [imageFile, setImageFile] = React.useState<File | null>(null);
+  const [selectedDay, setSelectedDay] = React.useState(1);
   const [imagePreviewUrl, setImagePreviewUrl] = React.useState<string | null>(
     null,
   );
@@ -149,6 +151,17 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     return map;
   }, [rows]);
 
+  // 이미 저장된 타임테이블이 있으면 다음 날(최대 day + 1)을 기본 선택. 공연 일수(N) 초과 방지.
+  const nextDefaultDay = React.useMemo(() => {
+    const maxDay = rows.reduce((m, r) => Math.max(m, r.day_number), 0);
+    const opts = buildDayOptions(
+      event?.start_date?.slice(0, 10) ?? null,
+      event?.end_date?.slice(0, 10) ?? null,
+    );
+    const next = Math.max(1, maxDay + 1);
+    return opts.length > 0 ? Math.min(next, opts.length) : next;
+  }, [rows, event?.start_date, event?.end_date]);
+
   const refetch = () => {
     void queryClient.invalidateQueries({
       queryKey: ["admin-timetable", event?.id],
@@ -179,6 +192,7 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     setImagePreviewUrl(URL.createObjectURL(file));
     setImageParsed(null);
     setImageSelected(new Set());
+    setSelectedDay(nextDefaultDay);
   };
 
   const submitImageParse = async () => {
@@ -188,9 +202,13 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     try {
       const fd = new FormData();
       fd.append("image", imageFile);
-      if (event.start_date)
-        fd.append("start_date", event.start_date.slice(0, 10));
-      if (event.end_date) fd.append("end_date", event.end_date.slice(0, 10));
+      fd.append("day_number", String(selectedDay));
+      fd.append(
+        "date_string",
+        event.start_date
+          ? dateForDay(event.start_date.slice(0, 10), selectedDay)
+          : "",
+      );
       const res = await fetch("/api/admin/timetable/from-image", {
         method: "POST",
         body: fd,
@@ -637,6 +655,51 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
                       </>
                     )}
                   </div>
+
+                  {imageFile &&
+                    !imageParsed &&
+                    (() => {
+                      const dayOpts = buildDayOptions(
+                        event?.start_date?.slice(0, 10) ?? null,
+                        event?.end_date?.slice(0, 10) ?? null,
+                      );
+                      return (
+                        <div className="flex items-center gap-2">
+                          <Label className="text-caption text-text-secondary">
+                            며칠차
+                          </Label>
+                          {dayOpts.length > 0 ? (
+                            <Select
+                              value={String(selectedDay)}
+                              onValueChange={(v) => setSelectedDay(Number(v))}
+                            >
+                              <SelectTrigger className="h-8 w-48">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {dayOpts.map((o) => (
+                                  <SelectItem key={o.day} value={String(o.day)}>
+                                    Day {o.day} ({o.date})
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          ) : (
+                            <Input
+                              type="number"
+                              min={1}
+                              className="h-8 w-24"
+                              value={selectedDay}
+                              onChange={(e) =>
+                                setSelectedDay(
+                                  Math.max(1, Number(e.target.value) || 1),
+                                )
+                              }
+                            />
+                          )}
+                        </div>
+                      );
+                    })()}
 
                   {imageFile && !imageParsed && (
                     <Button
