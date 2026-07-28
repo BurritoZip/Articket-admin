@@ -45,7 +45,7 @@ async function askClaude(prompt: string): Promise<string> {
   for (let i = 0; i < 6; i++) {
     const res = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 2000,
+      max_tokens: 4000,
       thinking: { type: "adaptive" },
       output_config: { effort: "low" },
       tools: [{ type: "web_search_20260209", name: "web_search", max_uses: 3 }],
@@ -172,8 +172,13 @@ async function phase2(): Promise<void> {
 
   let merged = 0;
   let kept = 0;
+  const mergedAway = new Set<string>();
   for (const c of candidates) {
     const [keep, other] = c.members; // members[0]=keep(event 많은쪽)
+    if (mergedAway.has(keep.id) || mergedAway.has(other.id)) {
+      console.log(`  [SKIP] "${keep.name}" ↔ "${other.name}" (이미 병합됨)`);
+      continue;
+    }
     let same: boolean;
     try {
       same = await isSameVenue(
@@ -189,6 +194,7 @@ async function phase2(): Promise<void> {
     if (same) {
       console.log(`  [MERGE] keep "${keep.name}" ← "${other.name}"`);
       merged++;
+      mergedAway.add(other.id);
       if (APPLY) {
         const r = await mergeVenues(keep.id, other.id);
         if (!r.ok) console.log(`    실패: ${r.errors.join("; ")}`);
