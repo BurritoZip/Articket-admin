@@ -23,6 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/Table";
 import { AdminListPagination } from "@/components/admin/AdminListPagination";
+import { UnmatchedResolveSheet } from "@/components/admin/UnmatchedResolveSheet";
 import {
   DEFAULT_ADMIN_PAGE_SIZE,
   type AdminListPagination as PaginationMeta,
@@ -64,6 +65,7 @@ export function TimetableUnmatchedPageClient() {
     DEFAULT_ADMIN_PAGE_SIZE,
   );
   const queryClient = useQueryClient();
+  const [resolveRow, setResolveRow] = React.useState<UnmatchedRow | null>(null);
 
   React.useEffect(() => {
     const t = setTimeout(() => {
@@ -182,7 +184,11 @@ export function TimetableUnmatchedPageClient() {
             </TableHeader>
             <TableBody>
               {rows.map((row) => (
-                <TableRow key={row.id}>
+                <TableRow
+                  key={row.id}
+                  className="cursor-pointer"
+                  onClick={() => setResolveRow(row)}
+                >
                   <TableCell className="font-medium">
                     {row.artist_name}
                   </TableCell>
@@ -208,12 +214,13 @@ export function TimetableUnmatchedPageClient() {
                       variant={row.is_resolved ? "outline" : "default"}
                       size="sm"
                       disabled={resolveMutation.isPending}
-                      onClick={() =>
+                      onClick={(e) => {
+                        e.stopPropagation();
                         resolveMutation.mutate({
                           id: row.id,
                           is_resolved: !row.is_resolved,
-                        })
-                      }
+                        });
+                      }}
                     >
                       {row.is_resolved
                         ? "미해결로 되돌리기"
@@ -240,6 +247,22 @@ export function TimetableUnmatchedPageClient() {
             />
           )}
         </>
+      )}
+
+      {resolveRow && (
+        <UnmatchedResolveSheet
+          row={resolveRow}
+          onClose={() => setResolveRow(null)}
+          onResolved={() => {
+            queryClient.invalidateQueries({
+              queryKey: ["admin-timetable-unmatched"],
+            });
+            queryClient.invalidateQueries({
+              queryKey: ["admin-attention-counts"],
+            });
+            setResolveRow(null);
+          }}
+        />
       )}
     </div>
   );
