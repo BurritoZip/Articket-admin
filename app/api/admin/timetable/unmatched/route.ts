@@ -117,25 +117,38 @@ export const POST = withErrorHandler(async (request: Request) => {
 
   // 대상 performance 행 갱신 헬퍼 (event_id + 원문명 + artist_id null)
   const updatePerformances = async (patch: Record<string, unknown>) => {
-    if (!eventId) return;
-    await db
+    if (!eventId) return { error: null };
+    const { error } = await db
       .from("timetable_performances")
       .update(patch)
       .eq("event_id", eventId)
       .eq("artist_name", currentName)
       .is("artist_id", null);
+    return { error };
   };
 
   if (action === "delete") {
     if (eventId) {
-      await db
+      const { error: delPerfErr } = await db
         .from("timetable_performances")
         .delete()
         .eq("event_id", eventId)
         .eq("artist_name", currentName)
         .is("artist_id", null);
+      if (delPerfErr) {
+        return NextResponse.json(
+          { error: delPerfErr.message },
+          { status: 500 },
+        );
+      }
     }
-    await db.from("timetable_unmatched_artists").delete().eq("id", logId);
+    const { error: delLogErr } = await db
+      .from("timetable_unmatched_artists")
+      .delete()
+      .eq("id", logId);
+    if (delLogErr) {
+      return NextResponse.json({ error: delLogErr.message }, { status: 500 });
+    }
     return NextResponse.json({ ok: true });
   }
 
@@ -152,19 +165,39 @@ export const POST = withErrorHandler(async (request: Request) => {
         .eq("id", artistId)
         .maybeSingle();
       const canonical = (art as { name: string } | null)?.name ?? newName;
-      await updatePerformances({ artist_id: artistId, artist_name: canonical });
-      await db
+      const { error: updPerfErr } = await updatePerformances({
+        artist_id: artistId,
+        artist_name: canonical,
+      });
+      if (updPerfErr) {
+        return NextResponse.json(
+          { error: updPerfErr.message },
+          { status: 500 },
+        );
+      }
+      const { error: updLogErr } = await db
         .from("timetable_unmatched_artists")
         .update({ artist_name: canonical, is_resolved: true })
         .eq("id", logId);
+      if (updLogErr) {
+        return NextResponse.json({ error: updLogErr.message }, { status: 500 });
+      }
       return NextResponse.json({ ok: true, matched: true });
     }
     // 매칭 실패 → 이름만 갱신, 미해결 유지
-    await updatePerformances({ artist_name: newName });
-    await db
+    const { error: updPerfErr2 } = await updatePerformances({
+      artist_name: newName,
+    });
+    if (updPerfErr2) {
+      return NextResponse.json({ error: updPerfErr2.message }, { status: 500 });
+    }
+    const { error: updLogErr2 } = await db
       .from("timetable_unmatched_artists")
       .update({ artist_name: newName })
       .eq("id", logId);
+    if (updLogErr2) {
+      return NextResponse.json({ error: updLogErr2.message }, { status: 500 });
+    }
     return NextResponse.json({ ok: true, matched: false });
   }
 
@@ -206,10 +239,19 @@ export const POST = withErrorHandler(async (request: Request) => {
     return NextResponse.json({ error: "알 수 없는 action" }, { status: 400 });
   }
 
-  await updatePerformances({ artist_id: artistId, artist_name: canonical });
-  await db
+  const { error: updPerfErr3 } = await updatePerformances({
+    artist_id: artistId,
+    artist_name: canonical,
+  });
+  if (updPerfErr3) {
+    return NextResponse.json({ error: updPerfErr3.message }, { status: 500 });
+  }
+  const { error: updLogErr3 } = await db
     .from("timetable_unmatched_artists")
     .update({ is_resolved: true })
     .eq("id", logId);
+  if (updLogErr3) {
+    return NextResponse.json({ error: updLogErr3.message }, { status: 500 });
+  }
   return NextResponse.json({ ok: true });
 });
