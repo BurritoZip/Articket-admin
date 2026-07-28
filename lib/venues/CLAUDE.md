@@ -5,7 +5,7 @@
 | 파일 | 역할 |
 |---|---|
 | `merge.ts` | 공연장 병합 — `mergeVenues(keepId, mergeId)`, FK 재지정 + 필드 보완 + 삭제 |
-| `auto-merge.ts` | normalized_name 완전일치 자동 병합 — `autoMergeExactVenues()` |
+| `auto-merge.ts` | normalized_name 완전일치 + 주소-인지(주소 다르면 보류) 자동 병합 — `autoMergeExactVenues()` |
 
 ## 참고
 
