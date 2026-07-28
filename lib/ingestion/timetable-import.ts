@@ -210,15 +210,22 @@ function detectStageOverlaps(
     const sorted = [...list].sort(
       (a, b) => timeToMinutes(a.start_time) - timeToMinutes(b.start_time),
     );
-    for (let i = 1; i < sorted.length; i++) {
-      const prev = sorted[i - 1];
-      const cur = sorted[i];
-      if (timeToMinutes(cur.start_time) < timeToMinutes(prev.end_time)) {
+    // start 정렬 후, 지금까지 본 것 중 "가장 늦게 끝나는" 공연과 비교한다.
+    // 인접쌍(prev)만 보면 앞선 긴 공연과 비인접하게 겹치는 케이스를 놓친다.
+    let maxEnd = -1;
+    let maxEndRow: ParsedTimetableRow | null = null;
+    for (const cur of sorted) {
+      if (maxEndRow && timeToMinutes(cur.start_time) < maxEnd) {
         issues.push({
-          line: `${cur.stage_name} · DAY${cur.day_number} · ${prev.artist_name}(${prev.start_time}~${prev.end_time}) ↔ ${cur.artist_name}(${cur.start_time}~${cur.end_time})`,
+          line: `${cur.stage_name} · DAY${cur.day_number} · ${maxEndRow.artist_name}(${maxEndRow.start_time}~${maxEndRow.end_time}) ↔ ${cur.artist_name}(${cur.start_time}~${cur.end_time})`,
           reason:
             "같은 무대에서 시간이 겹칩니다 — 한 무대는 동시 공연 불가. 스테이지/시간 배정을 확인하세요.",
         });
+      }
+      const curEnd = timeToMinutes(cur.end_time);
+      if (curEnd > maxEnd) {
+        maxEnd = curEnd;
+        maxEndRow = cur;
       }
     }
   }
