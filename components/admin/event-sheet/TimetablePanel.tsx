@@ -190,9 +190,6 @@ export function TimetablePanel({ event, onHasTimetableChange }: Props) {
     try {
       const fd = new FormData();
       fd.append("image", imageFile);
-      if (event.start_date)
-        fd.append("start_date", event.start_date.slice(0, 10));
-      if (event.end_date) fd.append("end_date", event.end_date.slice(0, 10));
       fd.append("day_number", String(selectedDay));
       fd.append(
         "date_string",
